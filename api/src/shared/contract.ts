@@ -86,6 +86,77 @@ export interface NavResponse {
   items: NavEntry[];
 }
 
+/**
+ * A read-only question a plugin allows the agent to ask it.
+ *
+ * The plugin owns the tables and the query; the agent never reads them
+ * directly. `args` is a small JSON schema the agent validates before calling
+ * `run`, and `href` points the operator at the page where they can check the
+ * numbers themselves.
+ */
+export interface AgentDataSource {
+  /** Dotted, unique across plugins: `tenants.summary`. */
+  id: string;
+  label: string;
+  /** One sentence: what this source answers, in the operator's words. */
+  description: string;
+  /** JSON schema for the arguments; usually an empty object. */
+  args: Record<string, unknown>;
+  href?: string;
+  run(args: Record<string, unknown>): Promise<unknown>;
+}
+
+/** What the agent shows about a source without exposing its implementation. */
+export interface AgentSourceInfo {
+  id: string;
+  label: string;
+  description: string;
+  href?: string;
+}
+
+// --- LLM provider ----------------------------------------------------------
+
+/**
+ * Wire contract of the internal LLM route a provider plugin exposes under
+ * `/api/v1/<provider>`. It mirrors the common chat-completions shape without
+ * naming an vendor, so the agent does not care which model answers.
+ */
+export interface LlmToolDefinition {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export interface LlmToolCall {
+  id: string;
+  name: string;
+  /** JSON-encoded arguments, exactly as the model produced them. */
+  arguments: string;
+}
+
+export type LlmMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string; toolCalls?: LlmToolCall[] }
+  | { role: 'tool'; content: string; toolCallId: string };
+
+export interface LlmRequest {
+  messages: LlmMessage[];
+  tools?: LlmToolDefinition[];
+  maxOutputTokens?: number;
+}
+
+export interface LlmResponse {
+  content: string;
+  toolCalls: LlmToolCall[];
+  model: string;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
+export interface LlmStatus {
+  configured: boolean;
+  model: string | null;
+}
+
 export interface PluginStateEntry {
   id: string;
   label: string;

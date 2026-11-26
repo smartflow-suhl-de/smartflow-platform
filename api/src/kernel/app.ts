@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   FieldError,
+  type AgentDataSource,
   type AuthMe,
   type HealthResponse,
   type NavEntry,
@@ -252,6 +253,86 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   let tenantDirectory: TenantDirectory | null = null;
   const tenantMigrations = new Map<string, Migration[]>();
   const tenantCache = new Map<string, Db>();
+  /** Filled while the plugin loop below registers; read by the platform source. */
+  const plugins: PluginManifest[] = [];
+
+  /**
+   * Read-only questions the agent may ask. The kernel owns its own tables and
+   * contributes the platform sources here; every other entry comes from the
+   * plugin that owns the data, registered through `provideAgentSource`.
+   */
+  const agentSourceRegistry = new Map<string, AgentDataSource>();
+  const kernelAgentSources: AgentDataSource[] = [
+    {
+      id: 'platform.status',
+      label: 'Plattform',
+      description: 'Version, Umgebung und Port des laufenden Prozesses.',
+      args: { type: 'object', additionalProperties: false, properties: {} },
+      run: async () => ({
+        version: PLATFORM_VERSION,
+        environment: config.env,
+        port: config.port,
+        publicUrl: config.publicUrl,
+      }),
+    },
+    {
+      id: 'platform.plugins',
+      label: 'Plugins',
+      description: 'Die installierten Plugins mit Version, Scope und Abhängigkeiten.',
+      args: { type: 'object', additionalProperties: false, properties: {} },
+      run: async () => ({
+        items: plugins.map((plugin) => ({
+          id: plugin.id,
+          label: plugin.label,
+          version: plugin.version,
+          scope: plugin.scope,
+          core: plugin.core === true,
+          dependsOn: plugin.dependsOn ?? [],
+        })),
+      }),
+    },
+    {
+      id: 'platform.events',
+      label: 'Ereignisprotokoll',
+      description: 'Die zuletzt protokollierten Ereignisse, ohne Nutzdaten.',
+      args: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 50, default: 10 },
+        },
+      },
+      run: async (args) => {
+        const limit = typeof args.limit === 'number' ? Math.min(50, Math.max(1, args.limit)) : 10;
+        // The payload is deliberately dropped: it carries user ids and can
+        // carry business data, neither of which belongs in a model prompt.
+        const rows = db
+          .prepare('select name, created_at from events order by created_at desc, id desc limit ?')
+          .all(limit) as { name: string; created_at: string }[];
+        const counts = db
+          .prepare('select name, count(*) as count from events group by name order by count desc')
+          .all() as { name: string; count: number }[];
+        return {
+          recent: rows.map((row) => ({ name: row.name, at: row.created_at })),
+          countsByEvent: counts,
+        };
+      },
+    },
+  ];
+  for (const source of kernelAgentSources) agentSourceRegistry.set(source.id, source);
+
+  const registerAgentSource = (source: AgentDataSource): void => {
+    const sourceId = source.id;
+    if (!/^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)+$/.test(sourceId)) {
+      throw new Error(
+        `agent source "${sourceId}" needs a dotted lowercase id, e.g. "tickets.summary"`,
+      );
+    }
+    if (agentSourceRegistry.has(source.id)) {
+      throw new Error(`agent source "${source.id}" is already registered`);
+    }
+    agentSourceRegistry.set(source.id, source);
+  };
 
   /** Opens a verified tenant database and applies every tenant migration once. */
   const tenantDb = (tenantId: string): Db => {
@@ -290,8 +371,6 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     }
   });
 
-  const plugins: PluginManifest[] = [];
-
   for (const entry of generatedPlugins) {
     const module: PluginModule = (await entry.load()).default;
     const manifest = module.manifest;
@@ -311,6 +390,12 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
           },
           provideTenantDirectory(directory) {
             tenantDirectory = directory;
+          },
+          provideAgentSource(source) {
+            registerAgentSource(source);
+          },
+          agentSources() {
+            return [...agentSourceRegistry.values()];
           },
           migrate(migrations) {
             migrate(db, migrations, `plugin:${manifest.id}`);

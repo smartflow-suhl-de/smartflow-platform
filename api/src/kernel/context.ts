@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
-import type { PluginManifest, TenantStatus } from '../shared/contract.ts';
+import type { AgentDataSource, PluginManifest, TenantStatus } from '../shared/contract.ts';
 import type { EventName, PlatformEvents } from '../shared/events.ts';
 import type { Config } from './config.ts';
 import type { Db, Migration } from './db.ts';
@@ -43,6 +43,15 @@ export interface PluginContext {
    */
   tenants(): TenantRef[];
   provideTenantDirectory(directory: TenantDirectory): void;
+  /**
+   * Registers a read-only question the agent may ask this plugin. The agent
+   * never reads another plugin's tables; it calls `run` in this process.
+   * Registration fails on a duplicate id, so two plugins cannot shadow one
+   * source. The list is read at request time, not when the agent registers.
+   */
+  provideAgentSource(source: AgentDataSource): void;
+  /** Every registered source, in registration order. */
+  agentSources(): AgentDataSource[];
   /** Plugin-scoped migrations against the platform database. */
   migrate(migrations: Migration[]): void;
   /** Plugin-scoped migrations applied to every tenant database when it opens. */

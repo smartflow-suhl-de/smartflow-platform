@@ -552,3 +552,53 @@ export interface PublicApproval {
   pages: Array<{ route: string; title: string; origin: WebsitePageOrigin }>;
   comment: string | null;
 }
+
+export interface AgentSourceInfo {
+  id: string;
+  label: string;
+  description: string;
+  href?: string;
+}
+
+export interface AgentStatus {
+  configured: boolean;
+  model: string | null;
+  reachable: boolean;
+  retentionDays: number;
+  limits: { perMinute: number; perDay: number };
+  sources: AgentSourceInfo[];
+}
+
+export interface AgentStep {
+  seq: number;
+  source: string;
+  status: 'ok' | 'error';
+  durationMs: number;
+  errorCode?: string;
+  truncated: boolean;
+}
+
+export interface AgentRun {
+  id: string;
+  question: string;
+  answer: string | null;
+  status: 'ok' | 'error';
+  errorCode: string | null;
+  model: string | null;
+  durationMs: number | null;
+  createdAt: string;
+  finishedAt: string | null;
+  steps: AgentStep[];
+}
+
+export interface AgentAskResponse {
+  run: AgentRun;
+  sources: AgentSourceInfo[];
+  truncated: boolean;
+}
+
+export interface AgentRunListResponse {
+  items: AgentRun[];
+  total: number;
+  nextCursor: string | null;
+}
