@@ -59,6 +59,45 @@ function bool(value: string | undefined, fallback: boolean): boolean {
 }
 
 /**
+ * Rejects a public origin that is not a bare `https://host` origin.
+ *
+ * `compose.yaml` assembles the value from two variables (`SF_TS_NODE_NAME` and
+ * `SF_TAILNET_DOMAIN`), so a wrong half still produces a string that starts
+ * with `https://`: `https://a.https://b`, `https://a..ts.net` or
+ * `https://a/path` all pass a prefix check while pointing at an address no
+ * client can reach. The session cookie is host-only, the OpenAPI entry and
+ * every absolute link use this value, so the failure would surface as
+ * "login does not stick" instead of a startup error.
+ */
+function assertPublicOrigin(value: string): void {
+  let url: URL | null = null;
+  try {
+    url = new URL(value);
+  } catch {
+    url = null;
+  }
+  if (url === null || url.protocol !== 'https:') {
+    throw new Error(
+      `SF_PUBLIC_URL must start with https:// when NODE_ENV=production (got "${value}").`,
+    );
+  }
+  // `origin` compares against the bare form: a path, a query, a trailing slash
+  // or a second scheme glued into the host all diverge from it.
+  if (url.origin !== value) {
+    throw new Error(
+      `SF_PUBLIC_URL must be a bare origin without path, query or trailing slash (got "${value}").`,
+    );
+  }
+  // An empty label cannot be resolved and comes from an empty or malformed half
+  // of the composed value (for example a leading dot in SF_TAILNET_DOMAIN).
+  if (url.hostname.split('.').some((label) => label === '')) {
+    throw new Error(
+      `SF_PUBLIC_URL has an empty domain label (got "${value}"); check SF_TS_NODE_NAME and SF_TAILNET_DOMAIN.`,
+    );
+  }
+}
+
+/**
  * Runtime configuration. Every value comes from a `SF_*` environment variable
  * with a development-friendly default; nothing secret is baked in.
  */
@@ -80,11 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // deployment that forgets SF_PUBLIC_URL keeps running over http and hands the
   // session cookie to anyone on the wire.
   if (nodeEnv === 'production') {
-    if (!publicUrl.startsWith('https://')) {
-      throw new Error(
-        `SF_PUBLIC_URL must start with https:// when NODE_ENV=production (got "${publicUrl}").`,
-      );
-    }
+    assertPublicOrigin(publicUrl);
     if (!secureCookies) {
       throw new Error('SF_SECURE_COOKIES=0 is not allowed when NODE_ENV=production.');
     }
