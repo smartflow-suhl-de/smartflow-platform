@@ -662,7 +662,7 @@ function DiscoveryDetail({
     <>
       <PageHeader
         title={invite.customerName}
-        description={`${invite.contactEmail ?? m.discovery.tenantNone} · ${m.discovery.modeLabel}: ${
+        description={`${invite.contactEmail ?? '—'} · ${m.discovery.modeLabel}: ${
           invite.mode === 'short'
             ? m.discovery.modeShort
             : invite.mode === 'full'

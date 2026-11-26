@@ -486,6 +486,16 @@ test('an expired link is rejected and a GET never changes the stored status', as
 
   const write = await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
   assert.equal(write.statusCode, 410);
+
+  const complete = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+  });
+  assert.equal(complete.statusCode, 410);
+  assert.equal(
+    (complete.json() as { error: { code: string } }).error.code,
+    'discovery_link_expired',
+  );
   const afterWrite = ctx.db
     .prepare('select status from discovery_invite where id = ?')
     .get(invite.id) as { status: string };
@@ -1061,4 +1071,39 @@ test('the public interview route carries a real OpenAPI summary', async (t) => {
   assert.ok(summary);
   assert.notEqual(summary, 'Public interview state for a link');
   assert.match(summary, /public interview/i);
+});
+
+test('overview and list show an invitation as expired without a write', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+  const stale = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  ctx.db
+    .prepare('update discovery_invite set expires_at = ?, status = ? where id = ?')
+    .run(stale, 'open', invite.id);
+
+  const overview = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/discovery/overview',
+    headers: { cookie },
+  });
+  assert.equal(overview.statusCode, 200, overview.payload);
+  const counts = (overview.json() as { counts: Record<string, number> }).counts;
+  assert.equal(counts.expired, 1);
+  assert.equal(counts.open, 0);
+
+  const listed = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/discovery/invites?status=expired',
+    headers: { cookie },
+  });
+  assert.equal(listed.statusCode, 200, listed.payload);
+  const items = (listed.json() as { items: Array<{ id: string }> }).items;
+  assert.ok(items.some((item) => item.id === invite.id));
+
+  const stored = ctx.db
+    .prepare('select status from discovery_invite where id = ?')
+    .get(invite.id) as { status: string };
+  assert.equal(stored.status, 'expired');
 });

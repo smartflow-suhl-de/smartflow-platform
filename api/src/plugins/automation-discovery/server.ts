@@ -253,6 +253,13 @@ function markExpiredIfNeeded(
   return true;
 }
 
+/** Persists expiry before status counts or filters, so old rows cannot stay "open". */
+function expireStale(db: PluginContext['db'], clock: Date): void {
+  db.prepare(
+    "update discovery_invite set status = 'expired' where expires_at < ? and status in ('open','in_progress')",
+  ).run(clock.toISOString());
+}
+
 function responseHeaders(reply: FastifyReply): void {
   reply.header('cache-control', 'no-store');
   reply.header('referrer-policy', 'no-referrer');
@@ -1266,6 +1273,7 @@ export function register(ctx: PluginContext): void {
 
   app.get('/discovery/overview', { preHandler: app.requireRole('operator') }, async () => {
     purgeOld(now());
+    expireStale(db, now());
     const counts = db
       .prepare('select status, count(*) as total from discovery_invite group by status')
       .all() as Array<{ status: InviteStatus; total: number }>;
@@ -1323,6 +1331,7 @@ export function register(ctx: PluginContext): void {
         limit: number;
         cursor?: string;
       };
+      expireStale(db, now());
       const limit = query.limit ?? 25;
       const clauses: string[] = [];
       const params: unknown[] = [];

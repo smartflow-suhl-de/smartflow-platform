@@ -65,7 +65,7 @@ export function missingRequired(
   return errors;
 }
 
-function initialValues(
+export function initialValues(
   step: DiscoveryStep,
   answers: Record<string, unknown>,
 ): Record<string, FieldValue> {
@@ -75,7 +75,14 @@ function initialValues(
     if (field.kind === 'text' && typeof answer === 'string') values[field.key] = answer;
     else if (field.kind === 'number' && typeof answer === 'number') values[field.key] = answer;
     else if (field.kind === 'yesno' && typeof answer === 'boolean') values[field.key] = answer;
-    else if (field.kind === 'multi' || field.kind === 'rank') {
+    else if (field.kind === 'rank') {
+      // An untouched rank field shows the options in their default order, so
+      // that order is the value: otherwise "Weiter" and the API both reject it.
+      values[field.key] =
+        Array.isArray(answer) && answer.length > 0
+          ? answer.filter((entry): entry is string => typeof entry === 'string')
+          : (field.options ?? []).map((option) => option.value);
+    } else if (field.kind === 'multi') {
       values[field.key] = Array.isArray(answer)
         ? answer.filter((entry): entry is string => typeof entry === 'string')
         : [];
@@ -293,6 +300,12 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
       const payload = response.payload as DiscoveryPublicState | { error?: { code?: string } };
       if (response.status === 410 && 'status' in payload && payload.status === 'completed') {
         setClosed({ kind: 'completed', report: payload.report ?? null });
+        return;
+      }
+      if (response.status === 410) {
+        // Expired or revoked while the customer was finishing: reuse `load`,
+        // which maps both codes to the closed notice.
+        await load();
         return;
       }
       if ('report' in payload) {
@@ -586,7 +599,10 @@ function FieldBlock({
           aria-describedby={describedBy}
           aria-invalid={error ? true : undefined}
           autoFocus={autoFocus}
-          onChange={(event) => onChange(Number.parseInt(event.target.value, 10))}
+          onChange={(event) => {
+            const parsed = Number.parseInt(event.target.value, 10);
+            onChange(Number.isNaN(parsed) ? '' : parsed);
+          }}
         />
       ) : null}
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { DiscoveryStep } from '../src/lib/types.ts';
 
-const { answersForStep, missingRequired, reorderRank, rankMoveLabel } =
+const { answersForStep, missingRequired, initialValues, reorderRank, rankMoveLabel } =
   await import('../src/pages/DiscoveryPublic.tsx');
 const { getMessages } = await import('../src/lib/i18n.ts');
 const { discoveryPublic, ApiError } = await import('../src/lib/api.ts');
@@ -144,5 +144,39 @@ describe('rankMoveLabel', () => {
     const en = getMessages('en');
     assert.equal(rankMoveLabel(en, 'up', 'Offer'), 'Move up: Offer');
     assert.equal(rankMoveLabel(en, 'down', 'Offer'), 'Move down: Offer');
+  });
+});
+
+describe('initialValues on a rank field', () => {
+  const rankStep: DiscoveryStep = {
+    key: 'map.q10',
+    phase: 'map',
+    pending: false,
+    fields: [
+      {
+        key: 'map.q10.order',
+        kind: 'rank',
+        required: true,
+        label: { de: 'Reihenfolge', en: 'Order' },
+        options: [
+          { value: 'first', label: { de: 'Erstens', en: 'First' } },
+          { value: 'second', label: { de: 'Zweitens', en: 'Second' } },
+        ],
+      },
+    ],
+  };
+
+  it('prefills the visible order so an untouched field passes', () => {
+    const values = initialValues(rankStep, {});
+    assert.deepEqual(values['map.q10.order'], ['first', 'second']);
+    assert.deepEqual(missingRequired(rankStep, values), {});
+    assert.deepEqual(answersForStep(rankStep, values), [
+      { key: 'map.q10.order', value: ['first', 'second'] },
+    ]);
+  });
+
+  it('keeps a stored order', () => {
+    const values = initialValues(rankStep, { 'map.q10.order': ['second', 'first'] });
+    assert.deepEqual(values['map.q10.order'], ['second', 'first']);
   });
 });
