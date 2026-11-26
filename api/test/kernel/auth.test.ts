@@ -226,7 +226,12 @@ test('auto-login is an explicit opt-in and never applies over https', async (t) 
 });
 
 test('the dev magic link is off in production even when explicitly enabled', async (t) => {
-  const ctx = await createTestApp({ NODE_ENV: 'production', SF_DEV_MAGIC_LINK: '1' });
+  const ctx = await createTestApp({
+    NODE_ENV: 'production',
+    SF_PUBLIC_URL: 'https://app.example.test',
+    SF_SECURE_COOKIES: '1',
+    SF_DEV_MAGIC_LINK: '1',
+  });
   t.after(() => ctx.close());
 
   assert.equal(ctx.config.devMagicLink, false);
