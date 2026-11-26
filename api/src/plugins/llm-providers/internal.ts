@@ -271,16 +271,19 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
 
     const caller = requireCaller(request);
     let lastError: UpstreamError | null = null;
+    let lastLimit: AppError | null = null;
     for (const [index, attempt] of attempts.entries()) {
       if (!runtime.isAllowedFor(attempt.provider, caller)) continue;
       if (!allowRate(`${caller}:${attempt.provider.id}`, attempt.provider.rate_limit_per_minute)) {
-        if (index > 0) continue;
-        throw new AppError('llm_rate_limited', 'Too many calls for this plugin.', 429);
+        const error = new AppError('llm_rate_limited', 'Too many calls for this plugin.', 429);
+        // A configured fallback runs on another provider with its own quota.
+        if (index === 0 && !target.fallback) throw error;
+        lastLimit = error;
+        continue;
       }
       const budget = runtime.budgetExceeded(attempt.provider);
       if (budget) {
-        if (index > 0) continue;
-        throw new AppError(
+        const error = new AppError(
           'llm_budget_exceeded',
           budget === 'daily'
             ? 'The daily token budget of this provider is exhausted.'
@@ -288,6 +291,10 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
           429,
           { reason: budget },
         );
+        // The fallback provider has a separate budget.
+        if (index === 0 && !target.fallback) throw error;
+        lastLimit = error;
+        continue;
       }
       try {
         assertCapabilities(attempt.model, body);
@@ -341,6 +348,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
       }
     }
     if (lastError) throw mapUpstream(lastError);
+    if (lastLimit) throw lastLimit;
     throw new AppError('llm_not_configured', 'No provider is available.', 503);
   }
 

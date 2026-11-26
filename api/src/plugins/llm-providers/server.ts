@@ -545,7 +545,7 @@ export function register(ctx: PluginContext): void {
       const page = hasMore ? rows.slice(0, limit) : rows;
       const last = page.at(-1);
       return {
-        items: page.map((row) => runtime.toProvider(row)),
+        items: page.map((row) => runtime.toProvider(row, row.model_count)),
         total,
         nextCursor:
           hasMore && last ? encodeCursor({ created_at: last.created_at, id: last.id }) : null,
@@ -741,12 +741,14 @@ export function register(ctx: PluginContext): void {
         draft.apiVersion,
         draft.authStyle,
         draft.authHeader,
-        draft.apiKey
-          ? runtime.sealKey(draft.apiKey)
-          : originChanged
-            ? null
-            : existing.api_key_sealed,
-        draft.apiKey ? now : existing.api_key_updated_at,
+        draft.authStyle === 'none'
+          ? null
+          : draft.apiKey
+            ? runtime.sealKey(draft.apiKey)
+            : originChanged
+              ? null
+              : existing.api_key_sealed,
+        draft.authStyle === 'none' ? null : draft.apiKey ? now : existing.api_key_updated_at,
         body.extraHeaders !== undefined
           ? extra
             ? runtime.sealHeaders(body.extraHeaders)
@@ -875,7 +877,10 @@ export function register(ctx: PluginContext): void {
       api_version: draft.apiVersion,
       auth_style: draft.authStyle,
       auth_header: draft.authHeader,
-      api_key_sealed: originChanged && !draft.apiKey ? null : (existing?.api_key_sealed ?? null),
+      api_key_sealed:
+        draft.authStyle === 'none' || (originChanged && !draft.apiKey)
+          ? null
+          : (existing?.api_key_sealed ?? null),
       api_key_updated_at: existing?.api_key_updated_at ?? null,
       extra_headers_sealed:
         originChanged && body.extraHeaders === undefined

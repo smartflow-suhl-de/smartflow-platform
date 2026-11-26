@@ -1392,8 +1392,12 @@ export function LlmProviderDetailPage({
                         </option>
                       ))}
                     </select>
-                    <Badge tone={assigned ? 'good' : 'warn'}>
-                      {assigned ? (purpose.model?.modelKey ?? '—') : messages.llm.unmapped}
+                    <Badge tone={assigned ? 'good' : purpose.model ? 'neutral' : 'warn'}>
+                      {assigned
+                        ? (purpose.model?.modelKey ?? '—')
+                        : purpose.model
+                          ? `${purpose.model.providerName} · ${purpose.model.modelKey}`
+                          : messages.llm.unmapped}
                     </Badge>
                   </div>
                 );

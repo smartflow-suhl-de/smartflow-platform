@@ -14,6 +14,9 @@ interface ProviderBody {
   allowedPlugins?: string[] | null;
   timeoutMs?: number;
   maxRetries?: number;
+  rateLimitPerMinute?: number;
+  dailyTokenLimit?: number;
+  monthlyBudgetMicros?: number;
   extraHeaders?: Record<string, string>;
 }
 
@@ -918,6 +921,163 @@ test('a rate-limited primary falls back to its configured model', async (t) => {
   };
   assert.equal(usage.model_id, fallbackModel.id);
   assert.equal(usage.status, 'ok');
+});
+
+test('a local rate limit on the primary still allows the configured fallback', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const primary = await createProvider(ctx.app, cookie, {
+    name: 'Primary',
+    baseUrl: 'https://primary.example/v1',
+    authStyle: 'none',
+    maxRetries: 0,
+    rateLimitPerMinute: 1,
+  });
+  const primaryModel = await createModel(ctx.app, cookie, primary.id, {
+    modelKey: 'primary-model',
+    label: 'Primary',
+  });
+  const fallback = await createProvider(ctx.app, cookie, {
+    name: 'Fallback',
+    baseUrl: 'https://fallback.example/v1',
+    authStyle: 'none',
+  });
+  const fallbackModel = await createModel(ctx.app, cookie, fallback.id, {
+    modelKey: 'fallback-model',
+    label: 'Fallback',
+  });
+  await createPurpose(ctx.app, cookie, {
+    purpose: 'chat.default',
+    modelId: primaryModel.id,
+    fallbackModelId: fallbackModel.id,
+  });
+
+  const seen: string[] = [];
+  stubFetch(t, (url) => {
+    seen.push(url);
+    return json({
+      choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+  });
+
+  const first = await internal(ctx, {
+    purpose: 'chat.default',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(first.statusCode, 200, first.payload);
+
+  // The primary's minute quota is spent, so the next call must use the
+  // fallback provider instead of failing on the local limit.
+  const second = await internal(ctx, {
+    purpose: 'chat.default',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(second.statusCode, 200, second.payload);
+  const body = second.json() as { model: { modelKey: string } };
+  assert.equal(body.model.modelKey, 'fallback-model');
+  assert.equal(seen.length, 2);
+  assert.match(seen[1] ?? '', /fallback\.example/);
+});
+
+test('daily token and monthly budget limits answer 429', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const daily = await createProvider(ctx.app, cookie, {
+    name: 'Daily',
+    baseUrl: 'https://daily.example/v1',
+    authStyle: 'none',
+    dailyTokenLimit: 10,
+  });
+  const dailyModel = await createModel(ctx.app, cookie, daily.id, {
+    modelKey: 'daily-model',
+    label: 'Daily',
+  });
+  await createPurpose(ctx.app, cookie, { purpose: 'chat.daily', modelId: dailyModel.id });
+
+  const monthly = await createProvider(ctx.app, cookie, {
+    name: 'Monthly',
+    baseUrl: 'https://monthly.example/v1',
+    authStyle: 'none',
+    monthlyBudgetMicros: 100,
+  });
+  const monthlyModel = await createModel(ctx.app, cookie, monthly.id, {
+    modelKey: 'monthly-model',
+    label: 'Monthly',
+  });
+  await createPurpose(ctx.app, cookie, { purpose: 'chat.monthly', modelId: monthlyModel.id });
+
+  const insert = ctx.db.prepare(
+    `insert into llm_usage (id, provider_id, purpose, caller, status, input_tokens, cost_micros, created_at)
+     values (?, ?, ?, 'agent', 'ok', ?, ?, ?)`,
+  );
+  const now = new Date().toISOString();
+  insert.run('llm_u_daily', daily.id, 'chat.daily', 25, 0, now);
+  insert.run('llm_u_monthly', monthly.id, 'chat.monthly', 1, 500, now);
+
+  const calls = stubFetch(t, () =>
+    json({
+      choices: [{ message: { content: 'must not be reached' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }),
+  );
+
+  const dailyResponse = await internal(ctx, {
+    purpose: 'chat.daily',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(dailyResponse.statusCode, 429, dailyResponse.payload);
+  assert.equal(
+    (dailyResponse.json() as { error: { code: string } }).error.code,
+    'llm_budget_exceeded',
+  );
+
+  const monthlyResponse = await internal(ctx, {
+    purpose: 'chat.monthly',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+  assert.equal(monthlyResponse.statusCode, 429, monthlyResponse.payload);
+  assert.equal(
+    (monthlyResponse.json() as { error: { code: string } }).error.code,
+    'llm_budget_exceeded',
+  );
+  assert.equal(calls.length, 0);
+});
+
+test('switching a provider to authStyle none removes the stored key', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const provider = await createProvider(ctx.app, cookie, {
+    name: 'Local',
+    baseUrl: 'https://llm.example/v1',
+    authStyle: 'bearer',
+    apiKey: TEST_KEY,
+  });
+  assert.equal(provider.keySet, true);
+
+  const response = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/llm/providers/${provider.id as string}`,
+    headers: { cookie },
+    payload: { authStyle: 'none' },
+  });
+  assert.equal(response.statusCode, 200, response.payload);
+  assert.equal((response.json() as { keySet: boolean }).keySet, false);
+
+  const row = ctx.db
+    .prepare('select api_key_sealed, api_key_updated_at from llm_provider where id = ?')
+    .get(provider.id as string) as {
+    api_key_sealed: string | null;
+    api_key_updated_at: string | null;
+  };
+  assert.equal(row.api_key_sealed, null);
+  assert.equal(row.api_key_updated_at, null);
 });
 
 test('a changed host cannot reuse the stored key or extra headers', async (t) => {

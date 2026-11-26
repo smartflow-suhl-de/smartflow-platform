@@ -72,8 +72,8 @@ export class LlmRuntime {
     return row.count;
   }
 
-  toProvider(row: ProviderRow): ProviderDto {
-    return toProvider(row, this.modelCount(row.id));
+  toProvider(row: ProviderRow, modelCount = this.modelCount(row.id)): ProviderDto {
+    return toProvider(row, modelCount);
   }
 
   /** Seals a key; the caller never sees this string outside the database. */
