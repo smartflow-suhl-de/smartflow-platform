@@ -47,6 +47,42 @@ test('production with https and secure cookies starts', () => {
   assert.equal(config.secureCookies, true);
 });
 
+test('production rejects an origin with a second scheme glued in', () => {
+  // `compose.yaml` builds the value from SF_TS_NODE_NAME and SF_TAILNET_DOMAIN.
+  // A domain half that still carries "https://" yields a string that starts
+  // with the right prefix but no browser can reach.
+  assert.throws(
+    () => loadConfig({ ...PROD_HTTPS, SF_PUBLIC_URL: 'https://smartflow.https://ts.net' }),
+    /SF_PUBLIC_URL must be a bare origin/,
+  );
+});
+
+test('production rejects an empty domain label', () => {
+  // A leading dot in SF_TAILNET_DOMAIN produces `node..ts.net`.
+  assert.throws(
+    () => loadConfig({ ...PROD_HTTPS, SF_PUBLIC_URL: 'https://smartflow..ts.net' }),
+    /empty domain label/,
+  );
+});
+
+test('production rejects an origin with a path or trailing slash', () => {
+  for (const value of ['https://app.example.test/app', 'https://app.example.test/']) {
+    assert.throws(
+      () => loadConfig({ ...PROD_HTTPS, SF_PUBLIC_URL: value }),
+      /SF_PUBLIC_URL must be a bare origin/,
+      value,
+    );
+  }
+});
+
+test('development keeps accepting a path-carrying URL', () => {
+  // Only production gets the strict check: a dev server may legitimately sit
+  // behind a path prefix.
+  assert.doesNotThrow(() =>
+    loadConfig({ NODE_ENV: 'development', SF_PUBLIC_URL: 'http://127.0.0.1:5273/app' }),
+  );
+});
+
 test('the magic-link era settings no longer exist', () => {
   const config = loadConfig({
     ...PROD_HTTPS,

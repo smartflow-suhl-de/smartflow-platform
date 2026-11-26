@@ -22,6 +22,13 @@ services:
       context: .
     image: smartflow-platform:local
     restart: unless-stopped
+    # Der Prozess läuft im Image als `node` und bindet 8790; er braucht keine
+    # Capabilities und darf keine dazugewinnen. Gleiche Härtung wie beim
+    # Tailscale-Dienst.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       # Aus Knotenname und Tailnet-Domain zusammengesetzt, damit die Adresse des
       # Knotens und die Anwendungs-Origin nicht auseinanderlaufen können.

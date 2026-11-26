@@ -43,6 +43,15 @@ Beim ersten Start meldet sich der Knoten im Tailnet an:
 Danach ist die Plattform unter `https://<SF_TS_NODE_NAME>.<SF_TAILNET_DOMAIN>/` erreichbar.
 TLS terminiert Tailscale mit einem echten Zertifikat; Clients importieren nichts.
 
+Zwei Fehlerquellen bei diesem zusammengesetzten Wert:
+
+- `SF_TAILNET_DOMAIN` ist nur der Domain-Rest, ohne Schema und ohne führenden Punkt
+  (`example-tailnet.ts.net`, nicht `https://example-tailnet.ts.net`). Der Start bricht ab,
+  wenn daraus keine reine Origin wird.
+- Ist der Knotenname im Tailnet schon vergeben, hängt Tailscale ein `-1` an
+  (`smartflow-platform-1`). Dann zeigt die Origin auf einen Namen, den es nicht gibt:
+  `SF_TS_NODE_NAME` anpassen, Volume `smartflow-ts-state` löschen und neu anmelden.
+
 ### Erreichbarkeit und Sicherheit
 
 - **Nur im Tailnet.** Ohne Caddy und ohne veröffentlichte Ports gibt es **keinen**
