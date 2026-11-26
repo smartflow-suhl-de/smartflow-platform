@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
+import type { ReactElement } from 'react';
 import { browser, setLocation } from './helpers/browser.ts';
 
-const { navigate } = await import('../src/lib/router.ts');
+const { AppLink, navigate } = await import('../src/lib/router.ts');
 
 describe('router.navigate', () => {
   beforeEach(() => {
@@ -152,5 +153,82 @@ describe('isPlainLeftClick', () => {
     ]) {
       assert.equal(isPlainLeftClick({ ...plain, ...patch }), false, JSON.stringify(patch));
     }
+  });
+});
+
+describe('AppLink', () => {
+  // The setup has no renderer, so the component is called directly and the
+  // click handler is taken off the element it returns. `AppLink` uses no hooks,
+  // which is what makes this safe.
+  function clickHandlerFor(props: Parameters<typeof AppLink>[0]) {
+    const element = AppLink(props) as unknown as ReactElement<{
+      onClick: (event: unknown) => void;
+    }>;
+    return element.props.onClick;
+  }
+
+  function fakeClickEvent() {
+    const event = {
+      button: 0,
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      defaultPrevented: false,
+      preventDefault() {
+        event.defaultPrevented = true;
+      },
+    };
+    return event;
+  }
+
+  beforeEach(() => {
+    browser.reset();
+    setLocation('/');
+  });
+
+  it('navigates on an unmodified click without target or download', () => {
+    const event = fakeClickEvent();
+    clickHandlerFor({ to: '/tenants' })(event);
+
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(browser.location.pathname, '/tenants');
+    assert.equal(browser.location.pushStateCalls.length, 1);
+  });
+
+  it('leaves a click with a target to the browser', () => {
+    const event = fakeClickEvent();
+    clickHandlerFor({ to: '/tenants', target: '_blank' })(event);
+
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(browser.location.pathname, '/');
+    assert.equal(browser.location.pushStateCalls.length, 0);
+  });
+
+  it('leaves a download click to the browser', () => {
+    const event = fakeClickEvent();
+    clickHandlerFor({ to: '/tenants.csv', download: 'tenants.csv' })(event);
+
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(browser.location.pathname, '/');
+    assert.equal(browser.location.pushStateCalls.length, 0);
+  });
+
+  it('lets the caller cancel the navigation in its own onClick', () => {
+    let callerRan = false;
+    const handler = clickHandlerFor({
+      to: '/tenants',
+      onClick: (event) => {
+        callerRan = true;
+        event.preventDefault();
+      },
+    });
+
+    const event = fakeClickEvent();
+    handler(event);
+
+    assert.equal(callerRan, true);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(browser.location.pushStateCalls.length, 0);
   });
 });

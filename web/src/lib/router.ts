@@ -80,7 +80,7 @@ export interface AppLinkProps extends AnchorHTMLAttributes<HTMLAnchorElement> {
 
 /**
  * True when the click should be handled by the SPA router. Modified clicks
- * (new tab, download, middle button) must keep the browser's default.
+ * (new tab, middle button) must keep the browser's default.
  */
 export function isPlainLeftClick(
   event: Pick<
@@ -101,7 +101,9 @@ export function isPlainLeftClick(
 export function AppLink({ to, replace, onClick, ...props }: AppLinkProps) {
   function handleClick(event: MouseEvent<HTMLAnchorElement>): void {
     onClick?.(event);
-    if (!isPlainLeftClick(event)) {
+    // `target` and `download` belong to the browser: intercepting them would
+    // swallow new tabs and file downloads.
+    if (props.target != null || props.download != null || !isPlainLeftClick(event)) {
       return;
     }
     event.preventDefault();
