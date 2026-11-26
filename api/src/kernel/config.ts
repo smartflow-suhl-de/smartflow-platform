@@ -50,6 +50,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const host = str(env.SF_HOST, '127.0.0.1');
   const loopbackHost =
     host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
+  const secureCookies = bool(
+    env.SF_SECURE_COOKIES,
+    nodeEnv === 'production' || publicUrl.startsWith('https://'),
+  );
+
+  // Production must never run on an insecure origin or with an insecure session
+  // cookie. Fail at startup instead of degrading silently: without this, a
+  // deployment that forgets SF_PUBLIC_URL keeps running over http and hands the
+  // session cookie to anyone on the wire.
+  if (nodeEnv === 'production') {
+    if (!publicUrl.startsWith('https://')) {
+      throw new Error(
+        `SF_PUBLIC_URL must start with https:// when NODE_ENV=production (got "${publicUrl}").`,
+      );
+    }
+    if (!secureCookies) {
+      throw new Error('SF_SECURE_COOKIES=0 is not allowed when NODE_ENV=production.');
+    }
+  }
+
   // Returning the sign-in link in the response is a development affordance. It
   // is off in production regardless of the variable, and additionally limited
   // to a loopback binding over plain http: on a public interface the link would
@@ -72,13 +92,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     devMagicLink,
     devAutoLogin: devMagicLink && bool(env.SF_DEV_AUTO_LOGIN, false),
-    // Fail closed in production: behind a TLS-terminating proxy `SF_PUBLIC_URL`
-    // may still be http, and a session cookie without `Secure` then travels in
-    // clear text on the last hop. Set `SF_SECURE_COOKIES=0` to opt out explicitly.
-    secureCookies: bool(
-      env.SF_SECURE_COOKIES,
-      nodeEnv === 'production' || publicUrl.startsWith('https://'),
-    ),
+    // The guard above rejects an insecure value in production, so this is the
+    // single place that decides it: behind a TLS-terminating proxy
+    // `SF_PUBLIC_URL` may still be http, and a session cookie without `Secure`
+    // then travels in clear text on the last hop.
+    secureCookies,
     logLevel: str(env.SF_LOG_LEVEL, nodeEnv === 'test' ? 'silent' : 'info'),
     trustProxy: bool(env.SF_TRUST_PROXY, false),
     bodyLimit: int(env.SF_BODY_LIMIT, 1_048_576),

@@ -66,22 +66,22 @@ Die API liest ausschließlich `SF_*`-Variablen mit entwicklungsfreundlichen Defa
 `.env` an der Repo-Wurzel wird automatisch geladen (`--env-file-if-exists`); Vorlage ist
 `.env.example`:
 
-| Variable                   | Default                      | Bedeutung                                                                                                                                           |
-| -------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SF_HOST`                  | `127.0.0.1`                  | Bind-Adresse der API                                                                                                                                |
-| `SF_PORT`                  | `8790`                       | Port der API                                                                                                                                        |
-| `SF_PUBLIC_URL`            | `http://127.0.0.1:5273`      | Öffentliche Origin; `https://` schaltet Secure-Cookies scharf                                                                                       |
-| `SF_DATA_DIR`              | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`) |
-| `SF_OPERATOR_EMAIL`        | `operator@smartflow.local`   | Erster Operator-Account                                                                                                                             |
-| `SF_OPERATOR_NAME`         | `Operator`                   | Anzeigename des Operators                                                                                                                           |
-| `SF_DEV_MAGIC_LINK`        | `1` (außer Production)       | Magic-Link im Response zurückgeben statt zu mailen                                                                                                  |
-| `SF_DEV_AUTO_LOGIN`        | `0`                          | Login-Seite konsumiert den Link selbst; nur mit `SF_DEV_MAGIC_LINK` und ohne `https://`                                                             |
-| `SF_SECURE_COOKIES`        | abhängig von `SF_PUBLIC_URL` | `Secure`-Flag am Session-Cookie                                                                                                                     |
-| `SF_LOG_LEVEL`             | `info` (`silent` in Tests)   | Fastify-Log-Level                                                                                                                                   |
-| `SF_TRUST_PROXY`           | `0`                          | `X-Forwarded-*` vertrauen                                                                                                                           |
-| `SF_BODY_LIMIT`            | `1048576`                    | Max. Request-Body in Bytes                                                                                                                          |
-| `SF_RATE_LIMIT_ENABLED`    | `1`                          | Rate-Limit aktiv                                                                                                                                    |
-| `SF_RATE_LIMIT_MAGIC_LINK` | `10`                         | Magic-Link-Anfragen pro Fenster                                                                                                                     |
+| Variable                   | Default                      | Bedeutung                                                                                                                                               |
+| -------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SF_HOST`                  | `127.0.0.1`                  | Bind-Adresse der API                                                                                                                                    |
+| `SF_PORT`                  | `8790`                       | Port der API                                                                                                                                            |
+| `SF_PUBLIC_URL`            | `http://127.0.0.1:5273`      | Öffentliche Origin. In `NODE_ENV=production` **Pflicht** und muss `https://` sein, sonst bricht der Start ab; `https://` schaltet Secure-Cookies scharf |
+| `SF_DATA_DIR`              | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`)     |
+| `SF_OPERATOR_EMAIL`        | `operator@smartflow.local`   | Erster Operator-Account                                                                                                                                 |
+| `SF_OPERATOR_NAME`         | `Operator`                   | Anzeigename des Operators                                                                                                                               |
+| `SF_DEV_MAGIC_LINK`        | `1` (außer Production)       | Magic-Link im Response zurückgeben statt zu mailen                                                                                                      |
+| `SF_DEV_AUTO_LOGIN`        | `0`                          | Login-Seite konsumiert den Link selbst; nur mit `SF_DEV_MAGIC_LINK` und ohne `https://`                                                                 |
+| `SF_SECURE_COOKIES`        | abhängig von `SF_PUBLIC_URL` | `Secure`-Flag am Session-Cookie; in `NODE_ENV=production` darf es nicht `0` sein, sonst bricht der Start ab                                             |
+| `SF_LOG_LEVEL`             | `info` (`silent` in Tests)   | Fastify-Log-Level                                                                                                                                       |
+| `SF_TRUST_PROXY`           | `0`                          | `X-Forwarded-*` vertrauen                                                                                                                               |
+| `SF_BODY_LIMIT`            | `1048576`                    | Max. Request-Body in Bytes                                                                                                                              |
+| `SF_RATE_LIMIT_ENABLED`    | `1`                          | Rate-Limit aktiv                                                                                                                                        |
+| `SF_RATE_LIMIT_MAGIC_LINK` | `10`                         | Magic-Link-Anfragen pro Fenster                                                                                                                         |
 
 Es gibt keinen produktiven Mail-Transport: Magic-Links werden im Dev-Modus im Response
 ausgeliefert.
