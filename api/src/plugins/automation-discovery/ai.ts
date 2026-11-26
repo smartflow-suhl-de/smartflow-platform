@@ -288,11 +288,13 @@ function parseReport(raw: unknown, selectedClusters: string[]): AnalysisReport {
   const summary = requireText(record.summary, MAX_SUMMARY, 'summary');
 
   const clusterList = Array.isArray(record.clusters) ? record.clusters : [];
+  const allowed = selectedClusters.length > 0 ? selectedClusters : null;
   const clusters: AnalysisCluster[] = [];
   for (const item of clusterList) {
     const entry = asRecord(item);
     const id = typeof entry?.id === 'string' ? entry.id.trim().toUpperCase() : '';
-    if (!selectedClusters.includes(id) || clusters.some((cluster) => cluster.id === id)) continue;
+    if (allowed && !allowed.includes(id)) continue;
+    if (clusters.some((cluster) => cluster.id === id)) continue;
     clusters.push({
       id,
       title: requireText(entry?.title, 200, 'a cluster title'),

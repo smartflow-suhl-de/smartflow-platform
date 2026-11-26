@@ -90,6 +90,39 @@ function localized(text: { de: string; en: string }, locale: Locale): string {
   return locale === 'en' ? text.en : text.de;
 }
 
+/**
+ * Reorders a rank field. An untouched field has no stored value yet, so the
+ * list starts from the visible options instead of an empty array.
+ * Exported because the web test suite checks the reordering without a DOM.
+ */
+export function reorderRank(
+  current: unknown,
+  options: Array<{ value: string }> | undefined,
+  index: number,
+  delta: number,
+): string[] {
+  const list =
+    Array.isArray(current) && current.length > 0
+      ? current.filter((entry): entry is string => typeof entry === 'string')
+      : (options ?? []).map((option) => option.value);
+  const target = index + delta;
+  if (target < 0 || target >= list.length) return list;
+  const [entry] = list.splice(index, 1);
+  if (entry === undefined) return list;
+  list.splice(target, 0, entry);
+  return list;
+}
+
+/** Aria label for a rank arrow; "next" would announce the wrong action. */
+export function rankMoveLabel(
+  messages: Messages,
+  direction: 'up' | 'down',
+  option: string,
+): string {
+  const action = direction === 'up' ? messages.discovery.moveUp : messages.discovery.moveDown;
+  return `${action}: ${option}`;
+}
+
 export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublicPageProps) {
   const [state, setState] = useState<DiscoveryPublicState | null>(null);
   const [closed, setClosed] = useState<ClosedState | null>(null);
@@ -181,13 +214,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
 
   function moveRank(field: DiscoveryField, index: number, delta: number): void {
     const current = values[field.key];
-    const list = Array.isArray(current) ? [...current] : [];
-    const target = index + delta;
-    if (target < 0 || target >= list.length) return;
-    const [entry] = list.splice(index, 1);
-    if (entry === undefined) return;
-    list.splice(target, 0, entry);
-    update(field, list);
+    update(field, reorderRank(current, field.options, index, delta));
   }
 
   async function saveCurrent(): Promise<boolean> {
@@ -660,7 +687,11 @@ function FieldBlock({
                 <button
                   type="button"
                   className="sf-btn sf-btn-ghost sf-btn-sm"
-                  aria-label={`${m.discovery.next}: ${option ? localized(option.label, locale) : optionValue}`}
+                  aria-label={rankMoveLabel(
+                    m,
+                    'up',
+                    option ? localized(option.label, locale) : optionValue,
+                  )}
                   disabled={index === 0}
                   onClick={() => onMoveRank(index, -1)}
                 >
@@ -669,7 +700,11 @@ function FieldBlock({
                 <button
                   type="button"
                   className="sf-btn sf-btn-ghost sf-btn-sm"
-                  aria-label={`${m.discovery.backToStart}: ${option ? localized(option.label, locale) : optionValue}`}
+                  aria-label={rankMoveLabel(
+                    m,
+                    'down',
+                    option ? localized(option.label, locale) : optionValue,
+                  )}
                   disabled={index === list.length - 1}
                   onClick={() => onMoveRank(index, 1)}
                 >

@@ -931,3 +931,134 @@ test('the contact wish is validated and stored', async (t) => {
   assert.equal(state.answers['confirm.contact.wanted'], true);
   assert.equal(state.answers['confirm.contact.way'], 'Telefon am Vormittag');
 });
+
+test('the short check completes without a cluster selection', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  stubLlm(ctx, llmReply);
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie, {
+    customerName: 'Kurzcheck GmbH',
+    mode: 'short',
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  await advance(ctx, invite.token);
+  for (let index = 0; index < 12; index += 1) {
+    const state = await getState(ctx, invite.token);
+    assert.ok(state.step);
+    await postAnswers(
+      ctx,
+      invite.token,
+      state.step.fields
+        .filter((field) => field.required)
+        .map((field) => ({ key: field.key, value: answerFor(field) })),
+    );
+    const moved = await advance(ctx, invite.token, index === 11 ? { shortcut: true } : {});
+    assert.equal(moved.statusCode, 200, JSON.stringify(moved.state));
+  }
+
+  for (let guard = 0; guard < 5; guard += 1) {
+    const state = await getState(ctx, invite.token);
+    if (!state.step) break;
+    await postAnswers(
+      ctx,
+      invite.token,
+      state.step.fields
+        .filter((field) => field.required)
+        .map((field) => ({ key: field.key, value: answerFor(field) })),
+    );
+    const moved = await advance(ctx, invite.token);
+    assert.equal(moved.statusCode, 200, JSON.stringify(moved.state));
+  }
+
+  // No clusters.selected answer exists in the short check; the report must
+  // still accept the clusters the model proposed.
+  const completed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+  });
+  assert.equal(completed.statusCode, 200, completed.payload);
+  const payload = completed.json() as {
+    report: { clusters: Array<{ id: string }> } | null;
+  };
+  assert.ok((payload.report?.clusters.length ?? 0) > 0);
+});
+
+test('the full mode counts its deepen steps in the progress', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  stubLlm(ctx, llmReply);
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie, {
+    customerName: 'Voll GmbH',
+    mode: 'full',
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  await advance(ctx, invite.token);
+  for (let index = 0; index < 12; index += 1) {
+    const state = await getState(ctx, invite.token);
+    assert.ok(state.step);
+    await postAnswers(
+      ctx,
+      invite.token,
+      state.step.fields
+        .filter((field) => field.required)
+        .map((field) => ({ key: field.key, value: answerFor(field) })),
+    );
+    const moved = await advance(ctx, invite.token);
+    assert.equal(moved.statusCode, 200, JSON.stringify(moved.state));
+  }
+
+  const clusters = await getState(ctx, invite.token);
+  assert.equal(clusters.phase, 'clusters');
+  await postAnswers(ctx, invite.token, [{ key: 'clusters.selected', value: ['A', 'B'] }]);
+  const moved = await advance(ctx, invite.token);
+  assert.equal(moved.statusCode, 200, JSON.stringify(moved.state));
+  assert.equal(moved.state.phase, 'deepen');
+  // 1 + 12 map + 1 cluster + 2 × 8 deepen + 3 confirm = 33. Without the
+  // deepen share the denominator would be 17 and jump to 82 % here.
+  assert.ok(moved.state.progress < 70, `progress ${moved.state.progress}`);
+});
+
+test('an invitation that expired on read is purged after retention', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  const stale = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString();
+  // A GET only reports expiry; the stored status stays 'open'.
+  ctx.db
+    .prepare('update discovery_invite set expires_at = ?, status = ? where id = ?')
+    .run(stale, 'open', invite.id);
+
+  const overview = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/discovery/overview',
+    headers: { cookie },
+  });
+  assert.equal(overview.statusCode, 200, overview.payload);
+  const row = ctx.db.prepare('select id from discovery_invite where id = ?').get(invite.id);
+  assert.equal(row, undefined);
+});
+
+test('the public interview route carries a real OpenAPI summary', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/openapi.json',
+    headers: { cookie },
+  });
+  assert.equal(response.statusCode, 200);
+  const doc = response.json() as {
+    paths: Record<string, Record<string, { summary?: string }>>;
+  };
+  const summary = doc.paths['/api/v1/discovery/public/{token}']?.get?.summary;
+  assert.ok(summary);
+  assert.notEqual(summary, 'Public interview state for a link');
+  assert.match(summary, /public interview/i);
+});

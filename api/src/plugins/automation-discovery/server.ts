@@ -170,7 +170,7 @@ function deepenSteps(
 function totalSteps(mode: Mode, clusters: number, shortcut: boolean): number {
   const confirm = CONFIRM_STEPS.length;
   if (shortcut || mode === 'short') return 1 + 12 + confirm;
-  const deepen = mode === 'full' || clusters === 0 ? 0 : clusters * 8;
+  const deepen = clusters === 0 ? 0 : clusters * 8;
   return 1 + 12 + 1 + deepen + confirm;
 }
 
@@ -579,7 +579,7 @@ export function register(ctx: PluginContext): void {
     'POST /discovery/invites/:id/revoke': 'Revoke an invitation immediately',
     'POST /discovery/invites/:id/resend': 'Rotate the link of an open invitation',
     'GET /discovery/invites/:id/report': 'Read the validated assessment of an invitation',
-    'GET /discovery/public/:token': 'Public interview state for a link',
+    'GET /discovery/public/:token': 'Read the public interview state for a link',
     'POST /discovery/public/:token/answers': 'Save public interview answers idempotently',
     'POST /discovery/public/:token/advance':
       'Advance the public interview and ask the AI for a hint',
@@ -604,7 +604,7 @@ export function register(ctx: PluginContext): void {
         `select id from discovery_invite
          where (completed_at is not null and completed_at < ?)
             or (revoked_at is not null and revoked_at < ?)
-            or (status = 'expired' and expires_at < ?)`,
+            or (expires_at < ?)`,
       )
       .all(cutoff, cutoff, cutoff) as Array<{ id: string }>;
     if (stale.length === 0) return;

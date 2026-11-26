@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { DiscoveryStep } from '../src/lib/types.ts';
 
-const { answersForStep, missingRequired } = await import('../src/pages/DiscoveryPublic.tsx');
+const { answersForStep, missingRequired, reorderRank, rankMoveLabel } =
+  await import('../src/pages/DiscoveryPublic.tsx');
+const { getMessages } = await import('../src/lib/i18n.ts');
 const { discoveryPublic, ApiError } = await import('../src/lib/api.ts');
 
 const step: DiscoveryStep = {
@@ -114,5 +116,33 @@ describe('public discovery client', () => {
       () => discoveryPublic.state('abc'),
       (error: unknown) => error instanceof ApiError && error.code === 'rate_limited',
     );
+  });
+});
+
+describe('reorderRank', () => {
+  const options = [{ value: 'a' }, { value: 'b' }, { value: 'c' }];
+
+  it('starts an untouched rank field from its visible options', () => {
+    assert.deepEqual(reorderRank(undefined, options, 0, 1), ['b', 'a', 'c']);
+  });
+
+  it('keeps the guard at both ends', () => {
+    assert.deepEqual(reorderRank(undefined, options, 0, -1), ['a', 'b', 'c']);
+    assert.deepEqual(reorderRank(undefined, options, 2, 1), ['a', 'b', 'c']);
+  });
+
+  it('moves within a stored order', () => {
+    assert.deepEqual(reorderRank(['c', 'a', 'b'], options, 2, -1), ['c', 'b', 'a']);
+  });
+});
+
+describe('rankMoveLabel', () => {
+  it('announces the arrow direction instead of next/back', () => {
+    const de = getMessages('de');
+    assert.equal(rankMoveLabel(de, 'up', 'Angebot'), 'Nach oben: Angebot');
+    assert.equal(rankMoveLabel(de, 'down', 'Angebot'), 'Nach unten: Angebot');
+    const en = getMessages('en');
+    assert.equal(rankMoveLabel(en, 'up', 'Offer'), 'Move up: Offer');
+    assert.equal(rankMoveLabel(en, 'down', 'Offer'), 'Move down: Offer');
   });
 });

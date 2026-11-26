@@ -371,6 +371,8 @@ export interface Messages {
     fieldRequired: string;
     publicFooter: string;
     backToStart: string;
+    moveUp: string;
+    moveDown: string;
   };
 }
 
@@ -744,6 +746,8 @@ const DE: Messages = {
     fieldRequired: 'Bitte beantworten Sie diese Frage.',
     publicFooter: 'Ihre Angaben werden vertraulich behandelt.',
     backToStart: 'Zurück',
+    moveUp: 'Nach oben',
+    moveDown: 'Nach unten',
   },
 };
 
@@ -1108,6 +1112,8 @@ const EN: Messages = {
     fieldRequired: 'Please answer this question.',
     publicFooter: 'Your answers are treated confidentially.',
     backToStart: 'Back',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
   },
 };
 
