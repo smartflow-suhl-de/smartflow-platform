@@ -10,15 +10,15 @@ Interne, mandantenfähige Operations- und Service-Plattform.
 
 ## Stack
 
-| Bereich     | Wahl                                                                         |
-| ----------- | ---------------------------------------------------------------------------- |
-| Runtime     | Node.js 22 LTS (`.nvmrc`), TypeScript 5.9 `strict`                           |
-| API         | Fastify 5 unter `/api/v1`, better-sqlite3, OpenAPI unter `/api/openapi.json` |
-| Web         | React 19, Vite 8, TypeScript SPA                                             |
-| Tests       | `node:test` über `tsx`                                                       |
-| Lint/Format | ESLint 9 (flat config), typescript-eslint, react-hooks, Prettier             |
-| Pakete      | npm workspaces (`api/`, `web/`), ein Lockfile auf Repo-Ebene                 |
-| Container   | `Dockerfile` (Node 22 slim, Port 8790)                                       |
+| Bereich     | Wahl                                                                              |
+| ----------- | --------------------------------------------------------------------------------- |
+| Runtime     | Node.js 22 LTS (`.nvmrc`), TypeScript 5.9 `strict`                                |
+| API         | Fastify 5 unter `/api/v1`, better-sqlite3, OpenAPI unter `/api/openapi.json`      |
+| Web         | React 19, Vite 8, TypeScript SPA                                                  |
+| Tests       | `node:test` über `tsx`                                                            |
+| Lint/Format | ESLint 9 (flat config), typescript-eslint, react-hooks, Prettier                  |
+| Pakete      | npm workspaces (`api/`, `web/`), ein Lockfile auf Repo-Ebene                      |
+| Container   | Mehrstufiges `Dockerfile` (Node 22 slim, Port 8790), `compose.yaml` mit Caddy/TLS |
 
 ## Voraussetzungen
 
@@ -48,7 +48,7 @@ Alle Befehle laufen an der Repo-Wurzel.
 | `npm run dev:web`      | Vite-Dev-Server auf `127.0.0.1:5273`, `/api` wird auf `:8790` geproxyt |
 | `npm run build`        | API-Typecheck + Web-Produktionsbuild nach `web/dist/`                  |
 | `npm start`            | API ohne Watch-Modus starten                                           |
-| `npm test`             | Alle Tests: 32 Kernel-/Plugin-Tests plus 136 Web-Tests                 |
+| `npm test`             | Alle Tests: 48 Kernel-/Plugin-Tests plus 136 Web-Tests                 |
 | `npm run test:api`     | Nur die Kernel-/Plugin-Tests (`api/test/kernel/`)                      |
 | `npm run test:web`     | Nur die Web-Tests (`web/test/`)                                        |
 | `npm run typecheck`    | `tsc --noEmit` für API und Web                                         |
@@ -72,6 +72,7 @@ Die API liest ausschließlich `SF_*`-Variablen mit entwicklungsfreundlichen Defa
 | `SF_PORT`                  | `8790`                       | Port der API                                                                                                                                            |
 | `SF_PUBLIC_URL`            | `http://127.0.0.1:5273`      | Öffentliche Origin. In `NODE_ENV=production` **Pflicht** und muss `https://` sein, sonst bricht der Start ab; `https://` schaltet Secure-Cookies scharf |
 | `SF_DATA_DIR`              | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`)     |
+| `SF_WEB_DIR`               | leer                         | Gebautes SPA, das die API unter `/` ausliefert. Leer = reine API; im Container `/app/web/dist`                                                          |
 | `SF_OPERATOR_EMAIL`        | `operator@smartflow.local`   | Erster Operator-Account                                                                                                                                 |
 | `SF_OPERATOR_NAME`         | `Operator`                   | Anzeigename des Operators                                                                                                                               |
 | `SF_DEV_MAGIC_LINK`        | `1` (außer Production)       | Magic-Link im Response zurückgeben statt zu mailen                                                                                                      |
@@ -106,11 +107,15 @@ ausgeliefert.
 │   ├── index.html
 │   └── vite.config.ts
 ├── .github/workflows/ci.yml CI-Gate
+├── docs/deployment.md       Betriebsanleitung für den Docker-Betrieb
 ├── .impeccable/             Designsystem-Artefakte (config.json, design.json)
 ├── DESIGN.md                Designsystem
 ├── PRODUCT.md               Produktbeschreibung
-├── Dockerfile               Container-Build, Port 8790
-└── .env.example             Konfigurationsvorlage
+├── compose.yaml             App plus Caddy (TLS), Protokoll auf 80/443
+├── deploy/caddy/            Caddyfile + Image für Reverse Proxy und Zertifikate
+├── Dockerfile               Mehrstufiger Container-Build, Port 8790
+├── .env.example             Konfigurationsvorlage (lokal)
+└── .env.production.example  Konfigurationsvorlage (Docker/Compose)
 ```
 
 Laufzeitdaten (`data/`, `*.sqlite*`), Builds (`dist/`) und `.env` sind nicht versioniert.
@@ -131,14 +136,23 @@ Ein roter Schritt blockiert den Merge. Vor dem Push lokal dieselben fünf Befehl
 
 ## Container
 
+Deployment-Ziel ist Docker: ein Container, in dem die API auch die gebaute SPA ausliefert,
+davor Caddy für TLS. Die vollständige Anleitung inklusive Backup, Update und Grenzen steht
+in [`docs/deployment.md`](docs/deployment.md).
+
 ```bash
-docker build -t smartflow-platform:issue-1 .
-docker run --rm -p 8790:8790 smartflow-platform:issue-1
+cp .env.production.example .env   # SF_DOMAIN und SF_OPERATOR_EMAIL setzen
+docker compose up -d --build
+docker compose ps                 # auf "healthy" warten
 ```
 
-Das Image setzt `SF_HOST=0.0.0.0` und `SF_DATA_DIR=/data`, läuft als `node`-User und
-erwartet ein beschreibbares Volume auf `/data`. Ein Registry- oder Deployment-Ziel ist noch
-nicht festgelegt.
+Das Image setzt `NODE_ENV=production`, `SF_HOST=0.0.0.0`, `SF_DATA_DIR=/data` und
+`SF_WEB_DIR=/app/web/dist`, läuft als `node`-User und erwartet ein beschreibbares Volume
+auf `/data`. `SF_PUBLIC_URL` hat bewusst keinen Default: im Produktivbetrieb muss sie
+`https://` sein, sonst bricht der Start ab.
+
+Ein einzelner Container, kein Autoscaling: je Mandant liegt eine eigene SQLite-Datei, und
+die verträgt genau einen schreibenden Prozess.
 
 ## Arbeitsweise
 
