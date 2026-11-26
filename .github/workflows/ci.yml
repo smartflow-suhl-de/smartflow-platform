@@ -37,3 +37,31 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # `docker build` alone does not prove the image starts: the first version of
+  # the Dockerfile built fine and then failed at startup because the copied
+  # files were unreadable for the unprivileged user. This job runs the image.
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build image
+        run: docker build --tag smartflow-platform:ci .
+
+      - name: Smoke test the image
+        run: node .github/scripts/container-smoke.mjs
+
+      - name: Container logs on failure
+        if: failure()
+        continue-on-error: true
+        run: docker logs smartflow-smoke || true
+
+      - name: Remove container
+        if: always()
+        continue-on-error: true
+        run: docker rm --force smartflow-smoke || true
