@@ -18,7 +18,7 @@ Interne, mandantenfähige Operations- und Service-Plattform.
 | Tests       | `node:test` über `tsx`                                                            |
 | Lint/Format | ESLint 9 (flat config), typescript-eslint, react-hooks, Prettier                  |
 | Pakete      | npm workspaces (`api/`, `web/`), ein Lockfile auf Repo-Ebene                      |
-| Container   | Mehrstufiges `Dockerfile` (Node 22 slim, Port 8790), `compose.yaml` mit Caddy/TLS |
+| Container   | Mehrstufiges `Dockerfile` (Node 22 slim, Port 8790), `compose.yaml` mit Tailscale |
 
 ## Voraussetzungen
 
@@ -108,8 +108,8 @@ Die Passwörter liegen als scrypt-Hash in der Datenbank.
 ├── .impeccable/             Designsystem-Artefakte (config.json, design.json)
 ├── DESIGN.md                Designsystem
 ├── PRODUCT.md               Produktbeschreibung
-├── compose.yaml             App plus Caddy (TLS), Protokoll auf 80/443
-├── deploy/caddy/            Caddyfile + Image für Reverse Proxy und Zertifikate
+├── compose.yaml             App plus Tailscale-Knoten, keine Host-Ports
+├── deploy/tailscale/        Image mit Serve-Konfiguration für den Tailnet-Knoten
 ├── Dockerfile               Mehrstufiger Container-Build, Port 8790
 ├── .env.example             Konfigurationsvorlage (lokal)
 └── .env.production.example  Konfigurationsvorlage (Docker/Compose)
@@ -134,11 +134,11 @@ Ein roter Schritt blockiert den Merge. Vor dem Push lokal dieselben fünf Befehl
 ## Container
 
 Deployment-Ziel ist Docker: ein Container, in dem die API auch die gebaute SPA ausliefert,
-davor Caddy für TLS. Die vollständige Anleitung inklusive Backup, Update und Grenzen steht
+erreichbar über einen eigenen Tailscale-Knoten (nur im Tailnet). Die vollständige Anleitung inklusive Backup, Update und Grenzen steht
 in [`docs/deployment.md`](docs/deployment.md).
 
 ```bash
-cp .env.production.example .env   # SF_DOMAIN und SF_OPERATOR_EMAIL (ACME-Kontakt) setzen
+cp .env.production.example .env   # SF_TAILNET_DOMAIN setzen
 docker compose up -d --build
 docker compose ps                 # auf "healthy" warten
 ```
