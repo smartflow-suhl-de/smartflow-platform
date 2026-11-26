@@ -129,4 +129,8 @@ test('SF_TRUST_PROXY becomes a hop count, not a blanket trust', () => {
   // client address, and a spoofable header would let one client exhaust it for
   // everyone or dodge it entirely.
   assert.equal(loadConfig({ SF_TRUST_PROXY: 'true' }).trustProxy, 1);
+  // Anything unrecognised fails closed.
+  for (const v of ['no', 'off', '-1', 'garbage']) {
+    assert.equal(loadConfig({ SF_TRUST_PROXY: v }).trustProxy, 0, v);
+  }
 });

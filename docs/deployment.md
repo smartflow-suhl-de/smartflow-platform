@@ -73,6 +73,11 @@ docker compose ps                 # wieder auf "healthy" warten
 `app` und `caddy` werden nur neu erstellt, wenn sich ihr Image oder ihre Konfiguration
 ändert. Die Volumes bleiben unangetastet; Datenbankmigrationen laufen beim Start.
 
+> **Upgrade vom Magic-Link-Stand:** Ein vorhandener Operator ohne Passwort wird beim
+> ersten Setup übernommen, und `/api/v1/auth/setup` ist bis dahin für jeden erreichbaren
+> Client offen. Setup deshalb direkt nach dem Update selbst abschließen. Alte Sitzungen
+> dieses Kontos werden dabei beendet.
+
 ## Backup
 
 Alles, was gesichert werden muss, steht im Volume `data`: die Plattform-Datenbank, eine

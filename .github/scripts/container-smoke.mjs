@@ -45,7 +45,7 @@ function inContainer(script) {
 }
 
 function request(path, init = '') {
-  const snippet = `fetch('http://127.0.0.1:${port}${path}'${init}).then(async (r) => { const b = await r.text(); console.log(JSON.stringify({ status: r.status, body: b })); }).catch((e) => { console.log(JSON.stringify({ status: 0, error: e.message })); })`;
+  const snippet = `fetch('http://127.0.0.1:${Number(port)}${path}'${init}).then(async (r) => { const b = await r.text(); console.log(JSON.stringify({ status: r.status, body: b })); }).catch((e) => { console.log(JSON.stringify({ status: 0, error: e.message })); })`;
   const raw = inContainer(snippet);
   try {
     return JSON.parse(raw);
@@ -56,7 +56,7 @@ function request(path, init = '') {
 
 /** Like `request`, but keeps the response headers: the session cookie proves itself. */
 function requestWithHeaders(path, init = '') {
-  const snippet = `fetch('http://127.0.0.1:${port}${path}'${init}).then(async (r) => { const b = await r.text(); console.log(JSON.stringify({ status: r.status, body: b, setCookie: r.headers.get('set-cookie') })); }).catch((e) => { console.log(JSON.stringify({ status: 0, error: e.message })); })`;
+  const snippet = `fetch('http://127.0.0.1:${Number(port)}${path}'${init}).then(async (r) => { const b = await r.text(); console.log(JSON.stringify({ status: r.status, body: b, setCookie: r.headers.get('set-cookie') })); }).catch((e) => { console.log(JSON.stringify({ status: 0, error: e.message })); })`;
   const raw = inContainer(snippet);
   try {
     return JSON.parse(raw);
@@ -114,7 +114,7 @@ check(setupState.body.includes('"required":true'), 'a fresh image reports that s
 const setupPassword = 'smoke-test-passphrase';
 const setup = request(
   '/api/v1/auth/setup',
-  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}', name: 'Operator', password: '${setupPassword}' }) }`,
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ${JSON.stringify(email)}, name: 'Operator', password: ${JSON.stringify(setupPassword)} }) }`,
 );
 check(setup.status === 201, 'the setup route creates the first operator');
 check(setup.body.includes('"role":"operator"'), 'setup signs the operator in');
@@ -122,21 +122,21 @@ check(!setup.body.includes(setupPassword), 'setup never echoes the password');
 
 const secondSetup = request(
   '/api/v1/auth/setup',
-  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'other@example.test', name: 'Other', password: '${setupPassword}' }) }`,
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'other@example.test', name: 'Other', password: ${JSON.stringify(setupPassword)} }) }`,
 );
 check(secondSetup.status === 409, 'a second setup is refused');
 check(secondSetup.body.includes('setup_complete'), 'the refusal uses the shared error shape');
 
 const wrongLogin = request(
   '/api/v1/auth/login',
-  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}', password: 'wrong-passphrase-1' }) }`,
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ${JSON.stringify(email)}, password: 'wrong-passphrase-1' }) }`,
 );
 check(wrongLogin.status === 401, 'a wrong password is refused');
 check(wrongLogin.body.includes('invalid_credentials'), 'the refusal names the stable error code');
 
 const login = requestWithHeaders(
   '/api/v1/auth/login',
-  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}', password: '${setupPassword}' }) }`,
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: ${JSON.stringify(email)}, password: ${JSON.stringify(setupPassword)} }) }`,
 );
 check(login.status === 200, 'the right password signs in');
 check(login.body.includes('"email"'), 'login answers with the signed-in user');

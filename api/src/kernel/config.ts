@@ -48,9 +48,9 @@ function trustProxyHops(value: string | undefined): number {
   }
   const parsed = Number.parseInt(value, 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  // `true` and unknown values keep the conservative single-hop assumption
-  // instead of silently trusting the whole chain.
-  return value.toLowerCase() === 'true' ? 1 : 1;
+  // `true` means one hop; anything else (`no`, `off`, `-1`, typos) fails closed:
+  // trusting no proxy is safe, guessing one is not.
+  return value.toLowerCase() === 'true' ? 1 : 0;
 }
 
 function bool(value: string | undefined, fallback: boolean): boolean {

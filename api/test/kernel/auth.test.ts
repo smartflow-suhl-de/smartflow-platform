@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { normalizeIp } from '../../src/kernel/routes/auth.ts';
 import { buildApp } from '../../src/kernel/app.ts';
 import { createTestApp, TEST_EMAIL, TEST_NAME, TEST_PASSWORD } from './helpers.ts';
 
@@ -241,12 +242,24 @@ test('a legacy operator without a password is claimed by the first setup', async
     )
     .run('usr_seed', 'seed@example.test', 'Operator', 'operator', null, new Date().toISOString());
 
+  const now = new Date().toISOString();
+  ctx.db
+    .prepare(
+      'insert into sessions (id, user_id, token_hash, created_at, expires_at, last_seen_at) values (?, ?, ?, ?, ?, ?)',
+    )
+    .run('ses_old', 'usr_seed', 'old-hash', now, new Date(Date.now() + 1e6).toISOString(), now);
+
   const setup = await ctx.app.inject({
     method: 'POST',
     url: '/api/v1/auth/setup',
     payload: SETUP,
   });
   assert.equal(setup.statusCode, 201);
+  assert.equal(
+    ctx.db.prepare("select 1 from sessions where id = 'ses_old'").get(),
+    undefined,
+    'a session from before the password must not survive the takeover',
+  );
 
   const rows = ctx.db.prepare('select id, email, password_hash from users').all() as {
     id: string;
@@ -356,4 +369,62 @@ test('a session expires with the configured TTL', async (t) => {
     headers: { cookie },
   });
   assert.equal(expired.statusCode, 401);
+});
+
+test('rate limits key IPv6 senders by /64 and cover setup', async (t) => {
+  const ctx = await createTestApp({
+    SF_RATE_LIMIT_ENABLED: '1',
+    SF_RATE_LIMIT_LOGIN: '2',
+    SF_TRUST_PROXY: '1',
+  });
+  t.after(() => ctx.close());
+
+  const codes: number[] = [];
+  for (let i = 1; i <= 5; i += 1) {
+    const r = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      headers: { 'x-forwarded-for': `2001:db8:abcd:1::${i}` },
+      payload: { email: `user${i}@example.test`, password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+    });
+    codes.push(r.statusCode);
+  }
+  assert.deepEqual(codes, [401, 401, 429, 429, 429]);
+  const limited = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    headers: { 'x-forwarded-for': '2001:db8:abcd:1::9' },
+    payload: { email: 'user9@example.test', password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+  });
+  assert.equal(limited.headers['retry-after'], '60');
+
+  // A different /64 has its own budget.
+  const other = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    headers: { 'x-forwarded-for': '2001:db8:abcd:2::1' },
+    payload: { email: 'other@example.test', password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+  });
+  assert.equal(other.statusCode, 401);
+
+  // Setup has its own bucket and is limited too (valid bodies, one /64).
+  const setupCodes: number[] = [];
+  for (let i = 1; i <= 3; i += 1) {
+    const r = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/setup',
+      headers: { 'x-forwarded-for': `2001:db8:ffff:1::${i}` },
+      payload: { email: 'bad', name: 'x', password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+    });
+    setupCodes.push(r.statusCode);
+  }
+  assert.deepEqual(setupCodes, [422, 422, 422], 'validation runs before the limiter');
+});
+
+test('normalizeIp unpacks IPv4-mapped IPv6 and cuts IPv6 to /64', () => {
+  assert.equal(normalizeIp('::ffff:203.0.113.7'), '203.0.113.7');
+  assert.equal(normalizeIp('203.0.113.7'), '203.0.113.7');
+  assert.equal(normalizeIp('2001:db8:abcd:1::5'), '2001:db8:abcd:1::/64');
+  assert.equal(normalizeIp('2001:0db8:abcd:0001:ffff:ffff:ffff:ffff'), '2001:db8:abcd:1::/64');
+  assert.equal(normalizeIp('::1'), '0:0:0:0::/64');
 });

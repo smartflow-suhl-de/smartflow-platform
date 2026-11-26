@@ -60,9 +60,38 @@ const authMeSchema = {
   },
 } as const;
 
-/** Sliding-window-ish counter per sender, held in memory. A restart clears it. */
+/** Upper bound on tracked keys per limiter; the oldest are evicted beyond it. */
+const MAX_KEYS = 10_000;
+
+/**
+ * Collapses an address to the unit an attacker cannot cheaply multiply:
+ * IPv4-mapped IPv6 becomes IPv4, other IPv6 is cut to its /64 prefix.
+ */
+export function normalizeIp(ip: string): string {
+  const lower = ip.toLowerCase().split('%')[0] ?? '';
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(lower);
+  if (mapped) return mapped[1] as string;
+  if (!lower.includes(':')) return lower;
+  const [head = '', tail] = lower.split('::');
+  const headGroups = head === '' ? [] : head.split(':');
+  const tailGroups = tail === undefined || tail === '' ? [] : tail.split(':');
+  const missing = Math.max(0, 8 - headGroups.length - tailGroups.length);
+  const groups = [
+    ...headGroups,
+    ...(tail === undefined ? [] : Array<string>(missing).fill('0')),
+    ...tailGroups,
+  ];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => (g === '' ? '0' : g.replace(/^0+(?=.)/, '')))
+    .join(':')}::/64`;
+}
+
+/** Sliding-window counter per key, held in memory and bounded. A restart clears it. */
 function createLimiter(limit: number, windowMs: number) {
+  // Map keeps insertion order: the first key is the oldest-inserted one.
   const hits = new Map<string, number[]>();
+  let lastPrune = 0;
 
   const prune = (at: number): void => {
     const since = at - windowMs;
@@ -74,15 +103,25 @@ function createLimiter(limit: number, windowMs: number) {
   };
 
   return (key: string, at: number): boolean => {
-    // Bound the map: one entry per attacker-supplied key would otherwise grow
-    // without limit. Pruning on every call keeps it at "keys active in the window".
-    if (hits.size > 10_000) prune(at);
+    // Prune at most once per second, and only when the map is large.
+    if (hits.size >= MAX_KEYS && at - lastPrune >= 1000) {
+      lastPrune = at;
+      prune(at);
+    }
+    // Still full: evict the oldest keys so memory and per-request work stay bounded.
+    while (hits.size >= MAX_KEYS && !hits.has(key)) {
+      const oldest = hits.keys().next().value;
+      if (oldest === undefined) break;
+      hits.delete(oldest);
+    }
     const times = (hits.get(key) ?? []).filter((time) => time > at - windowMs);
     if (times.length >= limit) {
+      hits.delete(key);
       hits.set(key, times);
       return false;
     }
     times.push(at);
+    hits.delete(key);
     hits.set(key, times);
     return true;
   };
@@ -177,6 +216,7 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
           409: errorSchema,
           422: errorSchema,
           429: errorSchema,
+          503: errorSchema,
         },
       },
     },
@@ -197,7 +237,8 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       }
       if (Object.keys(fields).length > 0) throw new FieldError(fields);
 
-      if (config.rateLimit.enabled && !allowSetup(request.ip, now().getTime())) {
+      if (config.rateLimit.enabled && !allowSetup(normalizeIp(request.ip), now().getTime())) {
+        reply.header('Retry-After', '60');
         throw new AppError('rate_limited', 'Too many attempts. Please try again in a minute.', 429);
       }
 
@@ -228,7 +269,13 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
             password: { type: 'string', minLength: 1, maxLength: PASSWORD_MAX },
           },
         },
-        response: { 200: authMeSchema, 401: errorSchema, 422: errorSchema, 429: errorSchema },
+        response: {
+          200: authMeSchema,
+          401: errorSchema,
+          422: errorSchema,
+          429: errorSchema,
+          503: errorSchema,
+        },
       },
     },
     async (request, reply) => {
@@ -247,8 +294,9 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       const nowMs = now().getTime();
       if (
         config.rateLimit.enabled &&
-        (!allowLogin(request.ip, nowMs) || !allowLoginForEmail(email, nowMs))
+        (!allowLogin(normalizeIp(request.ip), nowMs) || !allowLoginForEmail(email, nowMs))
       ) {
+        reply.header('Retry-After', '60');
         throw new AppError(
           'rate_limited',
           'Too many sign-in attempts. Please try again in a minute.',
@@ -293,7 +341,12 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
     },
     async (request, reply) => {
       auth.destroySession(request.cookies[SESSION_COOKIE]);
-      reply.clearCookie(SESSION_COOKIE, { path: '/' });
+      reply.clearCookie(SESSION_COOKIE, {
+        path: '/',
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: config.secureCookies,
+      });
       reply.code(204).send();
     },
   );

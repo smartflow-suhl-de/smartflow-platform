@@ -136,6 +136,19 @@ export class AuthService {
    * creating a second operator with a different address.
    */
   #claimOrCreateOperator(input: SetupInput, passwordHash: string): SessionUser {
+    this.#db.exec('begin immediate');
+    try {
+      const user = this.#claimOrCreateOperatorTx(input, passwordHash);
+      this.#db.exec('commit');
+      return user;
+    } catch (error) {
+      this.#db.exec('rollback');
+      throw error;
+    }
+  }
+
+  #claimOrCreateOperatorTx(input: SetupInput, passwordHash: string): SessionUser {
+    if (!this.setupRequired()) throw new AuthError('setup_complete');
     const legacy = this.#db
       .prepare("select id, email from users where role = 'operator' and password_hash is null")
       .all() as { id: string; email: string }[];
@@ -146,6 +159,8 @@ export class AuthService {
         this.#db
           .prepare('update users set email = ?, name = ?, password_hash = ? where id = ?')
           .run(input.email, input.name, passwordHash, row.id);
+        // Sessions that predate the password belong to whoever held the seed row.
+        this.#db.prepare('delete from sessions where user_id = ?').run(row.id);
       } catch (error) {
         if (isEmailTaken(error)) throw new AuthError('email_taken');
         throw error;
