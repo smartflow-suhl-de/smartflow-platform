@@ -80,7 +80,7 @@ export function buildNavigation(
   }
 
   return [...byPath.values()]
-    .filter((entry) => entry.roles.length === 0 || entry.roles.includes(role))
+    .filter((entry) => entry.roles.includes(role))
     .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'de'))
     .map((entry) => ({
       id: `${entry.plugin}:${entry.path}`,

@@ -128,7 +128,13 @@ function parseNavEntry(raw: unknown): NavEntry {
   if (!isRecord(raw) || (raw.group !== 'work' && raw.group !== 'management')) {
     throw new ApiError(500, 'invalid_response', 'Invalid nav entry');
   }
-  const roles = Array.isArray(raw.roles) ? raw.roles.filter(isRole) : [];
+  // The server treats an empty role list as "visible to nobody" (`navFor`
+  // filters with `roles.includes(role)`), so a missing or unreadable list must
+  // fail loudly instead of silently granting the entry to every role.
+  if (!Array.isArray(raw.roles) || !raw.roles.every(isRole)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid nav roles');
+  }
+  const roles = [...raw.roles];
   return {
     plugin: asString(raw.plugin, 'nav.plugin'),
     label: asString(raw.label, 'nav.label'),

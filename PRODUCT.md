@@ -21,7 +21,7 @@ Mandantenfähiger Plattform-Kernel mit strikter Datenisolation pro Mandant (`ten
 
 ## Operating Context
 
-- **Backend-API (`api/`):** Node.js (`>=22.9`), TypeScript, Fastify 5 unter `/api/v1` (OpenAPI unter `/api/openapi.json`), zentrale SQLite-DB (`platform.sqlite`) plus isolierte Tenant-SQLite-DBs, passwortloser Magic-Link-Login mit `sf_session`-Cookie und `x-internal-token` für In-Process-Plugin-Aufrufe.
+- **Backend-API (`api/`):** Node.js (`>=22.18`), TypeScript, Fastify 5 unter `/api/v1` (OpenAPI unter `/api/openapi.json`), zentrale SQLite-DB (`platform.sqlite`) plus isolierte Tenant-SQLite-DBs, passwortloser Magic-Link-Login mit `sf_session`-Cookie und `x-internal-token` für In-Process-Plugin-Aufrufe.
 - **Web-Frontend (`web/`):** React 19 + Vite 8 + TypeScript SPA (Dev-Server auf `127.0.0.1:5273` mit `/api`-Proxy auf `127.0.0.1:8790`).
 - **Deployment:** Container-Build über `Dockerfile` (Node 22 slim, Port `8790`).
 

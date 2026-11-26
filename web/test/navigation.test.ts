@@ -28,7 +28,7 @@ function pluginEntry(patch: Partial<NavEntryShape> = {}): NavEntryShape {
     group: 'work',
     icon: 'file',
     order: 30,
-    roles: [],
+    roles: ['operator'],
     createLabel: null,
     aliases: [],
     ...patch,
@@ -56,9 +56,17 @@ describe('buildNavigation', () => {
     assert.equal(employee.includes('/tenants'), false);
   });
 
-  it('treats an empty role list on a plugin entry as visible to all', () => {
-    const items = buildNavigation('employee', [pluginEntry()], messages);
-    assert.ok(items.some((item) => item.path === '/invoices'));
+  it('hides a plugin entry that names no role', () => {
+    const entry = pluginEntry({ roles: [] });
+
+    assert.equal(
+      buildNavigation('operator', [entry], messages).some((i) => i.path === '/invoices'),
+      false,
+    );
+    assert.equal(
+      buildNavigation('employee', [entry], messages).some((i) => i.path === '/invoices'),
+      false,
+    );
   });
 
   it('filters a plugin entry that names roles by the current role', () => {

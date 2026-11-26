@@ -164,7 +164,7 @@ describe('api response parsing', () => {
     assert.equal(me.user.role, 'operator');
   });
 
-  it('normalises a missing nav role list to an empty array', async () => {
+  it('rejects a nav entry without a role list instead of showing it to everyone', async () => {
     respond = () =>
       jsonResponse(200, {
         items: [
@@ -175,6 +175,62 @@ describe('api response parsing', () => {
             group: 'management',
             icon: 'building',
             order: 20,
+            createLabel: null,
+            aliases: [],
+          },
+        ],
+      });
+
+    await assert.rejects(
+      () => api.nav(),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.code, 'invalid_response');
+        return true;
+      },
+    );
+  });
+
+  it('rejects a nav entry with an unknown role', async () => {
+    respond = () =>
+      jsonResponse(200, {
+        items: [
+          {
+            plugin: 'tenants',
+            label: 'Mandanten',
+            path: '/tenants',
+            group: 'management',
+            icon: 'building',
+            order: 20,
+            roles: ['admin'],
+            createLabel: null,
+            aliases: [],
+          },
+        ],
+      });
+
+    await assert.rejects(
+      () => api.nav(),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.code, 'invalid_response');
+        return true;
+      },
+    );
+  });
+
+  it('accepts an empty role list from the server', async () => {
+    respond = () =>
+      jsonResponse(200, {
+        items: [
+          {
+            plugin: 'tenants',
+            label: 'Mandanten',
+            path: '/tenants',
+            group: 'management',
+            icon: 'building',
+            order: 20,
+            roles: [],
             createLabel: null,
             aliases: [],
           },

@@ -22,7 +22,7 @@ Interne, mandantenfähige Operations- und Service-Plattform.
 
 ## Voraussetzungen
 
-- Node.js `>= 22.9` (empfohlen: 22 LTS, siehe `.nvmrc`)
+- Node.js `>= 22.18` (empfohlen: 22 LTS, siehe `.nvmrc`) — als Minimum, weil der Plugin-Generator `manifest.ts` direkt importiert und Vite 8 mindestens 22.12 verlangt
 - npm 10+
 - Docker – nur für den Container-Build
 
