@@ -145,3 +145,97 @@ test('without a web directory the process stays API-only', async (t) => {
   assert.equal(response.statusCode, 404);
   assert.equal((response.json() as { error: { code: string } }).error.code, 'not_found');
 });
+
+test('a HEAD request to a client route gets the shell headers, not a 404', async (t) => {
+  const spa = makeSpa();
+  const ctx = await createTestApp({ SF_WEB_DIR: spa.webDir });
+  t.after(async () => {
+    await ctx.close();
+    spa.dispose();
+  });
+
+  const response = await ctx.app.inject({
+    method: 'HEAD',
+    url: '/tenants',
+    headers: { accept: 'text/html' },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers['content-type'] as string, /^text\/html/);
+  assert.equal(response.body, '');
+});
+
+test('the Accept header is matched case-insensitively', async (t) => {
+  const spa = makeSpa();
+  const ctx = await createTestApp({ SF_WEB_DIR: spa.webDir });
+  t.after(async () => {
+    await ctx.close();
+    spa.dispose();
+  });
+
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: '/tenants',
+    headers: { accept: 'Text/HTML' },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body, INDEX);
+});
+
+test('an explicit refusal of html does not get the shell', async (t) => {
+  const spa = makeSpa();
+  const ctx = await createTestApp({ SF_WEB_DIR: spa.webDir });
+  t.after(async () => {
+    await ctx.close();
+    spa.dispose();
+  });
+
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: '/tenants',
+    headers: { accept: 'text/html;q=0' },
+  });
+
+  assert.equal(response.statusCode, 404);
+  assert.equal((response.json() as { error: { code: string } }).error.code, 'not_found');
+});
+
+test('a browser accept header with a quality value still gets the shell', async (t) => {
+  const spa = makeSpa();
+  const ctx = await createTestApp({ SF_WEB_DIR: spa.webDir });
+  t.after(async () => {
+    await ctx.close();
+    spa.dispose();
+  });
+
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: '/',
+    headers: { accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body, INDEX);
+});
+
+test('served documents carry the security headers', async (t) => {
+  const spa = makeSpa();
+  const ctx = await createTestApp({ SF_WEB_DIR: spa.webDir });
+  t.after(async () => {
+    await ctx.close();
+    spa.dispose();
+  });
+
+  const shell = await ctx.app.inject({
+    method: 'GET',
+    url: '/tenants',
+    headers: { accept: 'text/html' },
+  });
+  assert.equal(shell.headers['x-content-type-options'], 'nosniff');
+  assert.equal(shell.headers['referrer-policy'], 'same-origin');
+  assert.match(shell.headers['content-security-policy'] as string, /frame-ancestors 'none'/);
+
+  const asset = await ctx.app.inject({ method: 'GET', url: '/assets/app.js' });
+  assert.equal(asset.headers['x-content-type-options'], 'nosniff');
+});

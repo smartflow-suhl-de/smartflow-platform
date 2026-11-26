@@ -113,3 +113,15 @@ test('development over http does not require https or secure cookies', () => {
 test('the test environment is not treated as production', () => {
   assert.doesNotThrow(() => loadConfig({ NODE_ENV: 'test', SF_PUBLIC_URL: 'http://127.0.0.1' }));
 });
+
+test('SF_TRUST_PROXY becomes a hop count, not a blanket trust', () => {
+  assert.equal(loadConfig({}).trustProxy, 0);
+  assert.equal(loadConfig({ SF_TRUST_PROXY: '0' }).trustProxy, 0);
+  assert.equal(loadConfig({ SF_TRUST_PROXY: 'false' }).trustProxy, 0);
+  assert.equal(loadConfig({ SF_TRUST_PROXY: '1' }).trustProxy, 1);
+  assert.equal(loadConfig({ SF_TRUST_PROXY: '2' }).trustProxy, 2);
+  // A bare "true" must not become "trust every hop": the rate limit keys on the
+  // client address, and a spoofable header would let one client exhaust it for
+  // everyone or dodge it entirely.
+  assert.equal(loadConfig({ SF_TRUST_PROXY: 'true' }).trustProxy, 1);
+});

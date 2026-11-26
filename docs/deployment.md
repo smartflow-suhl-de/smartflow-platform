@@ -71,28 +71,47 @@ WAL-Modus, eine Kopie ohne die `-wal`-Datei ist also unvollständig oder zerriss
 deshalb die Backup-Schnittstelle von SQLite, die einen konsistenten Stand zieht:
 
 ```bash
-# Konsistente Kopie innerhalb des Containers erzeugen
+# Konsistente Sicherung innerhalb des Containers: Plattform-DB und jede
+# Mandanten-DB unter /data/tenants. Eine Kopie der laufenden Dateien wäre
+# wegen WAL unvollständig, deshalb die Backup-Schnittstelle von SQLite.
 docker compose exec app node --input-type=module -e "
 import Database from 'better-sqlite3';
-import { readdirSync } from 'node:fs';
-for (const file of readdirSync('/data').filter((f) => f.endsWith('.sqlite'))) {
-  const db = new Database('/data/' + file, { readonly: true });
-  await db.backup('/data/backup-' + file);
+import { mkdirSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+const out = '/data/backup';
+mkdirSync(out, { recursive: true });
+const files = ['platform.sqlite'];
+const tenantDir = '/data/tenants';
+try {
+  for (const f of readdirSync(tenantDir)) if (f.endsWith('.sqlite')) files.push(join('tenants', f));
+} catch {}
+for (const rel of files) {
+  const src = '/data/' + rel;
+  const dst = join(out, rel.replace(/\//g, '__'));
+  const db = new Database(src, { readonly: true });
+  await db.backup(dst);
   db.close();
+  console.log('gesichert', rel, statSync(dst).size, 'Bytes');
 }"
 
 # Auf den Host holen
 mkdir -p backups
-docker compose cp app:/data/. ./backups/backup-$(date +%F)
-docker compose exec app sh -c 'rm -f /data/backup-*.sqlite'
+docker compose cp app:/data/backup ./backups/$(date +%F)
+docker compose exec app rm -rf /data/backup
 ```
+
+Die Schleife deckt `platform.sqlite` **und** jede Mandanten-DB ab. Wer nur
+`/data/*.sqlite` sichert, verliert alle Mandantendaten.
 
 Wer `sqlite3` auf dem Host hat, kann dasselbe mit `sqlite3 <datei> ".backup <ziel>"`
 gegen den Volume-Pfad tun. Ein Stopp der Dienste (`docker compose down`) vor dem Kopieren
 ist die einfache, aber unterbrechende Variante.
 
-Der Schlüssel für die Sitzungen liegt ebenfalls in `/data`: geht er verloren, sind alle
-Sitzungen ungültig und jeder muss sich neu anmelden. Die Zertifikate liegen getrennt im
+Sitzungen liegen als Hashes in der Tabelle `sessions` in `platform.sqlite`; nach einem
+Restore mit aktuellem Stand sind bestehende Anmeldungen also weiter gültig. Ein eigenes
+Schlüsseldatei (`secrets.key`) legt der aktuelle Stand noch nicht an — die
+Verschlüsselungshelfer in `api/src/kernel/secrets.ts` werden bisher von keiner Route
+genutzt. Die Zertifikate liegen getrennt im
 Volume `caddy_data`; ein Verlust kostet nur eine Neuausstellung.
 
 ## Logs

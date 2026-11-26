@@ -112,7 +112,7 @@ ausgeliefert.
 ├── DESIGN.md                Designsystem
 ├── PRODUCT.md               Produktbeschreibung
 ├── compose.yaml             App plus Caddy (TLS), Protokoll auf 80/443
-├── Caddyfile                Reverse Proxy und Zertifikate
+├── deploy/caddy/            Caddyfile + Image für Reverse Proxy und Zertifikate
 ├── Dockerfile               Mehrstufiger Container-Build, Port 8790
 ├── .env.example             Konfigurationsvorlage (lokal)
 └── .env.production.example  Konfigurationsvorlage (Docker/Compose)

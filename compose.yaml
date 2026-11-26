@@ -20,6 +20,9 @@ services:
     environment:
       # Aus SF_DOMAIN zusammengesetzt, damit Site-Adresse und Anwendungs-Origin
       # nicht auseinanderlaufen können.
+      # `SF_DOMAIN` ist der reine Hostname (ohne Schema). Mit einem
+      # vorangestellten `https://` entsteht "https://https://…" und die
+      # Anwendung startet mit einer unbrauchbaren Origin.
       SF_PUBLIC_URL: https://${SF_DOMAIN:?SF_DOMAIN fehlt in .env}
       SF_OPERATOR_EMAIL: ${SF_OPERATOR_EMAIL:?SF_OPERATOR_EMAIL fehlt in .env}
       SF_OPERATOR_NAME: ${SF_OPERATOR_NAME:-Operator}

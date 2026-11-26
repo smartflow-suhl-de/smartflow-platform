@@ -82,7 +82,11 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     logger:
       options.logger === false || config.logLevel === 'silent' ? false : { level: config.logLevel },
     bodyLimit: config.bodyLimit,
-    trustProxy: config.trustProxy,
+    // Only the hops we declare are trusted. `true` would trust the whole chain
+    // and let a client set its own `request.ip` via `X-Forwarded-For`, which is
+    // exactly what the magic-link rate limit keys on.
+    trustProxy:
+      config.trustProxy > 0 ? (_address: string, hop: number) => hop < config.trustProxy : false,
     genReqId: () => newId('req'),
   });
 
@@ -207,10 +211,13 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     // below `/api`: an unknown API route keeps the shared JSON error shape.
     if (
       spaIndex !== null &&
-      request.method === 'GET' &&
+      (request.method === 'GET' || request.method === 'HEAD') &&
       acceptsHtml(request) &&
       !isApiPath(request.url)
     ) {
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+        reply.header(name, value);
+      }
       reply.type('text/html; charset=utf-8').send(spaIndex);
       return;
     }
@@ -377,7 +384,15 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   // `/*` sink. A request can therefore only ever name a file that was in the
   // build at startup, which rules out traversal without a path check of our own.
   if (config.webDir !== null) {
-    await app.register(fastifyStatic, { root: config.webDir, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: config.webDir,
+      wildcard: false,
+      setHeaders(reply) {
+        for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+          reply.header(name, value);
+        }
+      },
+    });
   }
 
   app.addHook('onClose', async () => {
@@ -402,11 +417,37 @@ function readSpaIndex(webDir: string): string | null {
   }
 }
 
-/** Whether a client asked for a document rather than for data. */
+/**
+ * Whether a client asked for a document rather than for data. The header is
+ * case-insensitive and `text/html;q=0` explicitly refuses HTML, so a plain
+ * substring test would answer both wrong.
+ */
 function acceptsHtml(request: FastifyRequest): boolean {
   const accept = request.headers.accept;
-  return typeof accept === 'string' && accept.includes('text/html');
+  if (typeof accept !== 'string') return false;
+  return accept
+    .toLowerCase()
+    .split(',')
+    .map((part) => part.trim().split(';'))
+    .some(([type, ...params]) => {
+      if (type?.trim() !== 'text/html') return false;
+      const q = params.find((param) => param.trim().startsWith('q='));
+      return q === undefined || Number.parseFloat(q.split('=')[1] ?? '1') > 0;
+    });
 }
+
+/**
+ * Headers a served document needs and an API answer does not. Kept small on
+ * purpose: the SPA ships no inline script, so a strict policy holds today.
+ * `style-src` allows inline styles because the bundle sets CSS custom
+ * properties from JavaScript.
+ */
+const SECURITY_HEADERS: Record<string, string> = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'same-origin',
+  'content-security-policy':
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+};
 
 /** `/api` and everything below it belongs to the API, never to the SPA. */
 function isApiPath(url: string): boolean {
