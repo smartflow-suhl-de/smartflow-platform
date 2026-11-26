@@ -63,9 +63,9 @@ export function App() {
       setStats(null);
       setApiNav([]);
     });
-    // Every request reports whether the platform answered, so a failing data
-    // route stops the shell from claiming "system nominal".
-    setOutageHandler((outage) => setHealthError(outage));
+    // A failing data route latches the outage indicator so a later 2xx on a
+    // different route cannot claim the platform is fine again.
+    setOutageHandler(() => setHealthError(true));
     return () => {
       setUnauthorizedHandler(null);
       setOutageHandler(null);
@@ -168,8 +168,8 @@ export function App() {
     setProbeVersion((v) => v + 1);
   }, []);
 
-  // Re-runs the health probe. A recovered data route clears `healthError` on its
-  // own; this covers a stale indicator nobody else touches.
+  // Re-runs the health probe. Only a successful probe clears a latched
+  // `healthError`; a recovered data route no longer does it on its own.
   const retryHealth = useCallback(() => setHealthProbe((v) => v + 1), []);
 
   const handleLogout = useCallback(() => {

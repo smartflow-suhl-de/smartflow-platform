@@ -42,20 +42,21 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
 }
 
 /**
- * Reports whether the platform itself is answering.
+ * Reports that the platform itself is not answering.
  *
- * `true` when a request got no answer or a 5xx, `false` as soon as any response
- * with a non-5xx status arrives. The shell uses it to stop claiming "system
- * nominal" while a data route is failing.
+ * Fires when a request got no answer or a 5xx. It only ever reports the
+ * failure, never the recovery: a healthy `/nav` or `/stats` answer says
+ * nothing about a `/tenants` route that just returned 502, so a success must
+ * not clear the flag. The shell drops it on the next successful health probe.
  */
-let outageHandler: ((outage: boolean) => void) | null = null;
+let outageHandler: (() => void) | null = null;
 
-export function setOutageHandler(handler: ((outage: boolean) => void) | null): void {
+export function setOutageHandler(handler: (() => void) | null): void {
   outageHandler = handler;
 }
 
-function reportOutage(outage: boolean): void {
-  outageHandler?.(outage);
+function reportOutage(): void {
+  outageHandler?.();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -288,13 +289,13 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
   } catch (error) {
     const failure = translateFetchError(error);
     // A caller abort says nothing about the platform's health.
-    if (!isAbortError(failure)) reportOutage(true);
+    if (!isAbortError(failure)) reportOutage();
     throw failure;
   }
 
-  // Any answer below 500 means the platform is up, whatever it says about the
-  // request itself.
-  reportOutage(response.status >= 500);
+  // Only a 5xx is an outage. A 2xx (or a 4xx the request itself caused) proves
+  // nothing about the routes that are still failing, so it must not clear it.
+  if (response.status >= 500) reportOutage();
 
   let payload: unknown = null;
   let parsed = true;
