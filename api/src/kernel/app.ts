@@ -1,4 +1,5 @@
 import cookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import swagger from '@fastify/swagger';
 import Fastify, {
   type FastifyError,
@@ -7,6 +8,8 @@ import Fastify, {
   type InjectOptions,
 } from 'fastify';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   FieldError,
   type AuthMe,
@@ -79,7 +82,11 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     logger:
       options.logger === false || config.logLevel === 'silent' ? false : { level: config.logLevel },
     bodyLimit: config.bodyLimit,
-    trustProxy: config.trustProxy,
+    // Only the hops we declare are trusted. `true` would trust the whole chain
+    // and let a client set its own `request.ip` via `X-Forwarded-For`, which is
+    // exactly what the magic-link rate limit keys on.
+    trustProxy:
+      config.trustProxy > 0 ? (_address: string, hop: number) => hop < config.trustProxy : false,
     genReqId: () => newId('req'),
   });
 
@@ -194,7 +201,26 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     });
   });
 
-  app.setNotFoundHandler((_request, reply) => {
+  // The shell is read once: it ships with the image and does not change while
+  // the process runs, so a deep link never touches the filesystem.
+  const spaIndex = config.webDir === null ? null : readSpaIndex(config.webDir);
+
+  app.setNotFoundHandler((request, reply) => {
+    // A browser navigation to a client-side route gets the SPA shell; the app
+    // then renders the route itself. Only `GET` navigations qualify, and never
+    // below `/api`: an unknown API route keeps the shared JSON error shape.
+    if (
+      spaIndex !== null &&
+      (request.method === 'GET' || request.method === 'HEAD') &&
+      acceptsHtml(request) &&
+      !isApiPath(request.url)
+    ) {
+      for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+        reply.header(name, value);
+      }
+      reply.type('text/html; charset=utf-8').send(spaIndex);
+      return;
+    }
     reply.code(404).send(notFound().toBody());
   });
 
@@ -354,6 +380,21 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     },
   );
 
+  // `wildcard: false` registers one route per existing file instead of a
+  // `/*` sink. A request can therefore only ever name a file that was in the
+  // build at startup, which rules out traversal without a path check of our own.
+  if (config.webDir !== null) {
+    await app.register(fastifyStatic, {
+      root: config.webDir,
+      wildcard: false,
+      setHeaders(reply) {
+        for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+          reply.header(name, value);
+        }
+      },
+    });
+  }
+
   app.addHook('onClose', async () => {
     for (const database of tenantCache.values()) database.close();
     tenantCache.clear();
@@ -361,6 +402,57 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   });
 
   return { app, config, db, auth, plugins, tenantDb, internalToken };
+}
+
+/** The built SPA shell, or `null` when `webDir` carries no `index.html`. */
+function readSpaIndex(webDir: string): string | null {
+  try {
+    return readFileSync(join(webDir, 'index.html'), 'utf8');
+  } catch (error) {
+    // A missing build is an API-only start, which is a supported mode. Anything
+    // else (a wrong owner, a broken mount) must fail loudly instead of turning
+    // every deep link into a 404.
+    if ((error as { code?: string }).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+/**
+ * Whether a client asked for a document rather than for data. The header is
+ * case-insensitive and `text/html;q=0` explicitly refuses HTML, so a plain
+ * substring test would answer both wrong.
+ */
+function acceptsHtml(request: FastifyRequest): boolean {
+  const accept = request.headers.accept;
+  if (typeof accept !== 'string') return false;
+  return accept
+    .toLowerCase()
+    .split(',')
+    .map((part) => part.trim().split(';'))
+    .some(([type, ...params]) => {
+      if (type?.trim() !== 'text/html') return false;
+      const q = params.find((param) => param.trim().startsWith('q='));
+      return q === undefined || Number.parseFloat(q.split('=')[1] ?? '1') > 0;
+    });
+}
+
+/**
+ * Headers a served document needs and an API answer does not. Kept small on
+ * purpose: the SPA ships no inline script, so a strict policy holds today.
+ * `style-src` allows inline styles because the bundle sets CSS custom
+ * properties from JavaScript.
+ */
+const SECURITY_HEADERS: Record<string, string> = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'same-origin',
+  'content-security-policy':
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+};
+
+/** `/api` and everything below it belongs to the API, never to the SPA. */
+function isApiPath(url: string): boolean {
+  const path = url.split('?')[0] ?? '';
+  return path === '/api' || path.startsWith('/api/');
 }
 
 /** Nav entries from manifests, filtered for the role, in display order. */

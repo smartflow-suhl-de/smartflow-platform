@@ -7,6 +7,12 @@ export interface Config {
   port: number;
   publicUrl: string;
   dataDir: string;
+  /**
+   * Directory of the built SPA to serve next to the API, or `null` for an
+   * API-only process. The kernel serves `index.html` and the hashed assets from
+   * here; everything else stays the client's business.
+   */
+  webDir: string | null;
   operator: { email: string; name: string };
   devMagicLink: boolean;
   /**
@@ -17,7 +23,13 @@ export interface Config {
   devAutoLogin: boolean;
   secureCookies: boolean;
   logLevel: string;
-  trustProxy: boolean;
+  /**
+   * How many reverse proxies sit in front of the process, as `0` (none) or a
+   * hop count. Fastify's `true` trusts every hop and takes the leftmost
+   * `X-Forwarded-For` entry, which any client can spoof; a hop count makes it
+   * take the address the nearest trusted proxy appended.
+   */
+  trustProxy: number;
   bodyLimit: number;
   sessionTtlSeconds: number;
   magicLinkTtlSeconds: number;
@@ -31,6 +43,22 @@ function str(value: string | undefined, fallback: string): string {
 function int(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/**
+ * Converts `SF_TRUST_PROXY` into a hop count. `1` means "one proxy in front",
+ * which is the only safe reading of the old boolean: trusting every hop lets a
+ * client choose its own `request.ip` and slip past the rate limit.
+ */
+function trustProxyHops(value: string | undefined): number {
+  if (value === undefined || value === '' || value === '0' || value.toLowerCase() === 'false') {
+    return 0;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  // `true` and unknown values keep the conservative single-hop assumption
+  // instead of silently trusting the whole chain.
+  return value.toLowerCase() === 'true' ? 1 : 1;
 }
 
 function bool(value: string | undefined, fallback: boolean): boolean {
@@ -47,6 +75,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV === 'test' ? 'test' : 'development';
   const publicUrl = str(env.SF_PUBLIC_URL, 'http://127.0.0.1:5273');
   const dataDir = resolve(env.SF_DATA_DIR ?? './data');
+  const webDirValue = env.SF_WEB_DIR;
+  const webDir = webDirValue === undefined || webDirValue === '' ? null : resolve(webDirValue);
   const host = str(env.SF_HOST, '127.0.0.1');
   const loopbackHost =
     host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
@@ -86,6 +116,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: int(env.SF_PORT, 8790),
     publicUrl,
     dataDir,
+    webDir,
     operator: {
       email: str(env.SF_OPERATOR_EMAIL, 'operator@example.com').trim().toLowerCase(),
       name: str(env.SF_OPERATOR_NAME, 'Operator'),
@@ -98,7 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // then travels in clear text on the last hop.
     secureCookies,
     logLevel: str(env.SF_LOG_LEVEL, nodeEnv === 'test' ? 'silent' : 'info'),
-    trustProxy: bool(env.SF_TRUST_PROXY, false),
+    trustProxy: trustProxyHops(env.SF_TRUST_PROXY),
     bodyLimit: int(env.SF_BODY_LIMIT, 1_048_576),
     sessionTtlSeconds: 7 * 24 * 60 * 60,
     magicLinkTtlSeconds: 15 * 60,
