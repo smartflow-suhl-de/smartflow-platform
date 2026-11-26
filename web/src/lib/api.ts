@@ -717,7 +717,7 @@ export const api = {
     return (await requestJson('/discovery/overview', { signal })) as DiscoveryOverview;
   },
 
- async listLlmProviders(
+  async listLlmProviders(
     params: { status?: 'active' | 'disabled'; q?: string; limit?: number; cursor?: string | null },
     signal?: AbortSignal,
   ): Promise<LlmProviderListResponse> {
@@ -727,7 +727,7 @@ export const api = {
     if (params.limit) query.set('limit', String(params.limit));
     if (params.cursor) query.set('cursor', params.cursor);
     const suffix = query.toString();
-   return parseLlmProviderList(
+    return parseLlmProviderList(
       await requestJson(suffix.length > 0 ? `/llm/providers?${suffix}` : '/llm/providers', {
         signal,
       }),

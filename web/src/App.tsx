@@ -323,7 +323,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         onStatsChange={refreshStats}
       />
     );
-} else if (pathname === '/discovery' && auth.user.role === 'operator') {
+  } else if (pathname === '/discovery' && auth.user.role === 'operator') {
     content = <DiscoveryPage inviteId={null} search={search} locale={locale} messages={messages} />;
   } else if (/^\/discovery\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
     // A broken escape (`/discovery/%E0%A4%A`) falls back to the list instead of
