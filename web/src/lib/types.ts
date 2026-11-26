@@ -234,3 +234,167 @@ export interface DiscoveryOverview {
     reportAvailable: boolean;
   }>;
 }
+
+export type LlmAuthStyle = 'bearer' | 'header' | 'none';
+export type LlmProviderStatus = 'active' | 'disabled';
+export type LlmModelStatus = 'active' | 'disabled';
+
+export interface LlmCapabilities {
+  tools: boolean;
+  json: boolean;
+  vision: boolean;
+  embeddings: boolean;
+}
+
+export interface LlmProvider {
+  id: string;
+  name: string;
+  preset: string;
+  baseUrl: string;
+  chatPath: string;
+  apiVersion: string | null;
+  authStyle: LlmAuthStyle;
+  authHeader: string | null;
+  keySet: boolean;
+  keyUpdatedAt: string | null;
+  extraHeaderNames: string[];
+  timeoutMs: number;
+  maxRetries: number;
+  rateLimitPerMinute: number;
+  dailyTokenLimit: number;
+  monthlyBudgetMicros: number;
+  retentionDays: number;
+  allowedPlugins: string[] | null;
+  status: LlmProviderStatus;
+  lastTestAt: string | null;
+  lastTestStatus: string | null;
+  lastTestMs: number | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  modelCount: number;
+}
+
+export interface LlmProviderListResponse {
+  items: LlmProvider[];
+  total: number;
+  nextCursor: string | null;
+}
+
+export interface LlmModel {
+  id: string;
+  providerId: string;
+  modelKey: string;
+  label: string;
+  contextWindow: number | null;
+  maxOutputTokens: number | null;
+  capabilities: LlmCapabilities;
+  inputCostMicrosPerMtok: number;
+  outputCostMicrosPerMtok: number;
+  isDefault: boolean;
+  source: 'manual' | 'discovered';
+  status: LlmModelStatus;
+  createdAt: string;
+}
+
+export interface LlmPurposeModel {
+  id: string;
+  modelKey: string;
+  label: string;
+  providerId: string;
+  providerName: string;
+  status: LlmModelStatus;
+  capabilities: LlmCapabilities;
+}
+
+export interface LlmPurpose {
+  purpose: string;
+  description: string | null;
+  model: LlmPurposeModel | null;
+  fallbackModel: LlmPurposeModel | null;
+  updatedAt: string;
+  updatedBy: string;
+  calls30d: number;
+}
+
+export interface LlmUsage {
+  id: string;
+  providerId: string | null;
+  modelId: string | null;
+  purpose: string;
+  caller: string;
+  tenantId: string | null;
+  status: 'ok' | 'error';
+  errorCode: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costMicros: number;
+  latencyMs: number | null;
+  requestId: string | null;
+  createdAt: string;
+}
+
+export interface LlmUsageListResponse {
+  items: LlmUsage[];
+  total: number;
+  nextCursor: string | null;
+}
+
+export interface LlmUsageSummary {
+  days: number;
+  calls: number;
+  ok: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+  costMicros: number;
+  byCaller: Array<{ caller: string; calls: number; tokens: number; costMicros: number }>;
+  byProvider: Array<{
+    providerId: string | null;
+    providerName: string | null;
+    calls: number;
+    costMicros: number;
+  }>;
+  byPurpose: Array<{ purpose: string; calls: number; costMicros: number }>;
+}
+
+export interface LlmProviderTestResult {
+  ok: boolean;
+  latencyMs: number;
+  code?: string;
+  message?: string;
+  models?: Array<{ modelKey: string }>;
+}
+
+export interface LlmProviderInput {
+  name: string;
+  preset?: string;
+  baseUrl: string;
+  chatPath?: string;
+  apiVersion?: string | null;
+  authStyle?: LlmAuthStyle;
+  authHeader?: string | null;
+  apiKey?: string;
+  extraHeaders?: Record<string, string>;
+  timeoutMs?: number;
+  maxRetries?: number;
+  rateLimitPerMinute?: number;
+  dailyTokenLimit?: number;
+  monthlyBudgetMicros?: number;
+  retentionDays?: number;
+  allowedPlugins?: string[] | null;
+  status?: LlmProviderStatus;
+}
+
+export interface LlmModelInput {
+  modelKey: string;
+  label?: string;
+  contextWindow?: number | null;
+  maxOutputTokens?: number | null;
+  capabilities?: Partial<LlmCapabilities>;
+  inputCostMicrosPerMtok?: number;
+  outputCostMicrosPerMtok?: number;
+  isDefault?: boolean;
+  source?: 'manual' | 'discovered';
+  status?: LlmModelStatus;
+}

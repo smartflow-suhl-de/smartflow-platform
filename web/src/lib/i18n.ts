@@ -188,6 +188,130 @@ export interface Messages {
     confirmSuspendBody: string;
     confirmSuspendButton: string;
   };
+  llm: {
+    title: string;
+    description: string;
+    addProvider: string;
+    providersTitle: string;
+    providersMeta: (shown: number, total: number) => string;
+    emptyTitle: string;
+    emptyDescription: string;
+    colProvider: string;
+    colType: string;
+    colModels: string;
+    colAccess: string;
+    colLastTest: string;
+    colStatus: string;
+    colCalls: string;
+    colAction: string;
+    retrySummary: (seconds: number, retries: number) => string;
+    statusActive: string;
+    statusDisabled: string;
+    allPlugins: string;
+    neverTested: string;
+    kpiProviders: string;
+    kpiProvidersHint: string;
+    kpiModels: string;
+    kpiModelsHint: string;
+    kpiCalls: string;
+    kpiCallsHint: string;
+    kpiCost: string;
+    kpiCostHint: string;
+    purposesTitle: string;
+    purposesMeta: string;
+    purposeLabel: string;
+    modelLabel: string;
+    fallbackLabel: string;
+    callsLabel: string;
+    unmapped: string;
+    save: string;
+    saved: string;
+    addPurpose: string;
+    purposePlaceholder: string;
+    usageTitle: string;
+    usageMeta: (days: number) => string;
+    usageCaller: string;
+    usagePurpose: string;
+    usageTokens: string;
+    usageCost: string;
+    usageWhen: string;
+    usageEmpty: string;
+    newTitle: string;
+    newDescription: string;
+    editTitle: string;
+    nameLabel: string;
+    namePlaceholder: string;
+    presetLabel: string;
+    presetCustom: string;
+    baseUrlLabel: string;
+    baseUrlHint: string;
+    chatPathLabel: string;
+    chatPathHint: string;
+    apiVersionLabel: string;
+    authStyleLabel: string;
+    authBearer: string;
+    authHeader: string;
+    authNone: string;
+    authHeaderLabel: string;
+    apiKeyLabel: string;
+    apiKeyHint: string;
+    apiKeyKeep: string;
+    extraHeadersLabel: string;
+    extraHeadersHint: string;
+    invalidJson: string;
+    timeoutLabel: string;
+    retriesLabel: string;
+    rateLabel: string;
+    dailyLabel: string;
+    monthlyLabel: string;
+    retentionLabel: string;
+    allowedLabel: string;
+    allowedHint: string;
+    testButton: string;
+    testing: string;
+    testOk: (ms: number, models: number) => string;
+    testFailed: string;
+    testNoPrompt: string;
+    saveProvider: string;
+    saving: string;
+    modelsTitle: string;
+    modelsMeta: (count: number) => string;
+    addModel: string;
+    refreshModels: string;
+    noModels: string;
+    modelKeyLabel: string;
+    modelLabelLabel: string;
+    contextLabel: string;
+    outputLabel: string;
+    capabilitiesLabel: string;
+    capTools: string;
+    capJson: string;
+    capVision: string;
+    capEmbeddings: string;
+    defaultLabel: string;
+    makeDefault: string;
+    deleteModel: string;
+    deleteModelConfirm: string;
+    discovered: string;
+    manual: string;
+    settingsTitle: string;
+    statusLabel: string;
+    saveSettings: string;
+    deleteProvider: string;
+    deleteProviderConfirm: string;
+    backToList: string;
+    notFoundTitle: string;
+    notFoundDescription: string;
+    factBaseUrl: string;
+    factAuth: string;
+    factTimeout: string;
+    factAccess: string;
+    factLastTest: string;
+    keySet: (date: string) => string;
+    keyNotSet: string;
+    loaded: string;
+    errorsLabel: string;
+  };
   notFound: {
     title: string;
     description: string;
@@ -538,6 +662,136 @@ const DE: Messages = {
     confirmSuspendBody:
       'Der Zugriff auf die Mandantendatenbank wird im Kernel sofort mit 403 blockiert. Der Vorgang lässt sich jederzeit rückgängig machen.',
     confirmSuspendButton: 'Mandant sperren',
+  },
+  llm: {
+    title: 'KI-Anbieter',
+    description:
+      'Provider und Modelle zentral verwalten. Plugins fragen einen Zweck an, nie einen Schlüssel.',
+    addProvider: 'Provider verbinden',
+    providersTitle: 'Provider',
+    providersMeta: (shown, total) => `${shown} von ${total}`,
+    emptyTitle: 'Noch kein Provider',
+    emptyDescription:
+      'Verbinden Sie ein OpenAI-kompatibles Gateway, damit Plugins Modelle nutzen können.',
+    colProvider: 'Anbieter',
+    colType: 'Typ',
+    colModels: 'Modelle',
+    colAccess: 'Freigabe',
+    colLastTest: 'Letzter Test',
+    colStatus: 'Status',
+    colCalls: '30 T',
+    colAction: 'Aktion',
+    retrySummary: (seconds, retries) =>
+      `${seconds} s · ${retries === 1 ? '1 Wiederholung' : `${retries} Wiederholungen`}`,
+    statusActive: 'Aktiv',
+    statusDisabled: 'Gesperrt',
+    allPlugins: 'Alle Plugins',
+    neverTested: 'Noch nicht getestet',
+    kpiProviders: 'Provider',
+    kpiProvidersHint: 'aktiv und gesperrt',
+    kpiModels: 'Modelle',
+    kpiModelsHint: 'über alle Provider',
+    kpiCalls: 'Aufrufe · 30 T',
+    kpiCallsHint: 'erfolgreich und Fehler',
+    kpiCost: 'Kosten · 30 T',
+    kpiCostHint: 'nach gepflegten Preisen',
+    purposesTitle: 'Zwecke',
+    purposesMeta:
+      'Ein Zweck ist ein stabiler Name. Das Modell weisen Sie auf der Provider-Seite zu; ein Wechsel braucht kein Deployment.',
+    purposeLabel: 'Zweck',
+    modelLabel: 'Modell',
+    fallbackLabel: 'Fallback',
+    callsLabel: 'Aufrufe',
+    unmapped: 'Nicht belegt',
+    save: 'Speichern',
+    saved: 'Gespeichert.',
+    addPurpose: 'Zweck anlegen',
+    purposePlaceholder: 'z. B. email.classify',
+    usageTitle: 'Nutzung',
+    usageMeta: (days) => `Letzte ${days} Tage`,
+    usageCaller: 'Plugin',
+    usagePurpose: 'Zweck',
+    usageTokens: 'Tokens',
+    usageCost: 'Kosten',
+    usageWhen: 'Zeit',
+    usageEmpty: 'Noch keine Aufrufe.',
+    newTitle: 'Provider verbinden',
+    newDescription:
+      'OpenAI-kompatibel: vLLM, LiteLLM, Ollama, OpenRouter oder ein eigenes Gateway.',
+    editTitle: 'Provider bearbeiten',
+    nameLabel: 'Anzeigename',
+    namePlaceholder: 'z. B. Internes Gateway',
+    presetLabel: 'Vorlage',
+    presetCustom: 'Eigene',
+    baseUrlLabel: 'Basis-URL',
+    baseUrlHint: 'Nur Origin und Pfad, keine Zugangsdaten in der URL.',
+    chatPathLabel: 'Chat-Pfad',
+    chatPathHint: '{model} wird ersetzt.',
+    apiVersionLabel: 'API-Version',
+    authStyleLabel: 'Authentifizierung',
+    authBearer: 'Bearer',
+    authHeader: 'Eigener Header',
+    authNone: 'Keine',
+    authHeaderLabel: 'Header-Name',
+    apiKeyLabel: 'API-Schlüssel',
+    apiKeyHint: 'Wird versiegelt gespeichert und nie zurückgegeben.',
+    apiKeyKeep: 'Leer lassen, um den gespeicherten Schlüssel zu behalten.',
+    extraHeadersLabel: 'Zusatz-Header (JSON)',
+    extraHeadersHint: 'Werte werden versiegelt; die Oberfläche zeigt nur die Namen.',
+    invalidJson: 'Die Zusatz-Header sind kein gültiges JSON.',
+    timeoutLabel: 'Zeitlimit (Sekunden)',
+    retriesLabel: 'Wiederholungen',
+    rateLabel: 'Aufrufe je Minute',
+    dailyLabel: 'Tageslimit Tokens (0 = aus)',
+    monthlyLabel: 'Monatsbudget Euro (0 = aus)',
+    retentionLabel: 'Aufbewahrung (Tage)',
+    allowedLabel: 'Freigegeben für',
+    allowedHint: 'Kommagetrennte Plugin-IDs; leer = alle aktiven Plugins.',
+    testButton: 'Testen',
+    testing: 'Teste …',
+    testOk: (ms, models) => `Erreichbar · ${ms} ms · ${models} Modelle`,
+    testFailed: 'Nicht erreichbar',
+    testNoPrompt: 'Der Test ruft nur die Modellliste ab und sendet keinen Prompt.',
+    saveProvider: 'Speichern',
+    saving: 'Speichere …',
+    modelsTitle: 'Modelle',
+    modelsMeta: (count) => `${count} Modelle`,
+    addModel: 'Modell hinzufügen',
+    refreshModels: 'Modelle laden',
+    noModels:
+      'Noch kein Modell. Laden Sie die Liste des Anbieters oder legen Sie eines manuell an.',
+    modelKeyLabel: 'Modell-ID',
+    modelLabelLabel: 'Anzeigename',
+    contextLabel: 'Kontext',
+    outputLabel: 'Max. Ausgabe',
+    capabilitiesLabel: 'Fähigkeiten',
+    capTools: 'Tools',
+    capJson: 'JSON',
+    capVision: 'Vision',
+    capEmbeddings: 'Embeddings',
+    defaultLabel: 'Standard',
+    makeDefault: 'Als Standard',
+    deleteModel: 'Löschen',
+    deleteModelConfirm: 'Modell löschen?',
+    discovered: 'Erkannt',
+    manual: 'Manuell',
+    settingsTitle: 'Einstellungen',
+    statusLabel: 'Status',
+    saveSettings: 'Einstellungen speichern',
+    deleteProvider: 'Provider löschen',
+    deleteProviderConfirm: 'Provider und Konfiguration löschen?',
+    backToList: 'Zurück zu KI-Anbieter',
+    notFoundTitle: 'Provider nicht gefunden',
+    notFoundDescription: 'Der Provider existiert nicht mehr.',
+    factBaseUrl: 'Basis-URL',
+    factAuth: 'Authentifizierung',
+    factTimeout: 'Zeitlimit',
+    factAccess: 'Freigabe',
+    factLastTest: 'Letzter Test',
+    keySet: (date) => `Schlüssel gesetzt · ${date}`,
+    keyNotSet: 'Kein Schlüssel',
+    loaded: 'Modelle geladen.',
+    errorsLabel: 'Fehler',
   },
   notFound: {
     title: 'Seite nicht gefunden',
@@ -909,6 +1163,133 @@ const EN: Messages = {
       'Database access for this tenant will immediately return HTTP 403. You can resume the tenant at any time.',
     confirmSuspendButton: 'Suspend tenant',
   },
+  llm: {
+    title: 'AI providers',
+    description:
+      'Manage providers and models in one place. Plugins ask for a purpose, never for a key.',
+    addProvider: 'Connect provider',
+    providersTitle: 'Providers',
+    providersMeta: (shown, total) => `${shown} of ${total}`,
+    emptyTitle: 'No provider yet',
+    emptyDescription: 'Connect an OpenAI-compatible gateway so plugins can use models.',
+    colProvider: 'Provider',
+    colType: 'Type',
+    colModels: 'Models',
+    colAccess: 'Access',
+    colLastTest: 'Last test',
+    colStatus: 'Status',
+    colCalls: '30 d',
+    colAction: 'Action',
+    retrySummary: (seconds, retries) =>
+      `${seconds} s · ${retries === 1 ? '1 retry' : `${retries} retries`}`,
+    statusActive: 'Active',
+    statusDisabled: 'Disabled',
+    allPlugins: 'All plugins',
+    neverTested: 'Not tested yet',
+    kpiProviders: 'Providers',
+    kpiProvidersHint: 'active and disabled',
+    kpiModels: 'Models',
+    kpiModelsHint: 'across providers',
+    kpiCalls: 'Calls · 30 d',
+    kpiCallsHint: 'successful and failed',
+    kpiCost: 'Cost · 30 d',
+    kpiCostHint: 'from maintained prices',
+    purposesTitle: 'Purposes',
+    purposesMeta:
+      'A purpose is a stable name. Assign its model on the provider page; changing it needs no deploy.',
+    purposeLabel: 'Purpose',
+    modelLabel: 'Model',
+    fallbackLabel: 'Fallback',
+    callsLabel: 'Calls',
+    unmapped: 'Unmapped',
+    save: 'Save',
+    saved: 'Saved.',
+    addPurpose: 'Create purpose',
+    purposePlaceholder: 'e.g. email.classify',
+    usageTitle: 'Usage',
+    usageMeta: (days) => `Last ${days} days`,
+    usageCaller: 'Plugin',
+    usagePurpose: 'Purpose',
+    usageTokens: 'Tokens',
+    usageCost: 'Cost',
+    usageWhen: 'Time',
+    usageEmpty: 'No calls yet.',
+    newTitle: 'Connect provider',
+    newDescription: 'OpenAI-compatible: vLLM, LiteLLM, Ollama, OpenRouter or a custom gateway.',
+    editTitle: 'Edit provider',
+    nameLabel: 'Display name',
+    namePlaceholder: 'e.g. Internal gateway',
+    presetLabel: 'Preset',
+    presetCustom: 'Custom',
+    baseUrlLabel: 'Base URL',
+    baseUrlHint: 'Origin and path only, no credentials in the URL.',
+    chatPathLabel: 'Chat path',
+    chatPathHint: '{model} is replaced.',
+    apiVersionLabel: 'API version',
+    authStyleLabel: 'Authentication',
+    authBearer: 'Bearer',
+    authHeader: 'Custom header',
+    authNone: 'None',
+    authHeaderLabel: 'Header name',
+    apiKeyLabel: 'API key',
+    apiKeyHint: 'Stored sealed and never returned.',
+    apiKeyKeep: 'Leave empty to keep the stored key.',
+    extraHeadersLabel: 'Extra headers (JSON)',
+    extraHeadersHint: 'Values are sealed; the UI shows names only.',
+    invalidJson: 'The extra headers are not valid JSON.',
+    timeoutLabel: 'Timeout (seconds)',
+    retriesLabel: 'Retries',
+    rateLabel: 'Calls per minute',
+    dailyLabel: 'Daily token limit (0 = off)',
+    monthlyLabel: 'Monthly budget in euro (0 = off)',
+    retentionLabel: 'Retention (days)',
+    allowedLabel: 'Allowed for',
+    allowedHint: 'Comma-separated plugin ids; empty = every active plugin.',
+    testButton: 'Test',
+    testing: 'Testing …',
+    testOk: (ms, models) => `Reachable · ${ms} ms · ${models} models`,
+    testFailed: 'Not reachable',
+    testNoPrompt: 'The test only reads the model list and sends no prompt.',
+    saveProvider: 'Save',
+    saving: 'Saving …',
+    modelsTitle: 'Models',
+    modelsMeta: (count) => `${count} models`,
+    addModel: 'Add model',
+    refreshModels: 'Load models',
+    noModels: 'No model yet. Load the provider list or add one manually.',
+    modelKeyLabel: 'Model id',
+    modelLabelLabel: 'Display name',
+    contextLabel: 'Context',
+    outputLabel: 'Max output',
+    capabilitiesLabel: 'Capabilities',
+    capTools: 'Tools',
+    capJson: 'JSON',
+    capVision: 'Vision',
+    capEmbeddings: 'Embeddings',
+    defaultLabel: 'Default',
+    makeDefault: 'Make default',
+    deleteModel: 'Delete',
+    deleteModelConfirm: 'Delete model?',
+    discovered: 'Discovered',
+    manual: 'Manual',
+    settingsTitle: 'Settings',
+    statusLabel: 'Status',
+    saveSettings: 'Save settings',
+    deleteProvider: 'Delete provider',
+    deleteProviderConfirm: 'Delete the provider and its configuration?',
+    backToList: 'Back to AI providers',
+    notFoundTitle: 'Provider not found',
+    notFoundDescription: 'This provider no longer exists.',
+    factBaseUrl: 'Base URL',
+    factAuth: 'Authentication',
+    factTimeout: 'Timeout',
+    factAccess: 'Access',
+    factLastTest: 'Last test',
+    keySet: (date) => `Key set · ${date}`,
+    keyNotSet: 'No key',
+    loaded: 'Models loaded.',
+    errorsLabel: 'Errors',
+  },
   notFound: {
     title: 'Page not found',
     description: 'This address does not match an available view or your role cannot access it.',
@@ -1163,6 +1544,30 @@ export function formatApiError(error: unknown, locale: Locale): string {
         return 'Der Mandant wurde nicht gefunden.';
       case 'validation_failed':
         return 'Bitte prüfen Sie die markierten Eingaben.';
+      case 'llm_provider_error':
+        return 'Der Anbieter hat die Anfrage abgelehnt.';
+      case 'llm_provider_timeout':
+        return 'Der Anbieter hat zu lange gebraucht.';
+      case 'llm_rate_limited':
+        return 'Zu viele Aufrufe in kurzer Zeit.';
+      case 'llm_budget_exceeded':
+        return 'Das Budget des Providers ist ausgeschöpft.';
+      case 'llm_purpose_unmapped':
+        return 'Für diesen Zweck ist noch kein Modell hinterlegt.';
+      case 'llm_caller_not_allowed':
+        return 'Dieses Plugin darf den Provider nicht nutzen.';
+      case 'llm_capability_unsupported':
+        return 'Das Modell unterstützt diese Funktion nicht.';
+      case 'llm_provider_in_use':
+        return 'Der Provider wird noch verwendet.';
+      case 'llm_model_in_use':
+        return 'Das Modell wird noch von einem Zweck verwendet.';
+      case 'llm_model_exists':
+        return 'Dieses Modell existiert bereits.';
+      case 'llm_purpose_exists':
+        return 'Dieser Zweck existiert bereits.';
+      case 'llm_secret_unreadable':
+        return 'Der gespeicherte Schlüssel lässt sich nicht mehr öffnen.';
       default:
         return error.message || m.common.unknownError;
     }
@@ -1192,6 +1597,30 @@ export function formatApiError(error: unknown, locale: Locale): string {
       return 'This tenant was not found.';
     case 'validation_failed':
       return 'Please check the highlighted fields.';
+    case 'llm_provider_error':
+      return 'The provider rejected the request.';
+    case 'llm_provider_timeout':
+      return 'The provider took too long to answer.';
+    case 'llm_rate_limited':
+      return 'Too many calls in a short time.';
+    case 'llm_budget_exceeded':
+      return 'The provider budget is exhausted.';
+    case 'llm_purpose_unmapped':
+      return 'No model is assigned to this purpose yet.';
+    case 'llm_caller_not_allowed':
+      return 'This plugin may not use the provider.';
+    case 'llm_capability_unsupported':
+      return 'This model does not support that feature.';
+    case 'llm_provider_in_use':
+      return 'The provider is still in use.';
+    case 'llm_model_in_use':
+      return 'A purpose still uses this model.';
+    case 'llm_model_exists':
+      return 'This model already exists.';
+    case 'llm_purpose_exists':
+      return 'This purpose already exists.';
+    case 'llm_secret_unreadable':
+      return 'The stored key can no longer be opened.';
     default:
       return error.message || m.common.unknownError;
   }

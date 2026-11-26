@@ -22,6 +22,18 @@ import type {
   TenantListResponse,
   TenantStats,
   TenantStatus,
+  LlmAuthStyle,
+  LlmCapabilities,
+  LlmModel,
+  LlmModelInput,
+  LlmProvider,
+  LlmProviderInput,
+  LlmProviderListResponse,
+  LlmProviderTestResult,
+  LlmPurpose,
+  LlmUsage,
+  LlmUsageListResponse,
+  LlmUsageSummary,
 } from './types';
 
 const API_PREFIX = '/api/v1';
@@ -72,6 +84,15 @@ function reportOutage(): void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPluginError(payload: unknown): boolean {
+  return (
+    isRecord(payload) &&
+    isRecord(payload.error) &&
+    typeof payload.error.code === 'string' &&
+    payload.error.code.startsWith('llm_')
+  );
 }
 
 function isRole(value: unknown): value is Role {
@@ -237,7 +258,7 @@ function extractApiError(status: number, payload: unknown): ApiError {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   notifyUnauthorized?: boolean;
   signal?: AbortSignal;
@@ -299,10 +320,6 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
     throw failure;
   }
 
-  // Only a 5xx is an outage. A 2xx (or a 4xx the request itself caused) proves
-  // nothing about the routes that are still failing, so it must not clear it.
-  if (response.status >= 500) reportOutage();
-
   let payload: unknown = null;
   let parsed = true;
   if (text.length > 0) {
@@ -312,6 +329,12 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
       parsed = false;
     }
   }
+
+  // Only a 5xx is an outage. A 2xx (or a 4xx the request itself caused) proves
+  // nothing about the routes that are still failing, so it must not clear it.
+  // A plugin's upstream failure is not a platform outage: the LLM route
+  // returns 502/504 with an `llm_` code while the kernel is healthy.
+  if (response.status >= 500 && !isPluginError(payload)) reportOutage();
 
   if (!response.ok) {
     if (response.status === 401 && options.notifyUnauthorized !== false) {
@@ -326,6 +349,221 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
   }
 
   return payload;
+}
+
+function asBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function asNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function parseLlmCapabilities(raw: unknown): LlmCapabilities {
+  if (!isRecord(raw)) {
+    return { tools: false, json: false, vision: false, embeddings: false };
+  }
+  return {
+    tools: asBoolean(raw.tools),
+    json: asBoolean(raw.json),
+    vision: asBoolean(raw.vision),
+    embeddings: asBoolean(raw.embeddings),
+  };
+}
+
+function parseLlmAuthStyle(raw: unknown): LlmAuthStyle {
+  return raw === 'header' || raw === 'none' ? raw : 'bearer';
+}
+
+function parseLlmProvider(raw: unknown): LlmProvider {
+  if (!isRecord(raw)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid provider payload');
+  }
+  return {
+    id: asString(raw.id, 'provider.id'),
+    name: asString(raw.name, 'provider.name'),
+    preset: asString(raw.preset, 'provider.preset'),
+    baseUrl: asString(raw.baseUrl, 'provider.baseUrl'),
+    chatPath: asString(raw.chatPath, 'provider.chatPath'),
+    apiVersion: asNullableString(raw.apiVersion),
+    authStyle: parseLlmAuthStyle(raw.authStyle),
+    authHeader: asNullableString(raw.authHeader),
+    keySet: asBoolean(raw.keySet),
+    keyUpdatedAt: asNullableString(raw.keyUpdatedAt),
+    extraHeaderNames: asStringArray(raw.extraHeaderNames),
+    timeoutMs: asNumber(raw.timeoutMs, 'provider.timeoutMs'),
+    maxRetries: asNumber(raw.maxRetries, 'provider.maxRetries'),
+    rateLimitPerMinute: asNumber(raw.rateLimitPerMinute, 'provider.rateLimitPerMinute'),
+    dailyTokenLimit: asNumber(raw.dailyTokenLimit, 'provider.dailyTokenLimit'),
+    monthlyBudgetMicros: asNumber(raw.monthlyBudgetMicros, 'provider.monthlyBudgetMicros'),
+    retentionDays: asNumber(raw.retentionDays, 'provider.retentionDays'),
+    allowedPlugins: Array.isArray(raw.allowedPlugins) ? asStringArray(raw.allowedPlugins) : null,
+    status: raw.status === 'disabled' ? 'disabled' : 'active',
+    lastTestAt: asNullableString(raw.lastTestAt),
+    lastTestStatus: asNullableString(raw.lastTestStatus),
+    lastTestMs: asNullableNumber(raw.lastTestMs),
+    createdAt: asString(raw.createdAt, 'provider.createdAt'),
+    updatedAt: asString(raw.updatedAt, 'provider.updatedAt'),
+    createdBy: asString(raw.createdBy, 'provider.createdBy'),
+    modelCount: asNumber(raw.modelCount, 'provider.modelCount'),
+  };
+}
+
+function parseLlmProviderList(raw: unknown): LlmProviderListResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.items)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid provider list payload');
+  }
+  return {
+    items: raw.items.map(parseLlmProvider),
+    total: asNumber(raw.total, 'providers.total'),
+    nextCursor: asNullableString(raw.nextCursor),
+  };
+}
+
+function parseLlmModel(raw: unknown): LlmModel {
+  if (!isRecord(raw)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid model payload');
+  }
+  return {
+    id: asString(raw.id, 'model.id'),
+    providerId: asString(raw.providerId, 'model.providerId'),
+    modelKey: asString(raw.modelKey, 'model.modelKey'),
+    label: asString(raw.label, 'model.label'),
+    contextWindow: asNullableNumber(raw.contextWindow),
+    maxOutputTokens: asNullableNumber(raw.maxOutputTokens),
+    capabilities: parseLlmCapabilities(raw.capabilities),
+    inputCostMicrosPerMtok: asNumber(raw.inputCostMicrosPerMtok, 'model.inputCost'),
+    outputCostMicrosPerMtok: asNumber(raw.outputCostMicrosPerMtok, 'model.outputCost'),
+    isDefault: asBoolean(raw.isDefault),
+    source: raw.source === 'discovered' ? 'discovered' : 'manual',
+    status: raw.status === 'disabled' ? 'disabled' : 'active',
+    createdAt: asString(raw.createdAt, 'model.createdAt'),
+  };
+}
+
+function parseLlmPurposeModel(raw: unknown): LlmPurpose['model'] {
+  if (!isRecord(raw)) return null;
+  return {
+    id: asString(raw.id, 'purposeModel.id'),
+    modelKey: asString(raw.modelKey, 'purposeModel.modelKey'),
+    label: asString(raw.label, 'purposeModel.label'),
+    providerId: asString(raw.providerId, 'purposeModel.providerId'),
+    providerName: asString(raw.providerName, 'purposeModel.providerName'),
+    status: raw.status === 'disabled' ? 'disabled' : 'active',
+    capabilities: parseLlmCapabilities(raw.capabilities),
+  };
+}
+
+function parseLlmPurpose(raw: unknown): LlmPurpose {
+  if (!isRecord(raw)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid purpose payload');
+  }
+  return {
+    purpose: asString(raw.purpose, 'purpose.purpose'),
+    description: asNullableString(raw.description),
+    model: parseLlmPurposeModel(raw.model),
+    fallbackModel: parseLlmPurposeModel(raw.fallbackModel),
+    updatedAt: asString(raw.updatedAt, 'purpose.updatedAt'),
+    updatedBy: asString(raw.updatedBy, 'purpose.updatedBy'),
+    calls30d: asNumber(raw.calls30d, 'purpose.calls30d'),
+  };
+}
+
+function parseLlmUsage(raw: unknown): LlmUsage {
+  if (!isRecord(raw)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid usage payload');
+  }
+  return {
+    id: asString(raw.id, 'usage.id'),
+    providerId: asNullableString(raw.providerId),
+    modelId: asNullableString(raw.modelId),
+    purpose: asString(raw.purpose, 'usage.purpose'),
+    caller: asString(raw.caller, 'usage.caller'),
+    tenantId: asNullableString(raw.tenantId),
+    status: raw.status === 'error' ? 'error' : 'ok',
+    errorCode: asNullableString(raw.errorCode),
+    inputTokens: asNullableNumber(raw.inputTokens),
+    outputTokens: asNullableNumber(raw.outputTokens),
+    costMicros: asNumber(raw.costMicros, 'usage.costMicros'),
+    latencyMs: asNullableNumber(raw.latencyMs),
+    requestId: asNullableString(raw.requestId),
+    createdAt: asString(raw.createdAt, 'usage.createdAt'),
+  };
+}
+
+function parseLlmUsageList(raw: unknown): LlmUsageListResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.items)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid usage list payload');
+  }
+  return {
+    items: raw.items.map(parseLlmUsage),
+    total: asNumber(raw.total, 'usage.total'),
+    nextCursor: asNullableString(raw.nextCursor),
+  };
+}
+
+function parseLlmUsageSummary(raw: unknown): LlmUsageSummary {
+  if (!isRecord(raw)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid usage summary payload');
+  }
+  const byCaller = Array.isArray(raw.byCaller)
+    ? raw.byCaller.filter(isRecord).map((row) => ({
+        caller: asString(row.caller, 'summary.caller'),
+        calls: asNumber(row.calls, 'summary.calls'),
+        tokens: asNumber(row.tokens, 'summary.tokens'),
+        costMicros: asNumber(row.costMicros, 'summary.cost'),
+      }))
+    : [];
+  const byProvider = Array.isArray(raw.byProvider)
+    ? raw.byProvider.filter(isRecord).map((row) => ({
+        providerId: asNullableString(row.providerId),
+        providerName: asNullableString(row.providerName),
+        calls: asNumber(row.calls, 'summary.providerCalls'),
+        costMicros: asNumber(row.costMicros, 'summary.providerCost'),
+      }))
+    : [];
+  const byPurpose = Array.isArray(raw.byPurpose)
+    ? raw.byPurpose.filter(isRecord).map((row) => ({
+        purpose: asString(row.purpose, 'summary.purpose'),
+        calls: asNumber(row.calls, 'summary.purposeCalls'),
+        costMicros: asNumber(row.costMicros, 'summary.purposeCost'),
+      }))
+    : [];
+  return {
+    days: asNumber(raw.days, 'summary.days'),
+    calls: asNumber(raw.calls, 'summary.calls'),
+    ok: asNumber(raw.ok, 'summary.ok'),
+    errors: asNumber(raw.errors, 'summary.errors'),
+    inputTokens: asNumber(raw.inputTokens, 'summary.inputTokens'),
+    outputTokens: asNumber(raw.outputTokens, 'summary.outputTokens'),
+    costMicros: asNumber(raw.costMicros, 'summary.costMicros'),
+    byCaller,
+    byProvider,
+    byPurpose,
+  };
+}
+
+function parseLlmTest(raw: unknown): LlmProviderTestResult {
+  if (!isRecord(raw) || typeof raw.ok !== 'boolean') {
+    throw new ApiError(500, 'invalid_response', 'Invalid provider test payload');
+  }
+  return {
+    ok: raw.ok,
+    latencyMs: asNumber(raw.latencyMs, 'test.latencyMs'),
+    ...(typeof raw.code === 'string' ? { code: raw.code } : {}),
+    ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
+    ...(Array.isArray(raw.models)
+      ? {
+          models: raw.models
+            .filter(isRecord)
+            .map((model) => ({ modelKey: asString(model.modelKey, 'test.modelKey') })),
+        }
+      : {}),
+  };
 }
 
 export const api = {
@@ -477,6 +715,170 @@ export const api = {
 
   async discoveryOverview(signal?: AbortSignal): Promise<DiscoveryOverview> {
     return (await requestJson('/discovery/overview', { signal })) as DiscoveryOverview;
+  },
+
+ async listLlmProviders(
+    params: { status?: 'active' | 'disabled'; q?: string; limit?: number; cursor?: string | null },
+    signal?: AbortSignal,
+  ): Promise<LlmProviderListResponse> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.q && params.q.trim().length > 0) query.set('q', params.q.trim());
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const suffix = query.toString();
+   return parseLlmProviderList(
+      await requestJson(suffix.length > 0 ? `/llm/providers?${suffix}` : '/llm/providers', {
+        signal,
+      }),
+    );
+  },
+
+  async getLlmProvider(id: string, signal?: AbortSignal): Promise<LlmProvider> {
+    return parseLlmProvider(
+      await requestJson(`/llm/providers/${encodeURIComponent(id)}`, { signal }),
+    );
+  },
+
+  async createLlmProvider(input: LlmProviderInput): Promise<LlmProvider> {
+    return parseLlmProvider(await requestJson('/llm/providers', { method: 'POST', body: input }));
+  },
+
+  async updateLlmProvider(id: string, input: Partial<LlmProviderInput>): Promise<LlmProvider> {
+    return parseLlmProvider(
+      await requestJson(`/llm/providers/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: input,
+      }),
+    );
+  },
+
+  async deleteLlmProvider(id: string): Promise<void> {
+    await requestJson(`/llm/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  async testLlmProvider(
+    input: Partial<LlmProviderInput> & { providerId?: string },
+  ): Promise<LlmProviderTestResult> {
+    return parseLlmTest(await requestJson('/llm/providers/test', { method: 'POST', body: input }));
+  },
+
+  async testStoredLlmProvider(id: string): Promise<LlmProviderTestResult> {
+    return parseLlmTest(
+      await requestJson(`/llm/providers/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+    );
+  },
+
+  async listLlmModels(providerId: string, signal?: AbortSignal): Promise<LlmModel[]> {
+    const raw = await requestJson(`/llm/providers/${encodeURIComponent(providerId)}/models`, {
+      signal,
+    });
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid model list payload');
+    }
+    return raw.items.map(parseLlmModel);
+  },
+
+  async createLlmModel(providerId: string, input: LlmModelInput): Promise<LlmModel> {
+    return parseLlmModel(
+      await requestJson(`/llm/providers/${encodeURIComponent(providerId)}/models`, {
+        method: 'POST',
+        body: input,
+      }),
+    );
+  },
+
+  async updateLlmModel(id: string, input: Partial<LlmModelInput>): Promise<LlmModel> {
+    return parseLlmModel(
+      await requestJson(`/llm/models/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: input,
+      }),
+    );
+  },
+
+  async deleteLlmModel(id: string): Promise<void> {
+    await requestJson(`/llm/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  async refreshLlmModels(providerId: string): Promise<Array<{ modelKey: string }>> {
+    const raw = await requestJson(
+      `/llm/providers/${encodeURIComponent(providerId)}/models/refresh`,
+      { method: 'POST' },
+    );
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid refresh payload');
+    }
+    return raw.items
+      .filter(isRecord)
+      .map((item) => ({ modelKey: asString(item.modelKey, 'refresh.modelKey') }));
+  },
+
+  async listLlmPurposes(signal?: AbortSignal): Promise<LlmPurpose[]> {
+    const raw = await requestJson('/llm/purposes', { signal });
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid purpose list payload');
+    }
+    return raw.items.map(parseLlmPurpose);
+  },
+
+  async createLlmPurpose(input: {
+    purpose: string;
+    modelId?: string | null;
+    fallbackModelId?: string | null;
+    description?: string | null;
+  }): Promise<LlmPurpose> {
+    return parseLlmPurpose(await requestJson('/llm/purposes', { method: 'POST', body: input }));
+  },
+
+  async updateLlmPurpose(
+    purpose: string,
+    input: {
+      modelId?: string | null;
+      fallbackModelId?: string | null;
+      description?: string | null;
+    },
+  ): Promise<LlmPurpose> {
+    return parseLlmPurpose(
+      await requestJson(`/llm/purposes/${encodeURIComponent(purpose)}`, {
+        method: 'PATCH',
+        body: input,
+      }),
+    );
+  },
+
+  async deleteLlmPurpose(purpose: string): Promise<void> {
+    await requestJson(`/llm/purposes/${encodeURIComponent(purpose)}`, { method: 'DELETE' });
+  },
+
+  async listLlmUsage(
+    params: {
+      days?: number;
+      caller?: string;
+      purpose?: string;
+      status?: 'ok' | 'error';
+      providerId?: string;
+      limit?: number;
+      cursor?: string | null;
+    },
+    signal?: AbortSignal,
+  ): Promise<LlmUsageListResponse> {
+    const query = new URLSearchParams();
+    if (params.days) query.set('days', String(params.days));
+    if (params.caller) query.set('caller', params.caller);
+    if (params.purpose) query.set('purpose', params.purpose);
+    if (params.status) query.set('status', params.status);
+    if (params.providerId) query.set('providerId', params.providerId);
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const suffix = query.toString();
+    return parseLlmUsageList(
+      await requestJson(suffix.length > 0 ? `/llm/usage?${suffix}` : '/llm/usage', { signal }),
+    );
+  },
+
+  async llmUsageSummary(days = 30, signal?: AbortSignal): Promise<LlmUsageSummary> {
+    return parseLlmUsageSummary(await requestJson(`/llm/usage/summary?days=${days}`, { signal }));
   },
 };
 

@@ -13,6 +13,7 @@ import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types'
 import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
 import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
+import { LlmProviderDetailPage, LlmProviderFormPage, LlmProvidersPage } from './pages/LlmProviders';
 import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
 import { OverviewPage } from './pages/Overview';
@@ -322,7 +323,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         onStatsChange={refreshStats}
       />
     );
-  } else if (pathname === '/discovery' && auth.user.role === 'operator') {
+} else if (pathname === '/discovery' && auth.user.role === 'operator') {
     content = <DiscoveryPage inviteId={null} search={search} locale={locale} messages={messages} />;
   } else if (/^\/discovery\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
     // A broken escape (`/discovery/%E0%A4%A`) falls back to the list instead of
@@ -331,6 +332,26 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
       <DiscoveryPage
         inviteId={discoveryInviteId(pathname)}
         search={search}
+        locale={locale}
+        messages={messages}
+      />
+    );
+  } else if (pathname === '/llm' && auth.user.role === 'operator') {
+    content = <LlmProvidersPage locale={locale} messages={messages} />;
+  } else if (pathname === '/llm/new' && auth.user.role === 'operator') {
+    content = <LlmProviderFormPage locale={locale} messages={messages} />;
+  } else if (/^\/llm\/[^/]+\/edit$/.test(pathname) && auth.user.role === 'operator') {
+    content = (
+      <LlmProviderFormPage
+        providerId={decodeURIComponent(pathname.split('/')[2] ?? '')}
+        locale={locale}
+        messages={messages}
+      />
+    );
+  } else if (/^\/llm\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
+    content = (
+      <LlmProviderDetailPage
+        providerId={decodeURIComponent(pathname.split('/')[2] ?? '')}
         locale={locale}
         messages={messages}
       />
