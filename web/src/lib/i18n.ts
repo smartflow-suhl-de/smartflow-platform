@@ -51,6 +51,7 @@ export interface Messages {
     languageLabel: string;
     cancel: string;
     close: string;
+    dismiss: string;
     confirm: string;
     retry: string;
     unknownError: string;
@@ -96,21 +97,30 @@ export interface Messages {
   login: {
     title: string;
     subtitle: string;
-    confirmTitle: string;
-    confirmChecking: string;
-    confirmFailed: string;
-    confirmRetry: string;
+    setupTitle: string;
+    setupSubtitle: string;
+    setupLoading: string;
+    setupCheckFailed: string;
+    setupCompleteNotice: string;
     emailLabel: string;
     emailRequiredHint: string;
     emailPlaceholder: string;
+    nameLabel: string;
+    namePlaceholder: string;
+    nameRequired: string;
+    passwordLabel: string;
+    passwordHint: string;
+    passwordPlaceholder: string;
+    passwordRepeatLabel: string;
+    passwordBlank: string;
+    passwordTooShort: (min: number) => string;
+    passwordTooLong: (max: number) => string;
+    passwordMismatch: string;
     submit: string;
     submitting: string;
-    sentNotice: string;
-    noTransportNotice: string;
+    setupSubmit: string;
+    setupSubmitting: string;
     sessionExpiredNotice: string;
-    devLinkNotice: string;
-    devLinkAction: string;
-    devLinkOpening: string;
     footerNote: string;
   };
   overview: {
@@ -225,6 +235,7 @@ const DE: Messages = {
     languageLabel: 'Sprache wechseln',
     cancel: 'Abbrechen',
     close: 'Schließen',
+    dismiss: 'Meldung schließen',
     confirm: 'Bestätigen',
     retry: 'Erneut versuchen',
     unknownError: 'Die Anfrage konnte nicht verarbeitet werden.',
@@ -274,28 +285,35 @@ const DE: Messages = {
   },
   login: {
     title: 'Anmelden',
-    subtitle:
-      'Wir senden einen einmaligen Anmeldelink an die hinterlegte Adresse. Der Link gilt 15 Minuten.',
-    confirmTitle: 'Anmeldelink wird geprüft',
-    confirmChecking: 'Sitzung wird bestätigt …',
-    confirmFailed:
-      'Der Anmeldelink ist ungültig oder abgelaufen. Fordern Sie unten einen neuen Link an.',
-    confirmRetry: 'Neuen Link anfordern',
+    subtitle: 'Melden Sie sich mit Ihrer E-Mail-Adresse und Ihrem Passwort an.',
+    setupTitle: 'Ersteinrichtung',
+    setupSubtitle:
+      'Diese Installation hat noch kein Konto mit Passwort. Legen Sie jetzt das erste Operator-Konto an.',
+    setupLoading: 'Anmeldung wird vorbereitet …',
+    setupCheckFailed:
+      'Der Anmeldedienst antwortet nicht. Prüfen Sie die Verbindung und versuchen Sie es erneut.',
+    setupCompleteNotice:
+      'Die Ersteinrichtung ist bereits abgeschlossen. Bitte melden Sie sich mit Ihrem Passwort an.',
     emailLabel: 'E-Mail',
     emailRequiredHint: 'Pflichtfeld',
     emailPlaceholder: 'operator@example.com',
-    submit: 'Anmeldelink anfordern',
-    submitting: 'Wird angefordert …',
-    sentNotice:
-      'Falls die Adresse hinterlegt ist, steht ein Anmeldelink bereit. Prüfen Sie Ihr Postfach.',
-    noTransportNotice:
-      'Der Mailversand ist auf dieser Installation nicht eingerichtet. Es wurde keine E-Mail verschickt — wenden Sie sich an den Betrieb.',
+    nameLabel: 'Name',
+    namePlaceholder: 'Vor- und Nachname',
+    nameRequired: 'Bitte einen Namen eingeben.',
+    passwordLabel: 'Passwort',
+    passwordHint: 'Mindestens 12 Zeichen.',
+    passwordPlaceholder: 'Passwort eingeben',
+    passwordRepeatLabel: 'Passwort wiederholen',
+    passwordBlank: 'Das Passwort darf nicht nur aus Leerzeichen bestehen.',
+    passwordTooShort: (min) => `Das Passwort muss mindestens ${min} Zeichen lang sein.`,
+    passwordTooLong: (max) => `Das Passwort darf höchstens ${max} Zeichen lang sein.`,
+    passwordMismatch: 'Die Passwörter stimmen nicht überein.',
+    submit: 'Anmelden',
+    submitting: 'Anmeldung läuft …',
+    setupSubmit: 'Konto anlegen und anmelden',
+    setupSubmitting: 'Konto wird angelegt …',
     sessionExpiredNotice:
       'Die Sitzung ist abgelaufen. Bitte melden Sie sich erneut an — Ihre Eingaben wurden nicht gespeichert.',
-    devLinkNotice:
-      'Entwicklungsmodus: Der erzeugte Anmeldelink steht direkt zur Bestätigung bereit.',
-    devLinkAction: 'Jetzt anmelden',
-    devLinkOpening: 'Anmeldung läuft …',
     footerNote: 'SmartFlow · Suhl · Interne Plattform',
   },
   overview: {
@@ -395,7 +413,7 @@ const DE: Messages = {
     localHint: 'Designmodus und Sprache werden lokal in diesem Browser gespeichert.',
     sessionTitle: 'Sitzung & Anmeldung',
     sessionText:
-      'Die Anmeldung erfolgt passwortlos über zeitlich begrenzte Magic-Links und ein HttpOnly-Cookie (sf_session). Abmelden beendet die Sitzung auf dem Server.',
+      'Die Anmeldung erfolgt mit E-Mail-Adresse und Passwort über ein HttpOnly-Cookie (sf_session). Abmelden beendet die Sitzung auf dem Server.',
     apiVersionLabel: 'API-Version',
   },
   helpPage: {
@@ -427,6 +445,7 @@ const EN: Messages = {
     languageLabel: 'Switch language',
     cancel: 'Cancel',
     close: 'Close',
+    dismiss: 'Dismiss message',
     confirm: 'Confirm',
     retry: 'Try again',
     unknownError: 'The request could not be completed.',
@@ -476,25 +495,33 @@ const EN: Messages = {
   },
   login: {
     title: 'Sign in',
-    subtitle:
-      'We generate a single-use sign-in link for your registered address. It remains valid for 15 minutes.',
-    confirmTitle: 'Verifying sign-in link',
-    confirmChecking: 'Confirming session …',
-    confirmFailed: 'This sign-in link is invalid or expired. Request a new link below.',
-    confirmRetry: 'Request new link',
+    subtitle: 'Sign in with your email address and password.',
+    setupTitle: 'First-time setup',
+    setupSubtitle:
+      'This installation has no account with a password yet. Create the first operator account now.',
+    setupLoading: 'Preparing sign-in …',
+    setupCheckFailed: 'The sign-in service is not responding. Check the connection and try again.',
+    setupCompleteNotice: 'Setup is already complete. Please sign in with your password.',
     emailLabel: 'Email',
     emailRequiredHint: 'Required',
     emailPlaceholder: 'operator@example.com',
-    submit: 'Request sign-in link',
-    submitting: 'Requesting …',
-    sentNotice: 'If the address is registered, a sign-in link is ready. Check your inbox.',
-    noTransportNotice:
-      'Mail delivery is not configured on this installation. No email was sent — please contact your operations team.',
+    nameLabel: 'Name',
+    namePlaceholder: 'First and last name',
+    nameRequired: 'Please enter a name.',
+    passwordLabel: 'Password',
+    passwordHint: 'At least 12 characters.',
+    passwordPlaceholder: 'Enter your password',
+    passwordRepeatLabel: 'Repeat password',
+    passwordBlank: 'The password must not consist only of spaces.',
+    passwordTooShort: (min) => `The password must be at least ${min} characters long.`,
+    passwordTooLong: (max) => `The password must be at most ${max} characters long.`,
+    passwordMismatch: 'The passwords do not match.',
+    submit: 'Sign in',
+    submitting: 'Signing in …',
+    setupSubmit: 'Create account and sign in',
+    setupSubmitting: 'Creating account …',
     sessionExpiredNotice:
       'Your session has expired. Please sign in again — your input was not saved.',
-    devLinkNotice: 'Development mode: the generated sign-in link is available directly below.',
-    devLinkAction: 'Sign in now',
-    devLinkOpening: 'Signing in …',
     footerNote: 'SmartFlow · Suhl · Internal Platform',
   },
   overview: {
@@ -590,7 +617,7 @@ const EN: Messages = {
     localHint: 'Theme mode and interface language are stored locally in this browser.',
     sessionTitle: 'Session & Authentication',
     sessionText:
-      'Authentication uses single-use magic links and an HttpOnly session cookie (sf_session). Signing out invalidates the session on the server.',
+      'Authentication uses an email address and password with an HttpOnly session cookie (sf_session). Signing out invalidates the session on the server.',
     apiVersionLabel: 'API version',
   },
   helpPage: {
@@ -646,8 +673,12 @@ export function formatApiError(error: unknown, locale: Locale): string {
         return 'Sitzung abgelaufen. Bitte erneut anmelden.';
       case 'forbidden':
         return 'Für diese Aktion fehlt die erforderliche Berechtigung.';
-      case 'invalid_link':
-        return 'Der Anmeldelink ist ungültig oder abgelaufen.';
+      case 'invalid_credentials':
+        return 'E-Mail oder Passwort ist falsch.';
+      case 'setup_complete':
+        return 'Die Ersteinrichtung ist bereits abgeschlossen. Bitte melden Sie sich an.';
+      case 'busy':
+        return 'Der Anmeldedienst ist gerade ausgelastet. Bitte in einem Moment erneut versuchen.';
       case 'rate_limited':
         return 'Zu viele Anmeldeversuche. Bitte in einer Minute erneut versuchen.';
       case 'slug_taken':
@@ -671,8 +702,12 @@ export function formatApiError(error: unknown, locale: Locale): string {
       return 'Your session has expired. Please sign in again.';
     case 'forbidden':
       return 'You do not have permission for this action.';
-    case 'invalid_link':
-      return 'This sign-in link is invalid or expired.';
+    case 'invalid_credentials':
+      return 'Email or password is incorrect.';
+    case 'setup_complete':
+      return 'Setup is already complete. Please sign in.';
+    case 'busy':
+      return 'The sign-in service is busy. Please try again in a moment.';
     case 'rate_limited':
       return 'Too many sign-in attempts. Please try again in a minute.';
     case 'slug_taken':
@@ -687,7 +722,7 @@ export function formatApiError(error: unknown, locale: Locale): string {
 }
 
 export function formatFieldError(
-  field: 'email' | 'name' | 'slug',
+  field: 'email' | 'name' | 'slug' | 'password',
   rawMessage: string | undefined,
   locale: Locale,
 ): string | undefined {
@@ -699,6 +734,11 @@ export function formatFieldError(
   }
   if (field === 'name') {
     return 'Bitte einen Namen mit 2 bis 80 Zeichen eingeben.';
+  }
+  if (field === 'password') {
+    return rawMessage.includes('at least')
+      ? 'Bitte mindestens 12 Zeichen eingeben.'
+      : 'Bitte das Passwort eingeben.';
   }
   if (rawMessage.includes('already taken')) {
     return 'Dieser Slug ist bereits vergeben.';

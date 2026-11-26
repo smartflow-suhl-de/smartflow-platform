@@ -20,11 +20,20 @@ export interface AuthMe {
   tenant: SessionTenant | null;
 }
 
-export interface MagicLinkResponse {
-  sent: boolean;
-  expiresAt: string;
-  link?: string;
-  autoLogin?: boolean;
+/** Public answer to `GET /auth/setup`: is the first account still missing? */
+export interface SetupStatus {
+  required: boolean;
+}
+
+export interface SetupInput {
+  email: string;
+  name: string;
+  password: string;
+}
+
+export interface LoginInput {
+  email: string;
+  password: string;
 }
 
 export interface HealthResponse {

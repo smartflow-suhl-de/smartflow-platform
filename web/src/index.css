@@ -689,6 +689,97 @@ input:-webkit-autofill:active {
   color: var(--color-ink-soft);
 }
 
+/* --- Toasts ------------------------------------------------------------- */
+
+/* Anchored to the whole app frame, not to the page content: bottom-right of
+ * the window. It overlays the page while visible and never moves the layout. */
+.sf-toast-region {
+  position: fixed;
+  right: var(--spacing-lg);
+  bottom: var(--spacing-lg);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+  width: min(380px, calc(100vw - 2 * var(--spacing-lg)));
+  pointer-events: none;
+}
+
+.sf-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-raised);
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: auto;
+  animation: sf-toast-in 180ms ease-out;
+}
+
+.sf-toast-good {
+  border-color: color-mix(in srgb, var(--color-good) 30%, transparent);
+  background: color-mix(in srgb, var(--color-good) 8%, var(--color-paper-raised));
+  color: var(--color-good);
+}
+
+.sf-toast-info {
+  border-color: var(--color-line);
+  background: var(--color-paper-raised);
+  color: var(--color-ink-soft);
+}
+
+.sf-toast-bad {
+  border-color: color-mix(in srgb, var(--color-bad) 30%, transparent);
+  background: color-mix(in srgb, var(--color-bad) 8%, var(--color-paper-raised));
+  color: var(--color-bad);
+}
+
+.sf-toast-message {
+  flex: 1;
+  min-width: 0;
+  /* Reserve the close button's width on the left too: the text then centres on
+   * the toast's middle instead of the free space beside the button. */
+  padding-left: calc(32px + var(--spacing-sm));
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.sf-toast-close {
+  flex: none;
+}
+
+.sf-toast-leaving {
+  animation: sf-toast-out 180ms ease-in forwards;
+}
+
+@keyframes sf-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes sf-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
 .sf-empty {
   display: flex;
   flex-direction: column;

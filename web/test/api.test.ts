@@ -63,11 +63,19 @@ describe('api requests', () => {
   });
 
   it('sends JSON bodies with a POST and no body for reads', async () => {
-    respond = () => jsonResponse(202, { sent: true, expiresAt: '2026-01-01T00:00:00Z' });
-    await api.requestMagicLink('someone@example.com');
+    respond = () =>
+      jsonResponse(200, {
+        user: { id: 'u1', email: 'a@b.c', name: 'A', role: 'operator' },
+        tenant: null,
+      });
+    await api.login({ email: 'a@b.c', password: 'correct-horse-battery' });
 
+    assert.equal(calls[0]?.url, '/api/v1/auth/login');
     assert.equal(calls[0]?.init.method, 'POST');
-    assert.equal(calls[0]?.init.body, JSON.stringify({ email: 'someone@example.com' }));
+    assert.equal(
+      calls[0]?.init.body,
+      JSON.stringify({ email: 'a@b.c', password: 'correct-horse-battery' }),
+    );
     assert.equal(
       (calls[0]?.init.headers as Record<string, string>)['content-type'],
       'application/json',
@@ -154,6 +162,19 @@ describe('api response parsing', () => {
         assert.ok(error instanceof ApiError);
         assert.equal(error.code, 'invalid_response');
         assert.equal(error.status, 500);
+        return true;
+      },
+    );
+  });
+
+  it('rejects a setup status without a boolean', async () => {
+    respond = () => jsonResponse(200, { required: 'yes' });
+
+    await assert.rejects(
+      () => api.setupStatus(),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.code, 'invalid_response');
         return true;
       },
     );
@@ -266,7 +287,7 @@ describe('api error handling', () => {
       });
 
     await assert.rejects(
-      () => api.requestMagicLink('nope'),
+      () => api.login({ email: 'nope', password: 'x' }),
       (error: unknown) => {
         assert.ok(error instanceof ApiError);
         assert.equal(error.status, 422);
@@ -331,14 +352,14 @@ describe('api error handling', () => {
     assert.equal(notified, 0);
   });
 
-  it('does not notify on an expected 401 from a sign-in link', async () => {
+  it('does not notify on a wrong password', async () => {
     let notified = 0;
     setUnauthorizedHandler(() => {
       notified += 1;
     });
-    respond = () => jsonResponse(401, { error: { code: 'invalid_link', message: 'expired' } });
+    respond = () => jsonResponse(401, { error: { code: 'invalid_credentials', message: 'wrong' } });
 
-    await assert.rejects(() => api.confirmMagicLink('token-token'));
+    await assert.rejects(() => api.login({ email: 'a@b.c', password: 'wrong' }));
     assert.equal(notified, 0);
   });
 
@@ -414,7 +435,7 @@ describe('api outage reporting', () => {
     });
 
     respond = () => jsonResponse(422, { error: { code: 'validation_failed', message: 'no' } });
-    await assert.rejects(() => api.requestMagicLink('nope'));
+    await assert.rejects(() => api.login({ email: 'nope', password: 'x' }));
 
     respond = () => {
       throw new DOMException('aborted', 'AbortError');

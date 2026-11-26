@@ -17,6 +17,7 @@ import {
   navIconByName,
 } from './icons';
 import { Button } from './ui';
+import { ToastRegion } from './Toast';
 
 function useIsDesktop(): boolean {
   const [desktop, setDesktop] = useState(() =>
@@ -383,6 +384,8 @@ export function AppShell({
           onClose={() => setPaletteOpen(false)}
         />
       </div>
+
+      <ToastRegion dismissLabel={messages.common.dismiss} />
     </div>
   );
 }

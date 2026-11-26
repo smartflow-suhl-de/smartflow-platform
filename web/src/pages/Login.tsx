@@ -1,22 +1,15 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { BrandLogo } from '../components/BrandLogo';
-import { ArrowRightIcon, KeyIcon, MoonIcon, SunIcon } from '../components/icons';
+import { KeyIcon, MoonIcon, SunIcon } from '../components/icons';
 import { Button, Card, Field, Input } from '../components/ui';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, isAbortError } from '../lib/api';
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, passwordProblem } from '../lib/auth-flow';
 import { formatApiError, formatFieldError, type Locale, type Messages } from '../lib/i18n';
-import {
-  confirmMagicLinkOnce,
-  magicLinkNotice,
-  toAppHref,
-  tokenFromSearch,
-} from '../lib/auth-flow';
-import { AppLink, navigate } from '../lib/router';
-import type { AuthMe, MagicLinkResponse } from '../lib/types';
+import { navigate } from '../lib/router';
+import type { AuthMe } from '../lib/types';
 import type { Mode } from '../theme';
 
 export interface LoginPageProps {
-  pathname: string;
-  search: string;
   mode: Mode;
   locale: Locale;
   messages: Messages;
@@ -27,9 +20,19 @@ export interface LoginPageProps {
   onSignedIn: (auth: AuthMe) => void;
 }
 
+/** What the page is showing: a probe first, then exactly one form. */
+type FormMode = 'checking' | 'setup' | 'login' | 'unavailable';
+
+type FieldName = 'email' | 'name' | 'password' | 'passwordRepeat';
+type FieldErrors = Partial<Record<FieldName, string>>;
+
+const FIELD_ORDER: FieldName[] = ['email', 'name', 'password', 'passwordRepeat'];
+
+function firstFieldWithError(errors: FieldErrors): FieldName | null {
+  return FIELD_ORDER.find((field) => Boolean(errors[field])) ?? null;
+}
+
 export function LoginPage({
-  pathname,
-  search,
   mode,
   locale,
   messages,
@@ -38,76 +41,132 @@ export function LoginPage({
   onLocaleChange,
   onSignedIn,
 }: LoginPageProps) {
+  const [formMode, setFormMode] = useState<FormMode>('checking');
+  const [checkVersion, setCheckVersion] = useState(0);
   const [email, setEmail] = useState('');
-  const [emailError, setEmailError] = useState<string | undefined>(undefined);
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [passwordRepeat, setPasswordRepeat] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [magicResult, setMagicResult] = useState<MagicLinkResponse | null>(null);
+
+  const emailRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const repeatRef = useRef<HTMLInputElement>(null);
+  const formAlertRef = useRef<HTMLDivElement>(null);
+  // Set where focus belongs, then move it once the error text is rendered. A
+  // straight `.focus()` during the handler would point at a field that is not
+  // yet marked invalid and would miss the alert entirely.
+  const pendingFocus = useRef<FieldName | 'form' | null>(null);
 
   useEffect(() => {
-    if (pathname !== '/login/confirm') return;
-    const token = tokenFromSearch(search);
-    if (!token) {
-      setFormError(messages.login.confirmFailed);
+    const target = pendingFocus.current;
+    if (!target) return;
+    pendingFocus.current = null;
+    if (target === 'form') {
+      formAlertRef.current?.focus();
       return;
     }
+    const refs = {
+      email: emailRef,
+      name: nameRef,
+      password: passwordRef,
+      passwordRepeat: repeatRef,
+    };
+    refs[target].current?.focus();
+  });
 
-    let active = true;
-    setConfirming(true);
-    setFormError(null);
+  useEffect(() => {
+    const controller = new AbortController();
 
-    confirmMagicLinkOnce(token)
-      .then((auth) => {
-        if (!active) return;
-        navigate('/', { replace: true });
-        onSignedIn(auth);
+    api
+      .setupStatus(controller.signal)
+      .then((status) => {
+        setFormMode(status.required ? 'setup' : 'login');
       })
       .catch((error: unknown) => {
-        if (!active) return;
-        setConfirming(false);
-        setFormError(formatApiError(error, locale));
-        navigate('/login', { replace: true });
+        if (isAbortError(error)) return;
+        setFormMode('unavailable');
       });
 
-    return () => {
-      active = false;
-    };
-  }, [pathname, search, locale, messages.login.confirmFailed, onSignedIn]);
+    return () => controller.abort();
+  }, [checkVersion]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    setEmailError(undefined);
+    setFieldErrors({});
     setFormError(null);
-    setMagicResult(null);
-    setSubmitting(true);
 
+    if (formMode === 'setup') {
+      // The server enforces the same rules. Checking here keeps the message
+      // local and immediate, and the repeat field never leaves the browser.
+      const errors: FieldErrors = {};
+      if (name.trim().length === 0) errors.name = messages.login.nameRequired;
+      const problem = passwordProblem(password);
+      if (problem === 'blank') errors.password = messages.login.passwordBlank;
+      else if (problem === 'too_short') {
+        errors.password = messages.login.passwordTooShort(PASSWORD_MIN_LENGTH);
+      } else if (problem === 'too_long') {
+        errors.password = messages.login.passwordTooLong(PASSWORD_MAX_LENGTH);
+      }
+      if (password !== passwordRepeat) {
+        errors.passwordRepeat = messages.login.passwordMismatch;
+      }
+      if (Object.keys(errors).length > 0) {
+        setFieldErrors(errors);
+        pendingFocus.current = firstFieldWithError(errors) ?? 'form';
+        return;
+      }
+    }
+
+    setSubmitting(true);
     try {
-      const response = await api.requestMagicLink(email.trim());
-      if (response.autoLogin && response.link) {
-        const parsed = new URL(response.link, window.location.origin);
-        const token = parsed.searchParams.get('token');
-        if (token) {
-          setConfirming(true);
-          const auth = await confirmMagicLinkOnce(token);
-          navigate('/', { replace: true });
-          onSignedIn(auth);
-          return;
-        }
-      }
-      setMagicResult(response);
+      const auth =
+        formMode === 'setup'
+          ? await api.setup({ email: email.trim(), name: name.trim(), password })
+          : await api.login({ email: email.trim(), password });
+
+      navigate('/', { replace: true });
+      onSignedIn(auth);
+      return;
     } catch (error) {
-      if (error instanceof ApiError && error.fields.email) {
-        setEmailError(formatFieldError('email', error.fields.email, locale));
-      } else {
-        setFormError(formatApiError(error, locale));
+      if (error instanceof ApiError && error.code === 'setup_complete') {
+        // Another client created the first account while this form was open.
+        // The account exists now, so show the sign-in form and say why.
+        setFormMode('login');
+        setPassword('');
+        setPasswordRepeat('');
+        setFormError(messages.login.setupCompleteNotice);
+        pendingFocus.current = 'form';
+        return;
       }
+
+      if (error instanceof ApiError && Object.keys(error.fields).length > 0) {
+        const errors: FieldErrors = {
+          email: formatFieldError('email', error.fields.email, locale),
+          password: formatFieldError('password', error.fields.password, locale),
+        };
+        if (formMode === 'setup') {
+          errors.name = error.fields.name ? messages.login.nameRequired : undefined;
+        }
+        setFieldErrors(errors);
+        pendingFocus.current = firstFieldWithError(errors) ?? 'form';
+        if (firstFieldWithError(errors) === null) {
+          setFormError(formatApiError(error, locale));
+        }
+        return;
+      }
+
+      setFormError(formatApiError(error, locale));
+      pendingFocus.current = 'form';
     } finally {
       setSubmitting(false);
     }
   }
 
-  const resultNotice = magicResult ? magicLinkNotice(magicResult) : null;
+  const isSetup = formMode === 'setup';
 
   return (
     <div className="sf-login-shell">
@@ -149,15 +208,41 @@ export function LoginPage({
 
           <Card>
             <div className="sf-card-body">
-              {confirming ? (
+              {formMode === 'checking' ? (
                 <>
-                  <h1 className="sf-login-title">{messages.login.confirmTitle}</h1>
-                  <p className="sf-login-subtitle">{messages.login.confirmChecking}</p>
+                  <h1 className="sf-login-title">{messages.login.title}</h1>
+                  <p className="sf-login-subtitle" role="status">
+                    {messages.login.setupLoading}
+                  </p>
                 </>
-              ) : (
+              ) : formMode === 'unavailable' ? (
                 <>
                   <h1 className="sf-login-title">{messages.login.title}</h1>
                   <p className="sf-login-subtitle">{messages.login.subtitle}</p>
+                  <div className="sf-alert sf-alert-bad" role="alert">
+                    <span>{messages.login.setupCheckFailed}</span>
+                  </div>
+                  <div className="sf-login-form">
+                    <Button
+                      variant="secondary"
+                      fullWidth
+                      onClick={() => {
+                        setFormMode('checking');
+                        setCheckVersion((version) => version + 1);
+                      }}
+                    >
+                      {messages.common.retry}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h1 className="sf-login-title">
+                    {isSetup ? messages.login.setupTitle : messages.login.title}
+                  </h1>
+                  <p className="sf-login-subtitle">
+                    {isSetup ? messages.login.setupSubtitle : messages.login.subtitle}
+                  </p>
 
                   {notice ? (
                     <div className="sf-alert sf-alert-bad" role="alert">
@@ -165,9 +250,14 @@ export function LoginPage({
                     </div>
                   ) : null}
 
-                  <form className="sf-login-form" onSubmit={handleSubmit}>
+                  <form className="sf-login-form" onSubmit={handleSubmit} aria-busy={submitting}>
                     {formError ? (
-                      <div className="sf-alert sf-alert-bad" role="alert">
+                      <div
+                        ref={formAlertRef}
+                        className="sf-alert sf-alert-bad"
+                        role="alert"
+                        tabIndex={-1}
+                      >
                         <span>{formError}</span>
                       </div>
                     ) : null}
@@ -175,61 +265,99 @@ export function LoginPage({
                     <Field
                       label={messages.login.emailLabel}
                       hint={messages.login.emailRequiredHint}
-                      error={emailError}
+                      error={fieldErrors.email}
                       htmlFor="sf-login-email"
                     >
                       <Input
+                        ref={emailRef}
                         id="sf-login-email"
                         type="email"
                         autoComplete="email"
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
                         placeholder={messages.login.emailPlaceholder}
-                        invalid={Boolean(emailError)}
+                        invalid={Boolean(fieldErrors.email)}
                         disabled={submitting}
                         required
                       />
                     </Field>
 
-                    <Button
-                      type="submit"
-                      variant="primary"
-                      fullWidth
-                      disabled={submitting || email.trim().length === 0}
+                    {isSetup ? (
+                      <Field
+                        label={messages.login.nameLabel}
+                        error={fieldErrors.name}
+                        htmlFor="sf-login-name"
+                      >
+                        <Input
+                          ref={nameRef}
+                          id="sf-login-name"
+                          type="text"
+                          autoComplete="name"
+                          value={name}
+                          onChange={(event) => setName(event.target.value)}
+                          placeholder={messages.login.namePlaceholder}
+                          invalid={Boolean(fieldErrors.name)}
+                          disabled={submitting}
+                          required
+                        />
+                      </Field>
+                    ) : null}
+
+                    <Field
+                      label={messages.login.passwordLabel}
+                      hint={isSetup ? messages.login.passwordHint : undefined}
+                      error={fieldErrors.password}
+                      htmlFor="sf-login-password"
                     >
+                      <Input
+                        ref={passwordRef}
+                        id="sf-login-password"
+                        type="password"
+                        autoComplete={isSetup ? 'new-password' : 'current-password'}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder={messages.login.passwordPlaceholder}
+                        maxLength={PASSWORD_MAX_LENGTH}
+                        invalid={Boolean(fieldErrors.password)}
+                        disabled={submitting}
+                        required
+                      />
+                    </Field>
+
+                    {isSetup ? (
+                      <Field
+                        label={messages.login.passwordRepeatLabel}
+                        error={fieldErrors.passwordRepeat}
+                        htmlFor="sf-login-password-repeat"
+                      >
+                        <Input
+                          ref={repeatRef}
+                          id="sf-login-password-repeat"
+                          type="password"
+                          autoComplete="new-password"
+                          value={passwordRepeat}
+                          onChange={(event) => setPasswordRepeat(event.target.value)}
+                          maxLength={PASSWORD_MAX_LENGTH}
+                          invalid={Boolean(fieldErrors.passwordRepeat)}
+                          disabled={submitting}
+                          required
+                        />
+                      </Field>
+                    ) : null}
+
+                    <Button type="submit" variant="primary" fullWidth disabled={submitting}>
                       <KeyIcon size={14} />
-                      <span>{submitting ? messages.login.submitting : messages.login.submit}</span>
+                      <span>
+                        {isSetup
+                          ? submitting
+                            ? messages.login.setupSubmitting
+                            : messages.login.setupSubmit
+                          : submitting
+                            ? messages.login.submitting
+                            : messages.login.submit}
+                      </span>
                     </Button>
                   </form>
-
-                  {resultNotice ? (
-                    <div className="sf-login-result">
-                      {resultNotice.kind === 'dev_link' ? (
-                        <>
-                          <div className="sf-alert sf-alert-info" role="status">
-                            <span>{messages.login.devLinkNotice}</span>
-                          </div>
-                          <AppLink
-                            to={toAppHref(resultNotice.link, window.location.origin)}
-                            className="sf-btn sf-btn-secondary sf-btn-full"
-                          >
-                            <span>{messages.login.devLinkAction}</span>
-                            <ArrowRightIcon size={14} />
-                          </AppLink>
-                        </>
-                      ) : resultNotice.kind === 'sent' ? (
-                        <div className="sf-alert sf-alert-info" role="status">
-                          <span>{messages.login.sentNotice}</span>
-                        </div>
-                      ) : (
-                        // No transport: "check your inbox" would be a lie. The
-                        // alert role is deliberate, the operator has to act.
-                        <div className="sf-alert sf-alert-bad" role="alert">
-                          <span>{messages.login.noTransportNotice}</span>
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
                 </>
               )}
             </div>

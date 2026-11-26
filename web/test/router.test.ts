@@ -175,7 +175,7 @@ describe('normalizePath', () => {
 
   it('leaves an already canonical path untouched', () => {
     assert.equal(normalizePath('/tenants'), '/tenants');
-    assert.equal(normalizePath('/login/confirm'), '/login/confirm');
+    assert.equal(normalizePath('/login'), '/login');
     assert.equal(normalizePath('/Tenants'), '/Tenants');
   });
 });
