@@ -293,6 +293,15 @@ describe('formatFieldError', () => {
     );
   });
 
+  it('maps an email conflict to its own German text and keeps English raw', () => {
+    const raw = 'This email address is already in use.';
+    assert.equal(
+      formatFieldError('email', raw, 'de'),
+      'Diese E-Mail-Adresse wird bereits verwendet.',
+    );
+    assert.equal(formatFieldError('email', raw, 'en'), raw);
+  });
+
   it('maps email and name fields to German', () => {
     assert.match(formatFieldError('email', 'bad', 'de') ?? '', /E-Mail-Adresse/);
     assert.match(formatFieldError('name', 'bad', 'de') ?? '', /Namen/);

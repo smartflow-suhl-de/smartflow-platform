@@ -730,7 +730,9 @@ export function formatFieldError(
   if (locale === 'en') return rawMessage;
 
   if (field === 'email') {
-    return 'Bitte eine gültige E-Mail-Adresse eingeben.';
+    return rawMessage.includes('already in use')
+      ? 'Diese E-Mail-Adresse wird bereits verwendet.'
+      : 'Bitte eine gültige E-Mail-Adresse eingeben.';
   }
   if (field === 'name') {
     return 'Bitte einen Namen mit 2 bis 80 Zeichen eingeben.';

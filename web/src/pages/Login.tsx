@@ -3,7 +3,12 @@ import { BrandLogo } from '../components/BrandLogo';
 import { KeyIcon, MoonIcon, SunIcon } from '../components/icons';
 import { Button, Card, Field, Input } from '../components/ui';
 import { ApiError, api, isAbortError } from '../lib/api';
-import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, passwordProblem } from '../lib/auth-flow';
+import {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  createSubmitGuard,
+  passwordProblem,
+} from '../lib/auth-flow';
 import { formatApiError, formatFieldError, type Locale, type Messages } from '../lib/i18n';
 import { navigate } from '../lib/router';
 import type { AuthMe } from '../lib/types';
@@ -50,6 +55,7 @@ export function LoginPage({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const submitGuard = useRef(createSubmitGuard());
 
   const emailRef = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
@@ -96,6 +102,7 @@ export function LoginPage({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+    if (submitGuard.current.busy) return;
     setFieldErrors({});
     setFormError(null);
 
@@ -122,48 +129,50 @@ export function LoginPage({
     }
 
     setSubmitting(true);
-    try {
-      const auth =
-        formMode === 'setup'
-          ? await api.setup({ email: email.trim(), name: name.trim(), password })
-          : await api.login({ email: email.trim(), password });
+    await submitGuard.current.run(async () => {
+      try {
+        const auth =
+          formMode === 'setup'
+            ? await api.setup({ email: email.trim(), name: name.trim(), password })
+            : await api.login({ email: email.trim(), password });
 
-      navigate('/', { replace: true });
-      onSignedIn(auth);
-      return;
-    } catch (error) {
-      if (error instanceof ApiError && error.code === 'setup_complete') {
-        // Another client created the first account while this form was open.
-        // The account exists now, so show the sign-in form and say why.
-        setFormMode('login');
-        setPassword('');
-        setPasswordRepeat('');
-        setFormError(messages.login.setupCompleteNotice);
+        navigate('/', { replace: true });
+        onSignedIn(auth);
+        return;
+      } catch (error) {
+        if (error instanceof ApiError && error.code === 'setup_complete') {
+          // Another client created the first account while this form was open.
+          // The account exists now, so show the sign-in form and say why.
+          setFormMode('login');
+          setPassword('');
+          setPasswordRepeat('');
+          setFormError(messages.login.setupCompleteNotice);
+          pendingFocus.current = 'form';
+          return;
+        }
+
+        if (error instanceof ApiError && Object.keys(error.fields).length > 0) {
+          const errors: FieldErrors = {
+            email: formatFieldError('email', error.fields.email, locale),
+            password: formatFieldError('password', error.fields.password, locale),
+          };
+          if (formMode === 'setup') {
+            errors.name = error.fields.name ? messages.login.nameRequired : undefined;
+          }
+          setFieldErrors(errors);
+          pendingFocus.current = firstFieldWithError(errors) ?? 'form';
+          if (firstFieldWithError(errors) === null) {
+            setFormError(formatApiError(error, locale));
+          }
+          return;
+        }
+
+        setFormError(formatApiError(error, locale));
         pendingFocus.current = 'form';
-        return;
+      } finally {
+        setSubmitting(false);
       }
-
-      if (error instanceof ApiError && Object.keys(error.fields).length > 0) {
-        const errors: FieldErrors = {
-          email: formatFieldError('email', error.fields.email, locale),
-          password: formatFieldError('password', error.fields.password, locale),
-        };
-        if (formMode === 'setup') {
-          errors.name = error.fields.name ? messages.login.nameRequired : undefined;
-        }
-        setFieldErrors(errors);
-        pendingFocus.current = firstFieldWithError(errors) ?? 'form';
-        if (firstFieldWithError(errors) === null) {
-          setFormError(formatApiError(error, locale));
-        }
-        return;
-      }
-
-      setFormError(formatApiError(error, locale));
-      pendingFocus.current = 'form';
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   const isSetup = formMode === 'setup';
