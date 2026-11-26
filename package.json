@@ -15,11 +15,13 @@
     "dev:web": "npm run dev --workspace @smartflow/web",
     "build": "npm run typecheck --workspace @smartflow/api && npm run build --workspace @smartflow/web",
     "start": "npm run start --workspace @smartflow/api",
-    "test": "npm test --workspace @smartflow/api",
+    "test": "npm run test --workspace @smartflow/api && npm run test --workspace @smartflow/web",
     "typecheck": "npm run typecheck --workspace @smartflow/api && npm run typecheck --workspace @smartflow/web",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:api": "npm run test --workspace @smartflow/api",
+    "test:web": "npm run test --workspace @smartflow/web"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

@@ -4,30 +4,10 @@ import { ArrowRightIcon, KeyIcon, MoonIcon, SunIcon } from '../components/icons'
 import { Button, Card, Field, Input } from '../components/ui';
 import { ApiError, api } from '../lib/api';
 import { formatApiError, formatFieldError, type Locale, type Messages } from '../lib/i18n';
+import { confirmMagicLinkOnce, toAppHref, tokenFromSearch } from '../lib/auth-flow';
 import { AppLink, navigate } from '../lib/router';
 import type { AuthMe, MagicLinkResponse } from '../lib/types';
 import type { Mode } from '../theme';
-
-const inFlightConfirmations = new Map<string, Promise<AuthMe>>();
-
-function confirmTokenOnce(token: string): Promise<AuthMe> {
-  const existing = inFlightConfirmations.get(token);
-  if (existing) return existing;
-  const pending = api.confirmMagicLink(token).finally(() => {
-    inFlightConfirmations.delete(token);
-  });
-  inFlightConfirmations.set(token, pending);
-  return pending;
-}
-
-function toAppHref(link: string): string {
-  try {
-    const parsed = new URL(link, window.location.origin);
-    return `${parsed.pathname}${parsed.search}`;
-  } catch {
-    return link;
-  }
-}
 
 export interface LoginPageProps {
   pathname: string;
@@ -59,7 +39,7 @@ export function LoginPage({
 
   useEffect(() => {
     if (pathname !== '/login/confirm') return;
-    const token = new URLSearchParams(search).get('token');
+    const token = tokenFromSearch(search);
     if (!token) {
       setFormError(messages.login.confirmFailed);
       return;
@@ -69,7 +49,7 @@ export function LoginPage({
     setConfirming(true);
     setFormError(null);
 
-    confirmTokenOnce(token)
+    confirmMagicLinkOnce(token)
       .then((auth) => {
         if (!active) return;
         navigate('/', { replace: true });
@@ -101,7 +81,7 @@ export function LoginPage({
         const token = parsed.searchParams.get('token');
         if (token) {
           setConfirming(true);
-          const auth = await confirmTokenOnce(token);
+          const auth = await confirmMagicLinkOnce(token);
           navigate('/', { replace: true });
           onSignedIn(auth);
           return;
@@ -214,7 +194,7 @@ export function LoginPage({
                             <span>{messages.login.devLinkNotice}</span>
                           </div>
                           <AppLink
-                            to={toAppHref(magicResult.link)}
+                            to={toAppHref(magicResult.link, window.location.origin)}
                             className="sf-btn sf-btn-secondary sf-btn-full"
                           >
                             <span>{messages.login.devLinkAction}</span>
