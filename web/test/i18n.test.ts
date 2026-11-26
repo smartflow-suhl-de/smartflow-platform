@@ -172,6 +172,18 @@ describe('formatApiError', () => {
     }
   });
 
+  it('words the rate limit without a fixed wait time in both locales', () => {
+    const err = new ApiError(429, 'rate_limited', 'x');
+    assert.equal(
+      formatApiError(err, 'de'),
+      'Zu viele Anmeldeversuche. Bitte versuche es später erneut.',
+    );
+    assert.equal(formatApiError(err, 'en'), 'Too many sign-in attempts. Please try again later.');
+    for (const locale of ['de', 'en'] as const) {
+      assert.doesNotMatch(formatApiError(err, locale), /minute|minuten?\b/i);
+    }
+  });
+
   it('keeps no German text in the English error catalogue', () => {
     const english = [
       formatApiError(new ApiError(401, 'unauthorized', 'x'), 'en'),

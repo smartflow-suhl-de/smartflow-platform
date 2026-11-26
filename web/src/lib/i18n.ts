@@ -680,7 +680,7 @@ export function formatApiError(error: unknown, locale: Locale): string {
       case 'busy':
         return 'Der Anmeldedienst ist gerade ausgelastet. Bitte in einem Moment erneut versuchen.';
       case 'rate_limited':
-        return 'Zu viele Anmeldeversuche. Bitte in einer Minute erneut versuchen.';
+        return 'Zu viele Anmeldeversuche. Bitte versuche es später erneut.';
       case 'slug_taken':
         return 'Dieser Slug ist bereits vergeben.';
       case 'tenant_not_found':
@@ -709,7 +709,7 @@ export function formatApiError(error: unknown, locale: Locale): string {
     case 'busy':
       return 'The sign-in service is busy. Please try again in a moment.';
     case 'rate_limited':
-      return 'Too many sign-in attempts. Please try again in a minute.';
+      return 'Too many sign-in attempts. Please try again later.';
     case 'slug_taken':
       return 'That slug is already taken.';
     case 'tenant_not_found':
