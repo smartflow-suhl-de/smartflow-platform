@@ -162,11 +162,23 @@ export interface ModelCandidate {
 
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
+export interface InternalMessageToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
 export interface InternalMessage {
   role: ChatRole;
-  content: string;
+  /**
+   * `null` and `""` are valid for an assistant turn that only calls tools;
+   * a provider accepts that shape and would reject a forced string.
+   */
+  content: string | null;
   name?: string;
   tool_call_id?: string;
+  /** Assistant turn that asked the caller to run tools; sent back verbatim. */
+  tool_calls?: InternalMessageToolCall[];
 }
 
 export type ResponseFormat =

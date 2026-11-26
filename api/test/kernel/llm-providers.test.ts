@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { FastifyInstance } from 'fastify';
+import { assertResolvedTarget } from '../../src/plugins/llm-providers/ssrf.ts';
 import { createTestApp, type TestApp } from './helpers.ts';
 
 interface ProviderBody {
@@ -1140,6 +1141,7 @@ test('metadata, link-local, unspecified and loopback targets are rejected', asyn
   for (const baseUrl of [
     'https://169.254.169.254/v1',
     'https://169.254.170.2/v1',
+    'https://100.100.100.200/v1',
     'https://[::ffff:169.254.169.254]/v1',
     'https://metadata.google.internal./v1',
     'https://[fd00:ec2::254]/v1',
@@ -1162,6 +1164,15 @@ test('metadata, link-local, unspecified and loopback targets are rejected', asyn
       baseUrl,
     );
   }
+});
+
+test('the pre-flight checks IP literals before the resolver', async () => {
+  await assert.rejects(() => assertResolvedTarget(new URL('https://127.0.0.1/v1'), false));
+  await assert.rejects(() => assertResolvedTarget(new URL('https://[::1]/v1'), false));
+  await assert.rejects(() => assertResolvedTarget(new URL('https://100.100.100.200/v1'), false));
+  // The opt-in only lifts loopback, not metadata or link-local.
+  await assertResolvedTarget(new URL('https://127.0.0.1/v1'), true);
+  await assertResolvedTarget(new URL('https://llm.example/v1'), false);
 });
 
 test('loopback is allowed only with the explicit opt-in', async (t) => {
@@ -1209,6 +1220,30 @@ test('chat paths and extra headers reject shadowing and traversal', async (t) =>
     },
   });
   assert.equal(traversal.statusCode, 422);
+
+  // Model placeholders are a documented feature (Azure, Gemini), so the path
+  // hardening must not reject them.
+  for (const chatPath of [
+    '/openai/deployments/{model}/chat/completions',
+    '/models/{model}:generateContent',
+  ]) {
+    const accepted = await createProvider(ctx.app, cookie, {
+      name: 'Model path',
+      baseUrl: 'https://llm.example/v1',
+      chatPath,
+      authStyle: 'none',
+    });
+    assert.equal(accepted.chatPath, chatPath);
+  }
+  for (const chatPath of ['/v1/{model/chat', '/v1/{}/chat', '/v1/{a b}/chat']) {
+    const rejected = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/llm/providers',
+      headers: { cookie },
+      payload: { name: 'X', baseUrl: 'https://llm.example/v1', chatPath, authStyle: 'none' },
+    });
+    assert.equal(rejected.statusCode, 422, chatPath);
+  }
 
   for (const extraHeaders of [
     { Authorization: 'Bearer x' },
@@ -1292,4 +1327,73 @@ test('a failed embedding call is a 502 and never echoes the upstream body', asyn
     .get() as { status: string; error_code: string | null };
   assert.equal(usage.status, 'error');
   assert.equal(usage.error_code, 'llm_provider_error');
+});
+
+test('tool-calling turns with null or empty content are accepted', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  await seed(ctx, cookie);
+
+  const bodies: Array<Record<string, unknown>> = [];
+  stubFetch(t, (_url, init) => {
+    bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+    return json({
+      choices: [
+        { message: { role: 'assistant', content: 'ok', tool_calls: [] }, finish_reason: 'stop' },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+  });
+
+  const call = {
+    id: 'call_1',
+    type: 'function',
+    function: { name: 'get_weather', arguments: '{"city":"Leipzig"}' },
+  };
+  const withCalls = await internal(ctx, {
+    purpose: 'chat.default',
+    messages: [
+      { role: 'user', content: 'Wetter in Leipzig?' },
+      { role: 'assistant', content: null, tool_calls: [call] },
+      { role: 'tool', content: '{"temp":12}', tool_call_id: 'call_1' },
+    ],
+  });
+  assert.equal(withCalls.statusCode, 200, withCalls.payload);
+  const sent = bodies[0]?.messages as Array<Record<string, unknown>>;
+  assert.equal(sent[1]?.content, null);
+  assert.deepEqual(sent[1]?.tool_calls, [call]);
+  assert.equal(sent[2]?.tool_call_id, 'call_1');
+
+  const emptyContent = await internal(ctx, {
+    purpose: 'chat.default',
+    messages: [{ role: 'assistant', content: '' }],
+  });
+  assert.equal(emptyContent.statusCode, 200, emptyContent.payload);
+});
+
+test('status and models report the same configured state', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const { modelId } = await seed(ctx, cookie);
+  const headers = {
+    [SECRET_HEADER]: ctx.internalToken,
+    'x-internal-caller': 'agent',
+  };
+  const statusOf = async () =>
+    (
+      await ctx.app.inject({ method: 'GET', url: '/api/v1/llm/internal/status', headers })
+    ).json() as { configured: boolean };
+  const modelsOf = async () =>
+    (
+      await ctx.app.inject({ method: 'GET', url: '/api/v1/llm/internal/models', headers })
+    ).json() as { items: Array<{ configured: boolean }> };
+
+  assert.equal((await statusOf()).configured, true);
+  assert.equal((await modelsOf()).items[0]?.configured, true);
+
+  ctx.db.prepare("update llm_model set status = 'disabled' where id = ?").run(modelId);
+  assert.equal((await statusOf()).configured, false);
+  assert.equal((await modelsOf()).items[0]?.configured, false);
 });

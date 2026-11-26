@@ -61,6 +61,9 @@ function inIpv4Range(value: number, cidr: string): boolean {
 const BLOCKED_IPV4 = [
   '0.0.0.0/8',
   '169.254.0.0/16',
+  // Alibaba Cloud instance metadata. CGNAT (100.64.0.0/10) stays allowed
+  // because internal gateways may live there; only the metadata address is out.
+  '100.100.100.200/32',
   '192.0.0.0/24',
   '198.18.0.0/15',
   '224.0.0.0/4',
@@ -166,7 +169,12 @@ export function validateBaseUrl(raw: string, options: BaseUrlOptions): string {
 /** Refuses a hostname that resolves to a blocked address. */
 export async function assertResolvedTarget(url: URL, allowLoopback: boolean): Promise<void> {
   const host = normalizeHost(url.hostname);
-  if (isIP(host) !== 0 || skipDnsCheck()) return;
+  if (isIP(host) !== 0) {
+    // A literal never reaches the resolver, so the pre-flight has to check it here.
+    if (literalBlock(host, allowLoopback)) throw new Error('blocked-target');
+    return;
+  }
+  if (skipDnsCheck()) return;
   let addresses: Array<{ address: string }>;
   try {
     addresses = await lookup(host, { all: true, verbatim: true });
@@ -180,9 +188,17 @@ export async function assertResolvedTarget(url: URL, allowLoopback: boolean): Pr
 
 export const CHAT_PATH_PATTERN = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%/-]|%[0-9A-Fa-f]{2})*$/;
 
+/**
+ * Provider paths may carry a model placeholder such as Azure's
+ * `/openai/deployments/{model}/chat/completions` or Gemini's
+ * `/models/{model}:generateContent`. Only that exact shape is allowed; a stray
+ * brace elsewhere still fails the character check.
+ */
+const CHAT_PATH_PLACEHOLDER = /\{[A-Za-z0-9_-]+\}/g;
+
 export function isValidChatPath(value: string): boolean {
   if (!value.startsWith('/') || value.length > 200) return false;
-  if (!CHAT_PATH_PATTERN.test(value)) return false;
+  if (!CHAT_PATH_PATTERN.test(value.replace(CHAT_PATH_PLACEHOLDER, ''))) return false;
   if (value.includes('..') || value.includes('?') || value.includes('#')) return false;
   if (value.includes('//')) return false;
   return true;

@@ -213,13 +213,6 @@ export class LlmRuntime {
       .prepare('delete from llm_usage where provider_id is null and created_at < ?')
       .run(cutoff.toISOString());
   }
-
-  usageRowCount(providerId: string | null): number {
-    const row = this.db
-      .prepare('select count(*) as count from llm_usage where provider_id is ?')
-      .get(providerId) as { count: number };
-    return row.count;
-  }
 }
 
 export function readInt(

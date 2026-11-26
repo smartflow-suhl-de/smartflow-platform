@@ -44,12 +44,36 @@ const objectSchema = { type: 'object', additionalProperties: true } as const;
 const messageSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['role', 'content'],
+  required: ['role'],
   properties: {
     role: { type: 'string', enum: ['system', 'user', 'assistant', 'tool'] },
-    content: { type: 'string', minLength: 1, maxLength: 100_000 },
+    // An assistant tool-call turn has content null or ""; the tool result
+    // follows as its own message with tool_call_id.
+    content: { type: ['string', 'null'], maxLength: 100_000 },
     name: { type: 'string', maxLength: 100 },
     tool_call_id: { type: 'string', maxLength: 200 },
+    tool_calls: {
+      type: 'array',
+      maxItems: 32,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'function'],
+        properties: {
+          id: { type: 'string', maxLength: 200 },
+          type: { type: 'string', enum: ['function'] },
+          function: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['name', 'arguments'],
+            properties: {
+              name: { type: 'string', maxLength: 200 },
+              arguments: { type: 'string', maxLength: 100_000 },
+            },
+          },
+        },
+      },
+    },
   },
 } as const;
 
@@ -609,6 +633,24 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
     },
   );
 
+  function purposeState(purpose: PurposeRow): {
+    model: ModelRow | undefined;
+    provider: ProviderRow | undefined;
+    configured: boolean;
+  } {
+    const model = purpose.model_id ? runtime.model(purpose.model_id) : undefined;
+    const provider = model ? runtime.provider(model.provider_id) : undefined;
+    return {
+      model,
+      provider,
+      // Single source of truth for /status and /models: a purpose counts as
+      // configured only when both the model and its provider are active.
+      configured: Boolean(
+        model && provider && model.status === 'active' && provider.status === 'active',
+      ),
+    };
+  }
+
   app.get(
     '/llm/internal/status',
     {
@@ -624,22 +666,18 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         .prepare('select * from llm_purpose order by purpose')
         .all() as PurposeRow[];
       const items = purposes.map((purpose) => {
-        const model = purpose.model_id ? runtime.model(purpose.model_id) : undefined;
-        const provider = model ? runtime.provider(model.provider_id) : undefined;
-        const configured = Boolean(
-          model && provider && model.status === 'active' && provider.status === 'active',
-        );
+        const state = purposeState(purpose);
         const response: InternalStatusResponse['purposes'][number] = {
           purpose: purpose.purpose,
-          configured,
+          configured: state.configured,
           model:
-            configured && model && provider
+            state.configured && state.model && state.provider
               ? {
-                  modelKey: model.model_key,
-                  label: model.label,
-                  providerId: provider.id,
-                  providerName: provider.name,
-                  capabilities: parseCapabilities(model.capabilities),
+                  modelKey: state.model.model_key,
+                  label: state.model.label,
+                  providerId: state.provider.id,
+                  providerName: state.provider.name,
+                  capabilities: parseCapabilities(state.model.capabilities),
                 }
               : null,
         };
@@ -678,16 +716,19 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
       if (request.query.purpose) {
         const target = resolveTarget(request.query.purpose, undefined);
         const purpose = runtime.purpose(target.purpose) as PurposeRow;
+        const state = purposeState(purpose);
         return {
           purpose: target.purpose,
-          configured: true,
-          model: {
-            ...toPurposeModelRef(target.model, target.provider),
-            fallback:
-              purpose.fallback_model_id && target.fallback
-                ? toPurposeModelRef(target.fallback.model, target.fallback.provider)
-                : null,
-          },
+          configured: state.configured,
+          model: state.configured
+            ? {
+                ...toPurposeModelRef(target.model, target.provider),
+                fallback:
+                  purpose.fallback_model_id && target.fallback
+                    ? toPurposeModelRef(target.fallback.model, target.fallback.provider)
+                    : null,
+              }
+            : null,
         };
       }
       const statuses = runtime.db
@@ -695,12 +736,14 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         .all() as PurposeRow[];
       return {
         items: statuses.map((purpose) => {
-          const model = purpose.model_id ? runtime.model(purpose.model_id) : undefined;
-          const provider = model ? runtime.provider(model.provider_id) : undefined;
+          const state = purposeState(purpose);
           return {
             purpose: purpose.purpose,
-            configured: Boolean(model && provider),
-            model: model && provider ? toPurposeModelRef(model, provider) : null,
+            configured: state.configured,
+            model:
+              state.configured && state.model && state.provider
+                ? toPurposeModelRef(state.model, state.provider)
+                : null,
           };
         }),
       };

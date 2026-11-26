@@ -915,15 +915,16 @@ export function register(ctx: PluginContext): void {
     existing?: ProviderRow,
   ): Promise<ProviderTestResult> {
     const userKey = request.user?.id ?? 'unknown';
+    const now = runtime.now().getTime();
     const last = testTimes.get(userKey) ?? 0;
-    if (Date.now() - last < TEST_INTERVAL_MS) {
+    if (now - last < TEST_INTERVAL_MS) {
       throw new AppError(
         'llm_test_rate_limited',
         'Please wait a few seconds before testing again.',
         429,
       );
     }
-    testTimes.set(userKey, Date.now());
+    testTimes.set(userKey, now);
 
     const { provider, apiKey, headers } = buildTestProvider(existing, request.body);
     const started = Date.now();
