@@ -29,8 +29,14 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
   );
 }) as typeof fetch;
 
-const { confirmMagicLinkOnce, pendingConfirmationCount, toAppHref, tokenFromSearch } =
-  await import('../src/lib/auth-flow.ts');
+const {
+  confirmMagicLinkOnce,
+  pendingConfirmationCount,
+  sessionProbeOutcome,
+  toAppHref,
+  tokenFromSearch,
+} = await import('../src/lib/auth-flow.ts');
+const { ApiError } = await import('../src/lib/api.ts');
 
 describe('confirmMagicLinkOnce', () => {
   beforeEach(() => {
@@ -102,6 +108,35 @@ describe('tokenFromSearch', () => {
 
   it('decodes an encoded token', () => {
     assert.equal(tokenFromSearch('?token=a%2Bb'), 'a+b');
+  });
+});
+
+describe('sessionProbeOutcome', () => {
+  it('treats a 401 as signed out', () => {
+    assert.equal(sessionProbeOutcome(new ApiError(401, 'unauthorized', 'no')), 'signed_out');
+  });
+
+  it('keeps the session when the API is unreachable', () => {
+    assert.equal(sessionProbeOutcome(new ApiError(0, 'network_error', 'down')), 'unavailable');
+    assert.equal(sessionProbeOutcome(new ApiError(502, 'http_502', 'HTTP 502')), 'unavailable');
+    assert.equal(
+      sessionProbeOutcome(new ApiError(500, 'invalid_response', 'bad payload')),
+      'unavailable',
+    );
+  });
+
+  it('reports an abort as aborted, never as a session state', () => {
+    assert.equal(sessionProbeOutcome(new DOMException('aborted', 'AbortError')), 'aborted');
+  });
+
+  it('treats any other failure as unavailable', () => {
+    assert.equal(sessionProbeOutcome(new Error('boom')), 'unavailable');
+  });
+
+  it('never treats a non-ApiError as signed out', () => {
+    for (const error of [new TypeError('fetch failed'), 'boom', undefined, null]) {
+      assert.notEqual(sessionProbeOutcome(error), 'signed_out', String(error));
+    }
   });
 });
 

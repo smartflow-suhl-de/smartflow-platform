@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-const { buildNavigation, groupNavigation, resolveAliasRedirect, utilityNavigation } =
+const { buildNavigation, groupNavigation, pageTitle, resolveAliasRedirect, utilityNavigation } =
   await import('../src/lib/navigation.ts');
 const { getMessages } = await import('../src/lib/i18n.ts');
 
@@ -164,6 +164,39 @@ describe('groupNavigation', () => {
       groups.map((group) => group.group),
       ['work'],
     );
+  });
+});
+
+describe('pageTitle', () => {
+  it('labels the overview route', () => {
+    const items = buildNavigation('operator', [], messages);
+    assert.equal(pageTitle('/', items), 'Übersicht');
+  });
+
+  it('labels an exact route match', () => {
+    const items = buildNavigation('operator', [], messages);
+    assert.equal(pageTitle('/tenants', items), 'Mandanten');
+  });
+
+  it('labels a nested plugin route by its longest prefix', () => {
+    const items = buildNavigation(
+      'operator',
+      [
+        pluginEntry({ path: '/invoices', label: 'Rechnungen', order: 30 }),
+        pluginEntry({ path: '/invoices/archive', label: 'Archiv', order: 31 }),
+      ],
+      messages,
+    );
+
+    assert.equal(pageTitle('/invoices/archive/2026', items), 'Archiv');
+    assert.equal(pageTitle('/invoices/new', items), 'Rechnungen');
+  });
+
+  it('returns null for a path no entry covers', () => {
+    const items = buildNavigation('operator', [], messages);
+    assert.equal(pageTitle('/unbekannt', items), null);
+    // `/` must not swallow every other route as a prefix.
+    assert.equal(pageTitle('/nichts', items), null);
   });
 });
 

@@ -52,6 +52,7 @@ export interface Messages {
     cancel: string;
     close: string;
     confirm: string;
+    retry: string;
     unknownError: string;
     noTenant: string;
   };
@@ -105,6 +106,7 @@ export interface Messages {
     submit: string;
     submitting: string;
     sentNotice: string;
+    sessionExpiredNotice: string;
     devLinkNotice: string;
     devLinkAction: string;
     devLinkOpening: string;
@@ -222,6 +224,7 @@ const DE: Messages = {
     cancel: 'Abbrechen',
     close: 'Schließen',
     confirm: 'Bestätigen',
+    retry: 'Erneut versuchen',
     unknownError: 'Die Anfrage konnte nicht verarbeitet werden.',
     noTenant: 'Plattformebene',
   },
@@ -258,7 +261,8 @@ const DE: Messages = {
     opsRunning: 'läuft',
     opsDegraded: 'gestört',
     opsOffline: 'offline',
-    opsTenantsLine: (active, total) => `${active} / ${total} Mandanten aktiv`,
+    opsTenantsLine: (active, total) =>
+      `${active} / ${total} ${total === 1 ? 'Mandant' : 'Mandanten'} aktiv`,
     logout: 'Abmelden',
     paletteTitleSearch: 'Suchen und springen',
     paletteTitleCreate: 'Aktion wählen',
@@ -282,6 +286,8 @@ const DE: Messages = {
     submitting: 'Wird angefordert …',
     sentNotice:
       'Falls die Adresse hinterlegt ist, steht ein Anmeldelink bereit. Prüfen Sie Ihr Postfach.',
+    sessionExpiredNotice:
+      'Die Sitzung ist abgelaufen. Bitte melden Sie sich erneut an — Ihre Eingaben wurden nicht gespeichert.',
     devLinkNotice:
       'Entwicklungsmodus: Der erzeugte Anmeldelink steht direkt zur Bestätigung bereit.',
     devLinkAction: 'Jetzt anmelden',
@@ -417,6 +423,7 @@ const EN: Messages = {
     cancel: 'Cancel',
     close: 'Close',
     confirm: 'Confirm',
+    retry: 'Try again',
     unknownError: 'The request could not be completed.',
     noTenant: 'Platform scope',
   },
@@ -453,7 +460,8 @@ const EN: Messages = {
     opsRunning: 'online',
     opsDegraded: 'degraded',
     opsOffline: 'offline',
-    opsTenantsLine: (active, total) => `${active} / ${total} tenants active`,
+    opsTenantsLine: (active, total) =>
+      `${active} / ${total} ${total === 1 ? 'tenant' : 'tenants'} active`,
     logout: 'Sign out',
     paletteTitleSearch: 'Search and jump',
     paletteTitleCreate: 'Choose action',
@@ -475,6 +483,8 @@ const EN: Messages = {
     submit: 'Request sign-in link',
     submitting: 'Requesting …',
     sentNotice: 'If the address is registered, a sign-in link is ready. Check your inbox.',
+    sessionExpiredNotice:
+      'Your session has expired. Please sign in again — your input was not saved.',
     devLinkNotice: 'Development mode: the generated sign-in link is available directly below.',
     devLinkAction: 'Sign in now',
     devLinkOpening: 'Signing in …',
@@ -629,10 +639,29 @@ export function formatApiError(error: unknown, locale: Locale): string {
     }
   }
 
-  if (error.code === 'network_error') {
-    return 'Cannot reach the platform API.';
+  // The server speaks English, so an unmapped code can fall back to its own
+  // message; the mapped ones exist because the raw text is operator-facing
+  // noise ("Please check the highlighted fields.") or leaks HTTP wording.
+  switch (error.code) {
+    case 'network_error':
+      return 'Cannot reach the platform API.';
+    case 'unauthorized':
+      return 'Your session has expired. Please sign in again.';
+    case 'forbidden':
+      return 'You do not have permission for this action.';
+    case 'invalid_link':
+      return 'This sign-in link is invalid or expired.';
+    case 'rate_limited':
+      return 'Too many sign-in attempts. Please try again in a minute.';
+    case 'slug_taken':
+      return 'That slug is already taken.';
+    case 'tenant_not_found':
+      return 'This tenant was not found.';
+    case 'validation_failed':
+      return 'Please check the highlighted fields.';
+    default:
+      return error.message || m.common.unknownError;
   }
-  return error.message || m.common.unknownError;
 }
 
 export function formatFieldError(
