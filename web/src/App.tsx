@@ -18,6 +18,7 @@ import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
+import { PublicApprovalPage } from './pages/PublicApproval';
 import { TenantsPage } from './pages/Tenants';
 import {
   applyTheme,
@@ -27,6 +28,8 @@ import {
   storedTheme,
   type Mode,
 } from './theme';
+import { WebsiteDetailPage } from './pages/WebsiteDetail';
+import { WebsitesPage } from './pages/Websites';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -260,6 +263,17 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
       .finally(() => setLoggingOut(false));
   }, [locale]);
 
+  // The approval link is opened by the client, who has no account. It must not
+  // depend on a session, so it is answered before every signed-in branch.
+  const approvalMatch = /^\/freigabe\/([^/]+)\/([^/]+)$/.exec(pathname);
+  if (approvalMatch) {
+    const tenantId = approvalMatch[1] as string;
+    const token = approvalMatch[2] as string;
+    return (
+      <PublicApprovalPage tenantId={tenantId} token={token} locale={locale} messages={messages} />
+    );
+  }
+
   if (session.kind === 'loading') {
     return (
       <div className="sf-center-load" role="status">
@@ -352,6 +366,17 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     content = (
       <LlmProviderDetailPage
         providerId={safeDecode(pathname.split('/')[2] ?? '') ?? ''}
+        locale={locale}
+        messages={messages}
+      />
+    );
+  } else if (pathname === '/websites') {
+    content = <WebsitesPage search={search} locale={locale} messages={messages} />;
+  } else if (pathname.startsWith('/websites/')) {
+    content = (
+      <WebsiteDetailPage
+        siteId={pathname.slice('/websites/'.length)}
+        role={auth.user.role}
         locale={locale}
         messages={messages}
       />

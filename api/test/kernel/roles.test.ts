@@ -50,7 +50,9 @@ test('a tenant admin is authenticated but not allowed to manage tenants', async 
 
   const nav = await ctx.app.inject({ method: 'GET', url: '/api/v1/nav', headers: { cookie } });
   const plugins = (nav.json() as { items: { plugin: string }[] }).items.map((item) => item.plugin);
-  assert.deepEqual(plugins, [], 'tenants is an operator-only nav entry');
+  // Tenant-scoped plugins (such as `websites`) are meant to appear here; what
+  // must never appear for a tenant admin is the operator-only tenant list.
+  assert.ok(!plugins.includes('tenants'), 'tenants is an operator-only nav entry');
 });
 
 test('sign-in and sign-out are recorded in the event log', async (t) => {

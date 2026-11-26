@@ -1,5 +1,12 @@
 import { ApiError } from './api';
-import type { Role, TenantStatus } from './types';
+import type {
+  Role,
+  TenantStatus,
+  WebsiteApprovalState,
+  WebsiteBuildStatus,
+  WebsitePageOrigin,
+  WebsiteStatus,
+} from './types';
 
 export type Locale = 'de' | 'en';
 
@@ -497,6 +504,142 @@ export interface Messages {
     backToStart: string;
     moveUp: string;
     moveDown: string;
+  };
+  websites: {
+    title: string;
+    description: string;
+    newAction: string;
+    kpiTotal: string;
+    kpiTotalHint: (own: number, client: number) => string;
+    kpiLive: string;
+    kpiDraft: string;
+    kpiDraftHint: string;
+    kpiAttention: string;
+    kpiAttentionHint: string;
+    createTitle: string;
+    createHint: string;
+    nameLabel: string;
+    namePlaceholder: string;
+    domainLabel: string;
+    domainPlaceholder: string;
+    clientLabel: string;
+    clientNone: string;
+    createSubmit: string;
+    creating: string;
+    formInvalid: string;
+    created: (name: string) => string;
+    listTitle: string;
+    listSummary: (shown: number, total: number) => string;
+    filterLabel: string;
+    filterAll: string;
+    filterOwn: string;
+    filterClient: string;
+    searchLabel: string;
+    searchPlaceholder: string;
+    emptyTitle: string;
+    emptyFiltered: string;
+    emptyInitial: string;
+    colSite: string;
+    colOwner: string;
+    colStatus: string;
+    colBuild: string;
+    colAction: string;
+    ownerOwn: string;
+    noBuild: string;
+    openAction: string;
+    statusLabels: Record<WebsiteStatus, string>;
+    buildStatusLabels: Record<WebsiteBuildStatus, string>;
+    pageOriginLabels: Record<WebsitePageOrigin, string>;
+    pageStatus: (from: number, to: number, total: number) => string;
+    prevPage: string;
+    nextPage: string;
+    detailTitleFallback: string;
+    backToAll: string;
+    detailProject: string;
+    projectRepo: string;
+    projectBranch: string;
+    projectAstro: string;
+    projectNone: string;
+    detailRelease: string;
+    releaseVersion: (version: string) => string;
+    releaseNone: string;
+    detailClient: string;
+    clientEmpty: string;
+    clientEmptyHint: string;
+    clientName: string;
+    clientContact: string;
+    clientEmail: string;
+    detailPages: string;
+    pagesEmpty: string;
+    detailBuilds: string;
+    buildsEmpty: string;
+    buildDuration: (ms: number) => string;
+    buildAction: string;
+    buildStarting: string;
+    buildQueued: string;
+    detailApproval: string;
+    approvalNone: string;
+    approvalHint: string;
+    approvalCreated: string;
+    approvalLinkTitle: string;
+    approvalLinkHint: string;
+    approvalRequest: string;
+    approvalRequesting: string;
+    approvalNeedsBuild: string;
+    approvalStateLabels: Record<WebsiteApprovalState, string>;
+    approvalExpiresLabel: string;
+    approvalRecipient: string;
+    approvalComment: string;
+    copyLink: string;
+    copied: string;
+    copyFailed: string;
+    publishAction: string;
+    publishing: string;
+    publishBlocked: string;
+    publishDone: (version: string) => string;
+    aiTitle: string;
+    aiHint: string;
+    aiGoalLabel: string;
+    aiGoalPlaceholder: string;
+    aiPagesLabel: string;
+    aiPagesHint: string;
+    aiSubmit: string;
+    aiSubmitting: string;
+    aiQueued: string;
+    aiBudget: string;
+    aiRunnerNote: string;
+    deleteAction: string;
+    deleteTitle: (name: string) => string;
+    deleteBody: string;
+    deleteConfirm: string;
+  };
+  approval: {
+    kicker: string;
+    title: (name: string) => string;
+    intro: string;
+    changesTitle: string;
+    noPages: string;
+    stateOpen: string;
+    stateApproved: string;
+    stateChanges: string;
+    decideTitle: string;
+    commentLabel: string;
+    commentHint: string;
+    commentPlaceholder: string;
+    commentRequired: string;
+    approve: string;
+    approving: string;
+    requestChanges: string;
+    requesting: string;
+    approvedBody: string;
+    changesBody: string;
+    privacy: string;
+    expiresAt: (date: string) => string;
+    expiredTitle: string;
+    expiredBody: string;
+    missingTitle: string;
+    missingBody: string;
+    errorTitle: string;
   };
 }
 
@@ -1003,6 +1146,172 @@ const DE: Messages = {
     moveUp: 'Nach oben',
     moveDown: 'Nach unten',
   },
+  websites: {
+    title: 'Webseiten',
+    description:
+      'Eigene Seiten und Kundenprojekte an einer Stelle: Entwurf, Astro-Build, Vorschau, Freigabe und Livegang.',
+    newAction: 'Neue Website',
+    kpiTotal: 'Webseiten',
+    kpiTotalHint: (own, client) => `${own} eigene · ${client} Kunden`,
+    kpiLive: 'Live',
+    kpiDraft: 'In Arbeit',
+    kpiDraftHint: 'Entwürfe ohne Livegang',
+    kpiAttention: 'Zu prüfen',
+    kpiAttentionHint: 'Build-Fehler und offene Freigaben',
+    createTitle: 'Website anlegen',
+    createHint: 'Der Astro-Build entsteht erst mit einem Lauf.',
+    nameLabel: 'Name',
+    namePlaceholder: 'z. B. Hotel Zum Anker',
+    domainLabel: 'Domain',
+    domainPlaceholder: 'hotel-zum-anker.de',
+    clientLabel: 'Kunde',
+    clientNone: 'Eigene Website',
+    createSubmit: 'Anlegen',
+    creating: 'Wird angelegt …',
+    formInvalid: 'Bitte prüfen Sie die markierten Felder.',
+    created: (name) => `${name} wurde angelegt.`,
+    listTitle: 'Portfolio',
+    listSummary: (shown, total) => `${shown} von ${total}`,
+    filterLabel: 'Auswahl filtern',
+    filterAll: 'Alle',
+    filterOwn: 'Eigene',
+    filterClient: 'Kunden',
+    searchLabel: 'Webseiten durchsuchen',
+    searchPlaceholder: 'Name, Slug oder Domain …',
+    emptyTitle: 'Keine Website gefunden',
+    emptyFiltered: 'Keine Website passt zu Suche und Auswahl.',
+    emptyInitial: 'Noch keine Website angelegt. Beginnen Sie oben mit einer neuen Website.',
+    colSite: 'Webseite',
+    colOwner: 'Kunde',
+    colStatus: 'Status',
+    colBuild: 'Letzter Build',
+    colAction: 'Aktion',
+    ownerOwn: 'Eigene',
+    noBuild: 'Noch kein Build',
+    openAction: 'Öffnen',
+    statusLabels: {
+      draft: 'Entwurf',
+      live: 'Live',
+      failed: 'Build-Fehler',
+    },
+    buildStatusLabels: {
+      queued: 'In Warteschlange',
+      running: 'Läuft',
+      ok: 'Erfolgreich',
+      failed: 'Fehlgeschlagen',
+      cancelled: 'Abgebrochen',
+    },
+    pageOriginLabels: {
+      ai: 'KI',
+      manual: 'manuell',
+      template: 'Vorlage',
+    },
+    pageStatus: (from, to, total) => `${from} bis ${to} von ${total}`,
+    prevPage: 'Zurück',
+    nextPage: 'Weiter',
+    detailTitleFallback: 'Webseite',
+    backToAll: 'Alle Webseiten',
+    detailProject: 'Astro-Projekt',
+    projectRepo: 'Repository',
+    projectBranch: 'Branch',
+    projectAstro: 'Stack',
+    projectNone: 'nicht gesetzt',
+    detailRelease: 'Veröffentlichung',
+    releaseVersion: (version) => `${version} live`,
+    releaseNone: 'Noch nicht veröffentlicht',
+    detailClient: 'Kunde',
+    clientEmpty: 'Eigene Website',
+    clientEmptyHint:
+      'Diese Website gehört zur Agentur selbst. Für Kundenprojekte legen Sie beim Anlegen einen Kunden an.',
+    clientName: 'Firma',
+    clientContact: 'Ansprechpartner',
+    clientEmail: 'E-Mail',
+    detailPages: 'Seiten',
+    pagesEmpty: 'Noch keine Seite. Ein KI-Lauf oder eine manuelle Seite legt Routen an.',
+    detailBuilds: 'Builds',
+    buildsEmpty: 'Noch kein Build. Starten Sie einen Build, damit ein Runner ihn abarbeitet.',
+    buildDuration: (ms) => `${(ms / 1000).toFixed(1)} s`,
+    buildAction: 'Build starten',
+    buildStarting: 'Wird gestartet …',
+    buildQueued: 'Build eingereiht. Ein Runner arbeitet ihn ab.',
+    detailApproval: 'Freigabe',
+    approvalNone: 'Keine Freigabe angefordert.',
+    approvalHint:
+      'Der Link gilt 14 Tage und zeigt genau diesen Build. Nach einer Änderung entsteht ein neuer Build mit neuer Freigabe.',
+    approvalCreated: 'Freigabe-Link erzeugt. Er wird nur jetzt vollständig angezeigt.',
+    approvalLinkTitle: 'Freigabe-Link',
+    approvalLinkHint: 'Einmalig sichtbar · nicht indexiert',
+    approvalRequest: 'Freigabe anfordern',
+    approvalRequesting: 'Wird erzeugt …',
+    approvalNeedsBuild: 'Erst ein erfolgreicher Build kann zur Freigabe.',
+    approvalStateLabels: {
+      open: 'Offen',
+      approved: 'Freigegeben',
+      changes: 'Änderung gewünscht',
+      expired: 'Abgelaufen',
+    },
+    approvalExpiresLabel: 'Gültig bis',
+    approvalRecipient: 'Empfänger',
+    approvalComment: 'Kommentar des Kunden',
+    copyLink: 'Kopieren',
+    copied: 'Kopiert',
+    copyFailed: 'Kopieren nicht möglich. Markieren Sie den Link von Hand.',
+    publishAction: 'Veröffentlichen',
+    publishing: 'Wird veröffentlicht …',
+    publishBlocked:
+      'Veröffentlichen braucht einen erfolgreichen Build und die Freigabe des Kunden.',
+    publishDone: (version) => `${version} ist live.`,
+    aiTitle: 'KI-Entwurf',
+    aiHint: 'Brief an einen Runner',
+    aiGoalLabel: 'Zweck',
+    aiGoalPlaceholder: 'Übernachtungen und Restaurant direkt buchbar machen.',
+    aiPagesLabel: 'Seiten',
+    aiPagesHint: 'kommagetrennt, mit / beginnend',
+    aiSubmit: 'Auftrag einreihen',
+    aiSubmitting: 'Wird eingereiht …',
+    aiQueued: 'KI-Auftrag eingereiht. Ein Runner erzeugt Plan und Dateien.',
+    aiBudget: 'Das Monatsbudget für KI-Läufe ist ausgeschöpft.',
+    aiRunnerNote:
+      'Der Auftrag liegt in der Warteschlange, bis ein Runner ihn abholt — die Plattform selbst ruft kein Modell auf.',
+    deleteAction: 'Website löschen',
+    deleteTitle: (name) => `${name} löschen?`,
+    deleteBody:
+      'Seiten, Builds und Freigaben dieser Website werden mitgelöscht. Veröffentlichte Websites lassen sich nicht löschen.',
+    deleteConfirm: 'Website löschen',
+  },
+  approval: {
+    kicker: 'Freigabe',
+    title: (name) => `${name}: Entwurf zur Freigabe`,
+    intro:
+      'Bitte prüfen Sie die Seiten und geben Sie den Stand frei oder wünschen Sie eine Änderung. Es ist kein Konto nötig.',
+    changesTitle: 'Seiten in diesem Entwurf',
+    noPages: 'Dieser Entwurf enthält noch keine Seiten.',
+    stateOpen: 'Offen',
+    stateApproved: 'Freigegeben',
+    stateChanges: 'Änderung gewünscht',
+    decideTitle: 'Ihre Rückmeldung',
+    commentLabel: 'Kommentar',
+    commentHint: 'optional bei Freigabe, nötig bei Änderungswunsch',
+    commentPlaceholder: 'z. B. Startseite: bitte das Bild vom Marktplatz.',
+    commentRequired: 'Bitte beschreiben Sie kurz, was sich ändern soll.',
+    approve: 'Freigeben',
+    approving: 'Wird gespeichert …',
+    requestChanges: 'Änderung wünschen',
+    requesting: 'Wird gespeichert …',
+    approvedBody:
+      'Danke, die Freigabe ist gespeichert. Das Team kann die Website jetzt veröffentlichen.',
+    changesBody:
+      'Danke, Ihr Änderungswunsch ist gespeichert. Das Team meldet sich mit einem neuen Entwurf.',
+    privacy:
+      'Dieser Link ist persönlich und nicht in Suchmaschinen. Er zeigt nur diese eine Website und nur diesen Entwurf.',
+    expiresAt: (date) => `Link gültig bis ${date}`,
+    expiredTitle: 'Dieser Link ist abgelaufen',
+    expiredBody:
+      'Aus Sicherheitsgründen gilt jeder Freigabe-Link nur begrenzt. Bitte fordern Sie beim Team einen neuen Link an.',
+    missingTitle: 'Freigabe nicht gefunden',
+    missingBody: 'Der Link ist unvollständig oder wurde zurückgezogen.',
+    errorTitle: 'Freigabe nicht erreichbar',
+  },
 };
 
 const EN: Messages = {
@@ -1496,6 +1805,168 @@ const EN: Messages = {
     moveUp: 'Move up',
     moveDown: 'Move down',
   },
+  websites: {
+    title: 'Websites',
+    description:
+      'Own sites and client projects in one place: draft, Astro build, preview, approval and go-live.',
+    newAction: 'New website',
+    kpiTotal: 'Websites',
+    kpiTotalHint: (own, client) => `${own} own · ${client} clients`,
+    kpiLive: 'Live',
+    kpiDraft: 'In progress',
+    kpiDraftHint: 'Drafts not published yet',
+    kpiAttention: 'Needs attention',
+    kpiAttentionHint: 'Failed builds and open approvals',
+    createTitle: 'Create website',
+    createHint: 'The Astro build starts with a run, not here.',
+    nameLabel: 'Name',
+    namePlaceholder: 'e.g. Hotel Zum Anker',
+    domainLabel: 'Domain',
+    domainPlaceholder: 'hotel-zum-anker.de',
+    clientLabel: 'Client',
+    clientNone: 'Own website',
+    createSubmit: 'Create',
+    creating: 'Creating …',
+    formInvalid: 'Please check the highlighted fields.',
+    created: (name) => `${name} was created.`,
+    listTitle: 'Portfolio',
+    listSummary: (shown, total) => `${shown} of ${total}`,
+    filterLabel: 'Filter portfolio',
+    filterAll: 'All',
+    filterOwn: 'Own',
+    filterClient: 'Clients',
+    searchLabel: 'Search websites',
+    searchPlaceholder: 'Name, slug or domain …',
+    emptyTitle: 'No website found',
+    emptyFiltered: 'No website matches the search and filter.',
+    emptyInitial: 'No website yet. Start with a new website above.',
+    colSite: 'Website',
+    colOwner: 'Client',
+    colStatus: 'Status',
+    colBuild: 'Last build',
+    colAction: 'Action',
+    ownerOwn: 'Own',
+    noBuild: 'No build yet',
+    openAction: 'Open',
+    statusLabels: {
+      draft: 'Draft',
+      live: 'Live',
+      failed: 'Build failed',
+    },
+    buildStatusLabels: {
+      queued: 'Queued',
+      running: 'Running',
+      ok: 'Succeeded',
+      failed: 'Failed',
+      cancelled: 'Cancelled',
+    },
+    pageOriginLabels: {
+      ai: 'AI',
+      manual: 'manual',
+      template: 'template',
+    },
+    pageStatus: (from, to, total) => `${from} to ${to} of ${total}`,
+    prevPage: 'Previous',
+    nextPage: 'Next',
+    detailTitleFallback: 'Website',
+    backToAll: 'All websites',
+    detailProject: 'Astro project',
+    projectRepo: 'Repository',
+    projectBranch: 'Branch',
+    projectAstro: 'Stack',
+    projectNone: 'not set',
+    detailRelease: 'Release',
+    releaseVersion: (version) => `${version} live`,
+    releaseNone: 'Not published yet',
+    detailClient: 'Client',
+    clientEmpty: 'Own website',
+    clientEmptyHint:
+      'This website belongs to the agency itself. Pick a client when creating a customer project.',
+    clientName: 'Company',
+    clientContact: 'Contact',
+    clientEmail: 'Email',
+    detailPages: 'Pages',
+    pagesEmpty: 'No page yet. An AI run or a manual page creates routes.',
+    detailBuilds: 'Builds',
+    buildsEmpty: 'No build yet. Start one so a runner can pick it up.',
+    buildDuration: (ms) => `${(ms / 1000).toFixed(1)} s`,
+    buildAction: 'Start build',
+    buildStarting: 'Starting …',
+    buildQueued: 'Build queued. A runner will process it.',
+    detailApproval: 'Approval',
+    approvalNone: 'No approval requested.',
+    approvalHint:
+      'The link is valid for 14 days and covers exactly this build. Any change creates a new build with a new approval.',
+    approvalCreated: 'Approval link created. It is shown in full only now.',
+    approvalLinkTitle: 'Approval link',
+    approvalLinkHint: 'shown once · not indexed',
+    approvalRequest: 'Request approval',
+    approvalRequesting: 'Creating …',
+    approvalNeedsBuild: 'A successful build is required first.',
+    approvalStateLabels: {
+      open: 'Open',
+      approved: 'Approved',
+      changes: 'Changes requested',
+      expired: 'Expired',
+    },
+    approvalExpiresLabel: 'Valid until',
+    approvalRecipient: 'Recipient',
+    approvalComment: 'Client comment',
+    copyLink: 'Copy',
+    copied: 'Copied',
+    copyFailed: 'Copy failed. Select the link and copy it manually.',
+    publishAction: 'Publish',
+    publishing: 'Publishing …',
+    publishBlocked: 'Publishing needs a successful build and the client approval.',
+    publishDone: (version) => `${version} is live.`,
+    aiTitle: 'AI draft',
+    aiHint: 'brief for a runner',
+    aiGoalLabel: 'Purpose',
+    aiGoalPlaceholder: 'Make rooms and the restaurant directly bookable.',
+    aiPagesLabel: 'Pages',
+    aiPagesHint: 'comma-separated, starting with /',
+    aiSubmit: 'Queue job',
+    aiSubmitting: 'Queuing …',
+    aiQueued: 'AI job queued. A runner produces plan and files.',
+    aiBudget: 'The monthly AI budget is used up.',
+    aiRunnerNote:
+      'The job waits in the queue until a runner picks it up — the platform itself never calls a model.',
+    deleteAction: 'Delete website',
+    deleteTitle: (name) => `Delete ${name}?`,
+    deleteBody:
+      'Pages, builds and approvals of this website are deleted with it. Published websites cannot be deleted.',
+    deleteConfirm: 'Delete website',
+  },
+  approval: {
+    kicker: 'Approval',
+    title: (name) => `${name}: draft for approval`,
+    intro: 'Review the pages, then approve this version or ask for a change. No account is needed.',
+    changesTitle: 'Pages in this draft',
+    noPages: 'This draft has no pages yet.',
+    stateOpen: 'Open',
+    stateApproved: 'Approved',
+    stateChanges: 'Changes requested',
+    decideTitle: 'Your feedback',
+    commentLabel: 'Comment',
+    commentHint: 'optional when approving, required for a change request',
+    commentPlaceholder: 'e.g. Home page: please use the market square photo.',
+    commentRequired: 'Please describe briefly what should change.',
+    approve: 'Approve',
+    approving: 'Saving …',
+    requestChanges: 'Request changes',
+    requesting: 'Saving …',
+    approvedBody: 'Thank you, the approval is saved. The team can publish the website now.',
+    changesBody: 'Thank you, your change request is saved. The team will send a new draft.',
+    privacy:
+      'This link is personal and excluded from search engines. It shows only this website and only this draft.',
+    expiresAt: (date) => `Link valid until ${date}`,
+    expiredTitle: 'This link has expired',
+    expiredBody:
+      'For security, every approval link is time-limited. Please ask the team for a new link.',
+    missingTitle: 'Approval not found',
+    missingBody: 'The link is incomplete or was withdrawn.',
+    errorTitle: 'Approval unavailable',
+  },
 };
 
 export function getMessages(locale: Locale): Messages {
@@ -1627,7 +2098,7 @@ export function formatApiError(error: unknown, locale: Locale): string {
 }
 
 export function formatFieldError(
-  field: 'email' | 'name' | 'slug' | 'password',
+  field: 'email' | 'name' | 'slug' | 'password' | 'domain' | 'route' | 'comment',
   rawMessage: string | undefined,
   locale: Locale,
 ): string | undefined {
@@ -1641,6 +2112,15 @@ export function formatFieldError(
   }
   if (field === 'name') {
     return 'Bitte einen Namen mit 2 bis 80 Zeichen eingeben.';
+  }
+  if (field === 'domain') {
+    return 'Bitte eine Domain wie example.de eingeben, ohne http:// oder Pfad.';
+  }
+  if (field === 'route') {
+    return 'Mit / beginnen, dann Kleinbuchstaben und Bindestriche, z. B. /zimmer/suite.';
+  }
+  if (field === 'comment') {
+    return 'Bitte kurz beschreiben, was sich ändern soll.';
   }
   if (field === 'password') {
     return rawMessage.includes('at least')
