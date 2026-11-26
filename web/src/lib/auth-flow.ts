@@ -33,3 +33,29 @@ export function sessionProbeOutcome(error: unknown): 'signed_out' | 'aborted' | 
   if (error instanceof ApiError && error.status === 401) return 'signed_out';
   return 'unavailable';
 }
+
+/**
+ * Synchronous single-flight guard. React state updates only apply after the
+ * next render, so a double click or double Enter in the same tick would pass a
+ * `submitting` state check twice. This flag flips immediately.
+ */
+export function createSubmitGuard(): {
+  run: <T>(task: () => Promise<T>) => Promise<T | undefined>;
+  readonly busy: boolean;
+} {
+  let busy = false;
+  return {
+    get busy() {
+      return busy;
+    },
+    async run<T>(task: () => Promise<T>): Promise<T | undefined> {
+      if (busy) return undefined;
+      busy = true;
+      try {
+        return await task();
+      } finally {
+        busy = false;
+      }
+    },
+  };
+}

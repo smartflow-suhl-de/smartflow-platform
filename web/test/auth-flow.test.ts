@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-const { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, passwordProblem, sessionProbeOutcome } =
-  await import('../src/lib/auth-flow.ts');
+const {
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  createSubmitGuard,
+  passwordProblem,
+  sessionProbeOutcome,
+} = await import('../src/lib/auth-flow.ts');
 const { ApiError } = await import('../src/lib/api.ts');
 
 describe('passwordProblem', () => {
@@ -62,5 +67,33 @@ describe('sessionProbeOutcome', () => {
     for (const error of [new TypeError('fetch failed'), 'boom', undefined, null]) {
       assert.notEqual(sessionProbeOutcome(error), 'signed_out', String(error));
     }
+  });
+});
+
+describe('createSubmitGuard', () => {
+  it('runs one request for two submits in the same tick', async () => {
+    const guard = createSubmitGuard();
+    let calls = 0;
+    const task = async () => {
+      calls += 1;
+      await Promise.resolve();
+      return 'ok';
+    };
+    const [first, second] = await Promise.all([guard.run(task), guard.run(task)]);
+    assert.equal(calls, 1);
+    assert.equal(first, 'ok');
+    assert.equal(second, undefined);
+  });
+
+  it('releases after success and after failure', async () => {
+    const guard = createSubmitGuard();
+    await assert.rejects(
+      guard.run(async () => {
+        throw new Error('boom');
+      }),
+    );
+    assert.equal(guard.busy, false);
+    assert.equal(await guard.run(async () => 'again'), 'again');
+    assert.equal(guard.busy, false);
   });
 });
