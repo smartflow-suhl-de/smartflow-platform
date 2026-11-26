@@ -31,7 +31,8 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
   return respond(url, init);
 }) as typeof fetch;
 
-const { ApiError, api, setUnauthorizedHandler } = await import('../src/lib/api.ts');
+const { ApiError, api, setUnauthorizedHandler, translateFetchError, REQUEST_TIMEOUT_MS } =
+  await import('../src/lib/api.ts');
 
 describe('api requests', () => {
   beforeEach(() => {
@@ -270,15 +271,17 @@ describe('api error handling', () => {
     );
   });
 
-  it('falls back to an http_ code when the body has no error object', async () => {
-    respond = () => textResponse(502, 'upstream down');
+  it('falls back to an http_ code for a non-JSON error body instead of echoing it', async () => {
+    respond = () => textResponse(502, '<html><body>upstream down</body></html>');
 
     await assert.rejects(
       () => api.health(),
       (error: unknown) => {
         assert.ok(error instanceof ApiError);
         assert.equal(error.status, 502);
-        assert.equal(error.code, 'invalid_body');
+        assert.equal(error.code, 'http_502');
+        // The HTML fragment must not become the operator-facing message.
+        assert.equal(error.message, 'HTTP 502');
         return true;
       },
     );
@@ -346,5 +349,153 @@ describe('api error handling', () => {
         return true;
       },
     );
+  });
+});
+
+describe('translateFetchError', () => {
+  it('passes an AbortError through unchanged', async () => {
+    const abort = new DOMException('aborted', 'AbortError');
+    assert.equal(translateFetchError(abort), abort);
+  });
+
+  it('maps a TimeoutError to network_error', async () => {
+    const error = translateFetchError(new DOMException('timed out', 'TimeoutError'));
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 0);
+    assert.equal(error.code, 'network_error');
+  });
+
+  it('maps a TypeError from fetch to network_error', async () => {
+    const error = translateFetchError(new TypeError('fetch failed'));
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.code, 'network_error');
+    assert.equal(error.message, 'Network request failed');
+  });
+
+  it('maps a thrown non-error value to network_error', async () => {
+    const error = translateFetchError('boom');
+    assert.ok(error instanceof ApiError);
+    assert.equal(error.status, 0);
+    assert.equal(error.code, 'network_error');
+  });
+});
+
+describe('api abort and timeout', () => {
+  beforeEach(() => {
+    calls = [];
+    setUnauthorizedHandler(null);
+  });
+
+  it('reports a body read that aborts mid-stream as network_error', async () => {
+    // The headers arrived, so `fetch` resolves; the body read is what aborts.
+    // Before the fix that rejection escaped as a raw TypeError and rendered as
+    // a broken connection message with no code.
+    respond = () =>
+      ({
+        ok: true,
+        status: 200,
+        text: () => Promise.reject(new DOMException('aborted', 'AbortError')),
+      }) as unknown as Response;
+
+    await assert.rejects(
+      () => api.health(),
+      (error: unknown) => {
+        assert.equal((error as Error).name, 'AbortError');
+        assert.equal(error instanceof ApiError, false);
+        return true;
+      },
+    );
+  });
+
+  it('reports a body read that fails without an abort as network_error', async () => {
+    respond = () =>
+      ({
+        ok: true,
+        status: 200,
+        text: () => Promise.reject(new TypeError('terminated')),
+      }) as unknown as Response;
+
+    await assert.rejects(
+      () => api.health(),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.code, 'network_error');
+        assert.equal(error.status, 0);
+        return true;
+      },
+    );
+  });
+
+  it('gives every request a timeout signal', async () => {
+    respond = () => jsonResponse(200, { status: 'ok', version: '0.1.0', port: null });
+    await api.health();
+
+    assert.equal(REQUEST_TIMEOUT_MS, 15_000);
+    assert.ok(calls[0]?.init.signal instanceof AbortSignal);
+  });
+
+  it('combines the caller signal with the timeout', async () => {
+    respond = () => jsonResponse(200, { status: 'ok', version: '0.1.0', port: null });
+    const controller = new AbortController();
+    await api.health(controller.signal);
+
+    const signal = calls[0]?.init.signal as AbortSignal;
+    assert.notEqual(signal, controller.signal);
+    // An abort through the caller's controller reaches the combined signal.
+    controller.abort();
+    assert.equal(signal.aborted, true);
+    assert.equal(signal.reason.name, 'AbortError');
+  });
+
+  it('turns a timeout into network_error instead of a raw DOMException', async () => {
+    // The stubbed fetch rejects the way `AbortSignal.timeout` makes it fail.
+    respond = () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    };
+
+    await assert.rejects(
+      () => api.health(),
+      (error: unknown) => {
+        assert.ok(error instanceof ApiError);
+        assert.equal(error.code, 'network_error');
+        assert.equal(error.status, 0);
+        return true;
+      },
+    );
+  });
+
+  it('gives up on a hanging request when the timeout fires', async () => {
+    // Short timeout so the real code path runs without waiting 15 s: the
+    // request is created with whatever `AbortSignal.timeout` returns.
+    const original = AbortSignal.timeout;
+    AbortSignal.timeout = ((_ms: number) => original(10)) as typeof AbortSignal.timeout;
+    try {
+      // Never answers on its own — only the abort signal can end it.
+      respond = (_url, init) => {
+        const signal = init.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason));
+        });
+      };
+
+      await assert.rejects(
+        () => api.health(),
+        (error: unknown) => {
+          assert.ok(error instanceof ApiError);
+          assert.equal(error.code, 'network_error');
+          return true;
+        },
+      );
+    } finally {
+      AbortSignal.timeout = original;
+    }
+  });
+
+  it('resolves a 204 logout without a body', async () => {
+    respond = () => new Response(null, { status: 204 });
+    await assert.doesNotReject(() => api.logout());
+
+    assert.equal(calls[0]?.url, '/api/v1/auth/logout');
+    assert.equal(calls[0]?.init.method, 'POST');
   });
 });

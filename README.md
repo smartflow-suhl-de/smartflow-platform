@@ -48,7 +48,7 @@ Alle Befehle laufen an der Repo-Wurzel.
 | `npm run dev:web`      | Vite-Dev-Server auf `127.0.0.1:5273`, `/api` wird auf `:8790` geproxyt |
 | `npm run build`        | API-Typecheck + Web-Produktionsbuild nach `web/dist/`                  |
 | `npm start`            | API ohne Watch-Modus starten                                           |
-| `npm test`             | Alle Tests: 27 Kernel-/Plugin-Tests plus 87 Web-Tests                  |
+| `npm test`             | Alle Tests: 32 Kernel-/Plugin-Tests plus 128 Web-Tests                 |
 | `npm run test:api`     | Nur die Kernel-/Plugin-Tests (`api/test/kernel/`)                      |
 | `npm run test:web`     | Nur die Web-Tests (`web/test/`)                                        |
 | `npm run typecheck`    | `tsc --noEmit` für API und Web                                         |

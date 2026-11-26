@@ -94,6 +94,94 @@ class FakeElement {
   }
 }
 
+/**
+ * The smallest element the focus-trap helpers touch: query a selector, report
+ * whether something in the tree contains a node, and take focus.
+ *
+ * It is deliberately not a DOM emulator. Selector matching is limited to the
+ * class tokens and `[disabled]`/`[tabindex]` attributes a test sets explicitly,
+ * which is exactly what a focus-ring test needs to distinguish.
+ */
+export class FakeNode {
+  readonly tagName: string;
+  readonly children: FakeNode[] = [];
+  readonly attributes = new Map<string, string>();
+  private focusHandler: (() => void) | null = null;
+
+  constructor(tagName = 'div') {
+    this.tagName = tagName.toUpperCase();
+  }
+
+  append(...nodes: FakeNode[]): this {
+    for (const node of nodes) this.children.push(node);
+    return this;
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributes.get(name) ?? null;
+  }
+
+  getClientRects(): unknown[] {
+    return [{}];
+  }
+
+  onFocus(handler: () => void): this {
+    this.focusHandler = handler;
+    return this;
+  }
+
+  focus(): void {
+    // A disabled control refuses focus, exactly like the browser.
+    if (this.attributes.has('disabled')) return;
+    // `document` is the stub from this module, whose `activeElement` is a
+    // plain field; the DOM lib types it as read-only.
+    (document as unknown as { activeElement: unknown }).activeElement = this;
+    this.focusHandler?.();
+  }
+
+  contains(node: FakeNode | null): boolean {
+    if (!node) return false;
+    if (node === this) return true;
+    return this.children.some((child) => child.contains(node));
+  }
+
+  /** Matches only the handful of tokens the focus-trap selector uses. */
+  matchesSelector(selector: string): boolean {
+    return selector.split(',').some((part) => this.matchesToken(part.trim()));
+  }
+
+  private matchesToken(token: string): boolean {
+    if (token.startsWith('[tabindex]')) {
+      return this.attributes.has('tabindex') && this.attributes.get('tabindex') !== '-1';
+    }
+
+    const tag = token
+      .replace(/:not\(\[disabled\]\)/, '')
+      .replace('[href]', '')
+      .trim();
+    if (this.tagName !== tag.toUpperCase()) return false;
+    if (token.includes(':not([disabled])') && this.attributes.has('disabled')) return false;
+    if (token.includes('[href]') && !this.attributes.has('href')) return false;
+    return true;
+  }
+
+  querySelectorAll<T = FakeNode>(selector: string): T[] {
+    const found: FakeNode[] = [];
+    const walk = (node: FakeNode): void => {
+      for (const child of node.children) {
+        if (child.matchesSelector(selector)) found.push(child);
+        walk(child);
+      }
+    };
+    walk(this);
+    return found as unknown as T[];
+  }
+}
+
 export interface BrowserStub {
   location: FakeLocation;
   history: FakeHistory;
@@ -101,6 +189,9 @@ export interface BrowserStub {
   metaThemeColor: FakeElement | null;
   storage: Map<string, string>;
   mediaQueries: Map<string, boolean>;
+  scrollCalls: Array<{ x: number; y: number }>;
+  /** Root of the fake tree `document.contains` answers against. */
+  documentRoot: FakeNode;
   eventTypes(): string[];
   reset(): void;
 }
@@ -108,6 +199,8 @@ export interface BrowserStub {
 let storage = new Map<string, string>();
 let mediaQueries = new Map<string, boolean>();
 let metaThemeColor: FakeElement | null = null;
+let scrollCalls: Array<{ x: number; y: number }> = [];
+let documentRoot = new FakeNode('html');
 
 function createDocumentElement(): FakeElement {
   return new FakeElement();
@@ -161,6 +254,9 @@ function install(): void {
         removeEventListener() {},
       };
     },
+    scrollTo(x: number, y: number) {
+      scrollCalls.push({ x, y });
+    },
   };
 
   const doc = {
@@ -169,6 +265,18 @@ function install(): void {
       return selector.includes('theme-color') ? metaThemeColor : null;
     },
     setAttribute() {},
+    activeElement: documentRoot as unknown,
+    contains(node: unknown) {
+      return node === documentRoot || documentRoot.contains(node as never);
+    },
+    addEventListener(type: string, handler: (event: unknown) => void) {
+      listeners.add({ type, handler });
+    },
+    removeEventListener(type: string, handler: (event: unknown) => void) {
+      for (const entry of listeners) {
+        if (entry.type === type && entry.handler === handler) listeners.delete(entry);
+      }
+    },
   };
 
   Object.assign(globalThis, {
@@ -198,6 +306,12 @@ export const browser: BrowserStub = {
   get mediaQueries() {
     return mediaQueries;
   },
+  get scrollCalls() {
+    return scrollCalls;
+  },
+  get documentRoot() {
+    return documentRoot;
+  },
   eventTypes() {
     return [...new Set([...listeners].map((entry) => entry.type))];
   },
@@ -211,6 +325,8 @@ export const browser: BrowserStub = {
     location.pushStateCalls = [];
     location.replaceStateCalls = [];
     metaThemeColor = null;
+    scrollCalls = [];
+    documentRoot = new FakeNode('html');
     install();
   },
 };

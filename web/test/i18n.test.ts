@@ -129,7 +129,42 @@ describe('formatApiError', () => {
 
   it('translates the same codes to English', () => {
     const error = new ApiError(401, 'invalid_link', 'The sign-in link is invalid or has expired.');
-    assert.equal(formatApiError(error, 'en'), 'The sign-in link is invalid or has expired.');
+    assert.equal(formatApiError(error, 'en'), 'This sign-in link is invalid or expired.');
+  });
+
+  it('translates every known code in both locales instead of echoing the server', () => {
+    const codes = [
+      'network_error',
+      'unauthorized',
+      'forbidden',
+      'invalid_link',
+      'rate_limited',
+      'slug_taken',
+      'tenant_not_found',
+      'validation_failed',
+    ];
+    for (const code of codes) {
+      const serverMessage = `server says ${code}`;
+      for (const locale of ['de', 'en'] as const) {
+        const text = formatApiError(new ApiError(400, code, serverMessage), locale);
+        assert.notEqual(text, serverMessage, `${code}/${locale} must be translated`);
+        assert.ok(text.trim().length > 0, `${code}/${locale} must not be empty`);
+      }
+    }
+  });
+
+  it('keeps no German text in the English error catalogue', () => {
+    const english = [
+      formatApiError(new ApiError(401, 'unauthorized', 'x'), 'en'),
+      formatApiError(new ApiError(403, 'forbidden', 'x'), 'en'),
+      formatApiError(new ApiError(429, 'rate_limited', 'x'), 'en'),
+      formatApiError(new ApiError(409, 'slug_taken', 'x'), 'en'),
+      formatApiError(new ApiError(404, 'tenant_not_found', 'x'), 'en'),
+      formatApiError(new ApiError(422, 'validation_failed', 'x'), 'en'),
+    ];
+    for (const text of english) {
+      assert.doesNotMatch(text, /[äöüß]/i, text);
+    }
   });
 
   it('covers the network failure case in both locales', () => {
@@ -149,6 +184,19 @@ describe('formatApiError', () => {
 
   it('uses the message of a plain Error', () => {
     assert.equal(formatApiError(new Error('kaputt'), 'de'), 'kaputt');
+  });
+});
+
+describe('plural forms', () => {
+  it('uses the singular for exactly one tenant', () => {
+    assert.equal(getMessages('de').shell.opsTenantsLine(1, 1), '1 / 1 Mandant aktiv');
+    assert.equal(getMessages('en').shell.opsTenantsLine(1, 1), '1 / 1 tenant active');
+  });
+
+  it('uses the plural for zero and many', () => {
+    assert.equal(getMessages('de').shell.opsTenantsLine(0, 5), '0 / 5 Mandanten aktiv');
+    assert.equal(getMessages('en').shell.opsTenantsLine(0, 5), '0 / 5 tenants active');
+    assert.equal(getMessages('en').shell.opsTenantsLine(0, 0), '0 / 0 tenants active');
   });
 });
 

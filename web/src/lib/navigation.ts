@@ -116,3 +116,23 @@ export function resolveAliasRedirect(pathname: string, items: ResolvedNavItem[])
   }
   return null;
 }
+
+/**
+ * The navigation label for a path, or null for a path no entry covers.
+ *
+ * An exact match always wins; `/` matches only itself (otherwise every route
+ * would inherit the overview title). Otherwise the longest entry prefix owns
+ * the path, so a nested plugin route keeps its own title instead of the one of
+ * a shorter sibling.
+ */
+export function pageTitle(pathname: string, items: ResolvedNavItem[]): string | null {
+  const exact = items.find((item) => item.path === pathname);
+  if (exact) return exact.label;
+
+  let best: ResolvedNavItem | null = null;
+  for (const item of items) {
+    if (item.path === '/' || !pathname.startsWith(`${item.path}/`)) continue;
+    if (!best || item.path.length > best.path.length) best = item;
+  }
+  return best?.label ?? null;
+}

@@ -56,6 +56,10 @@ export function navigate(to: string, options: { replace?: boolean } = {}): void 
     window.history.pushState({}, '', next);
   }
   notify();
+  // A new page starts at the top. `replace` keeps the scroll position, and
+  // browser back/forward never reaches this function (`popstate` restores the
+  // position itself).
+  if (!options.replace) window.scrollTo(0, 0);
 }
 
 export function useRoute(): RouteLocation {

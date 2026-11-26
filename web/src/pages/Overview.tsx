@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityIcon, BuildingIcon } from '../components/icons';
 import { Badge, Button, Card, CardHeader, EmptyState, KpiTile, PageHeader } from '../components/ui';
-import { api } from '../lib/api';
+import { api, isAbortError } from '../lib/api';
 import { formatApiError, formatDateShort, type Locale, type Messages } from '../lib/i18n';
 import { AppLink, navigate } from '../lib/router';
 import type { HealthResponse, SessionTenant, SessionUser, Tenant, TenantStats } from '../lib/types';
@@ -43,7 +43,7 @@ export function OverviewPage({
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (isAbortError(err)) return;
         setError(formatApiError(err, locale));
         setLoading(false);
       });

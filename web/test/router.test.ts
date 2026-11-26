@@ -40,6 +40,28 @@ describe('router.navigate', () => {
     assert.equal(browser.location.search, '?create=1');
   });
 
+  it('scrolls to the top for a new history entry', () => {
+    navigate('/tenants');
+
+    assert.deepEqual(browser.scrollCalls, [{ x: 0, y: 0 }]);
+  });
+
+  it('keeps the scroll position on a replace', () => {
+    // `replace` is the shape used for redirects (`/mandanten` → `/tenants`) and
+    // for `/tenants?create=1`, where jumping to the top would lose the context
+    // the user just came from.
+    navigate('/tenants', { replace: true });
+
+    assert.deepEqual(browser.scrollCalls, []);
+  });
+
+  it('does not scroll when the navigation is a no-op', () => {
+    setLocation('/tenants');
+    navigate('/tenants');
+
+    assert.deepEqual(browser.scrollCalls, []);
+  });
+
   it('treats the same path with a different query as a navigation', () => {
     setLocation('/tenants');
     navigate('/tenants?create=1');
@@ -48,7 +70,7 @@ describe('router.navigate', () => {
     assert.equal(browser.location.search, '?create=1');
   });
 
-  it('resolves relative targets against the origin', () => {
+  it('resolves relative targets against the current document', () => {
     setLocation('/tenants');
     navigate('?create=1');
 

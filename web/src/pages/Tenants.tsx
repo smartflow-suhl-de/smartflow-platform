@@ -12,7 +12,7 @@ import {
   KpiTile,
   PageHeader,
 } from '../components/ui';
-import { ApiError, api } from '../lib/api';
+import { ApiError, api, isAbortError } from '../lib/api';
 import {
   formatApiError,
   formatDateShort,
@@ -83,7 +83,7 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
         setLoading(false);
       })
       .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (isAbortError(err)) return;
         setError(formatApiError(err, locale));
         setLoading(false);
       });

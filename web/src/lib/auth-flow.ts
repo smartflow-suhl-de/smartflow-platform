@@ -1,5 +1,5 @@
 import type { AuthMe } from './types';
-import { api } from './api';
+import { ApiError, api, isAbortError } from './api';
 
 /**
  * Sign-in helpers shared by the login page.
@@ -50,4 +50,18 @@ export function toAppHref(link: string, origin: string, fallback = '/login'): st
 export function tokenFromSearch(search: string): string | null {
   const token = new URLSearchParams(search).get('token');
   return token && token.trim().length > 0 ? token : null;
+}
+
+/**
+ * What a failed `/auth/me` probe means for the session.
+ *
+ * Only a 401 proves there is no session. Every other failure — API down, 502
+ * from a proxy, unreadable payload — says nothing about the user's cookie, so
+ * treating it as signed out would throw a valid session away. An abort is the
+ * caller unmounting and carries no meaning at all.
+ */
+export function sessionProbeOutcome(error: unknown): 'signed_out' | 'aborted' | 'unavailable' {
+  if (isAbortError(error)) return 'aborted';
+  if (error instanceof ApiError && error.status === 401) return 'signed_out';
+  return 'unavailable';
 }
