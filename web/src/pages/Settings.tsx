@@ -1,5 +1,7 @@
+import { ThemeSettings } from '../components/ThemeSettings';
 import { Card, CardHeader, PageHeader } from '../components/ui';
 import type { Locale, Messages } from '../lib/i18n';
+import type { ThemeDefinition } from '../lib/themes';
 import type { HealthResponse, SessionTenant, SessionUser } from '../lib/types';
 import type { Mode } from '../theme';
 
@@ -10,8 +12,12 @@ export interface SettingsPageProps {
   mode: Mode;
   locale: Locale;
   messages: Messages;
+  themes: readonly ThemeDefinition[];
+  activeThemeId: string;
   onModeChange: (mode: Mode) => void;
   onLocaleChange: (locale: Locale) => void;
+  onThemeChange: (theme: ThemeDefinition) => void;
+  onRemoveCustomTheme: () => void;
 }
 
 export function SettingsPage({
@@ -21,8 +27,12 @@ export function SettingsPage({
   mode,
   locale,
   messages,
+  themes,
+  activeThemeId,
   onModeChange,
   onLocaleChange,
+  onThemeChange,
+  onRemoveCustomTheme,
 }: SettingsPageProps) {
   return (
     <div>
@@ -125,6 +135,16 @@ export function SettingsPage({
                 </dd>
               </div>
             </dl>
+            <ThemeSettings
+              themes={themes}
+              activeThemeId={activeThemeId}
+              mode={mode}
+              locale={locale}
+              messages={messages}
+              onSelect={onThemeChange}
+              onCustom={onThemeChange}
+              onRemoveCustom={onRemoveCustomTheme}
+            />
           </div>
           <div className="sf-card-foot">
             <p className="sf-card-text">{messages.settingsPage.localHint}</p>

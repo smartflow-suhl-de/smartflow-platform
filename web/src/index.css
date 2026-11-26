@@ -1188,6 +1188,112 @@ input:-webkit-autofill:active {
   color: var(--color-paper);
 }
 
+/* --- Theme picker ------------------------------------------------------- */
+
+.sf-theme-block {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-line);
+}
+
+.sf-theme-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.sf-theme-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-theme-option:hover {
+  border-color: var(--color-line-strong);
+}
+
+.sf-theme-option[aria-pressed='true'] {
+  border-color: var(--color-cobalt);
+  box-shadow: inset 0 0 0 1px var(--color-cobalt);
+}
+
+.sf-theme-swatches {
+  display: flex;
+  height: 18px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-badge);
+  overflow: hidden;
+}
+
+.sf-theme-swatch {
+  flex: 1;
+}
+
+.sf-theme-option-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sf-theme-option-desc {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--color-ink-soft);
+  text-wrap: pretty;
+}
+
+.sf-theme-details {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-line);
+}
+
+.sf-theme-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sf-theme-editor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-sm);
+}
+
+.sf-theme-color {
+  height: 32px;
+  padding: 2px;
+}
+
+.sf-theme-json {
+  height: auto;
+  min-height: 140px;
+  padding: var(--spacing-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.sf-theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.sf-theme-block .sf-field-error {
+  margin-top: var(--spacing-sm);
+}
+
 /* --- Main & Topbar ------------------------------------------------------ */
 
 .sf-main {

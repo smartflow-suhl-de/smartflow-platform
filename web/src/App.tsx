@@ -8,13 +8,21 @@ import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } f
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
+import { BUILTIN_THEMES, defaultTheme, type ThemeDefinition } from './lib/themes';
 import { HelpPage } from './pages/Help';
 import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
 import { TenantsPage } from './pages/Tenants';
-import { applyMode, storedMode, type Mode } from './theme';
+import {
+  applyTheme,
+  clearCustomTheme,
+  storedCustomTheme,
+  storedMode,
+  storedTheme,
+  type Mode,
+} from './theme';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -35,6 +43,8 @@ export function App() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(() => storedMode());
+  const [theme, setTheme] = useState<ThemeDefinition>(() => storedTheme());
+  const [customTheme, setCustomTheme] = useState<ThemeDefinition | null>(() => storedCustomTheme());
   const [locale, setLocale] = useState<Locale>(() => storedLocale());
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState(false);
@@ -45,9 +55,23 @@ export function App() {
 
   const messages = useMemo(() => getMessages(locale), [locale]);
 
+  useEffect(() => {
+    applyTheme(theme, mode);
+  }, [theme, mode]);
+
   const handleModeChange = useCallback((next: Mode) => {
     setMode(next);
-    applyMode(next);
+  }, []);
+
+  const handleThemeChange = useCallback((next: ThemeDefinition) => {
+    setTheme(next);
+    if (next.id === 'custom') setCustomTheme(next);
+  }, []);
+
+  const handleRemoveCustomTheme = useCallback(() => {
+    clearCustomTheme();
+    setCustomTheme(null);
+    setTheme(defaultTheme());
   }, []);
 
   const handleLocaleChange = useCallback((next: Locale) => {
@@ -266,8 +290,12 @@ export function App() {
         mode={mode}
         locale={locale}
         messages={messages}
+        themes={customTheme ? [...BUILTIN_THEMES, customTheme] : BUILTIN_THEMES}
+        activeThemeId={theme.id}
         onModeChange={handleModeChange}
         onLocaleChange={handleLocaleChange}
+        onThemeChange={handleThemeChange}
+        onRemoveCustomTheme={handleRemoveCustomTheme}
       />
     );
   } else if (pathname === '/help') {

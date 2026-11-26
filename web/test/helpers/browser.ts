@@ -78,9 +78,28 @@ class FakeClassList {
   }
 }
 
+/** The slice of `CSSStyleDeclaration` the theme helpers write to. */
+class FakeStyle {
+  colorScheme = '';
+  overflow = '';
+  private readonly values = new Map<string, string>();
+
+  setProperty(name: string, value: string): void {
+    this.values.set(name, value);
+  }
+
+  getPropertyValue(name: string): string {
+    return this.values.get(name) ?? '';
+  }
+
+  removeProperty(name: string): void {
+    this.values.delete(name);
+  }
+}
+
 class FakeElement {
   dataset: Record<string, string> = {};
-  style: Record<string, string> = {};
+  style = new FakeStyle();
   classList = new FakeClassList();
   attributes = new Map<string, string>();
   lang = '';
@@ -283,8 +302,12 @@ function install(): void {
     window: win,
     document: doc,
     localStorage: makeStorage(),
-    getComputedStyle: () => ({
-      getPropertyValue: (name: string) => (name === '--color-paper' ? ' #f2efe7' : ''),
+    getComputedStyle: (element: { style?: { getPropertyValue?: (name: string) => string } }) => ({
+      getPropertyValue: (name: string) => {
+        const written = element?.style?.getPropertyValue?.(name) ?? '';
+        if (name !== '--color-paper') return written;
+        return written || ' #f2efe7';
+      },
     }),
   });
 }

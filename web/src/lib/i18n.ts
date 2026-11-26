@@ -205,6 +205,28 @@ export interface Messages {
     modeLabel: string;
     lightLabel: string;
     darkLabel: string;
+    themeLabel: string;
+    themeHint: string;
+    themeCustomTitle: string;
+    themeCustomHint: string;
+    themeNameLabel: string;
+    themeAccentLabel: string;
+    themePaperLabel: string;
+    themeApply: string;
+    themeReset: string;
+    themeJsonTitle: string;
+    themeJsonHint: string;
+    themeJsonLabel: string;
+    themeJsonExport: string;
+    themeJsonImport: string;
+    themeJsonApplied: string;
+    themeErrorJson: string;
+    themeErrorShape: string;
+    themeErrorVersion: string;
+    themeErrorName: string;
+    themeErrorColor: string;
+    themeErrorPaperDark: string;
+    themeErrorContrast: string;
     languageLabel: string;
     localHint: string;
     sessionTitle: string;
@@ -409,8 +431,35 @@ const DE: Messages = {
     modeLabel: 'Designmodus',
     lightLabel: 'Hell',
     darkLabel: 'Dunkel',
+    themeLabel: 'Farbschema',
+    themeHint:
+      'Farbschema für Hell- und Dunkelmodus. Es gilt sofort und wird in diesem Browser gespeichert.',
+    themeCustomTitle: 'Eigenes Theme',
+    themeCustomHint:
+      'Aus Akzent- und Papierfarbe wird ein vollständiges Theme berechnet; Texte bleiben durch die Kontrastprüfung lesbar.',
+    themeNameLabel: 'Name',
+    themeAccentLabel: 'Akzentfarbe',
+    themePaperLabel: 'Papierfarbe (hell)',
+    themeApply: 'Theme anwenden',
+    themeReset: 'Eigenes Theme löschen',
+    themeJsonTitle: 'Theme als JSON',
+    themeJsonHint:
+      'Theme-Datei einfügen oder das aktuelle Theme exportieren. Erlaubt sind vollständige Farbwerte (light, dark) oder die Kurzform name, accent, paper.',
+    themeJsonLabel: 'Theme-JSON',
+    themeJsonExport: 'Aktuelles Theme exportieren',
+    themeJsonImport: 'JSON übernehmen',
+    themeJsonApplied: 'Theme übernommen.',
+    themeErrorJson: 'Das ist kein gültiges JSON.',
+    themeErrorShape:
+      'Aufbau nicht erkannt: erwartet werden name mit accent und paper oder name mit light und dark.',
+    themeErrorVersion: 'Unbekannte schemaVersion; unterstützt wird Version 1.',
+    themeErrorName: 'Name fehlt oder ist länger als 40 Zeichen.',
+    themeErrorColor: 'Jede Farbe muss ein Hex-Wert sein, zum Beispiel #1e3bff.',
+    themeErrorPaperDark: 'Die Papierfarbe ist zu dunkel; sie gilt für den Hellmodus.',
+    themeErrorContrast:
+      'Zu wenig Kontrast: Text muss sich deutlich vom Hintergrund abheben (mindestens 4,5:1).',
     languageLabel: 'Sprache',
-    localHint: 'Designmodus und Sprache werden lokal in diesem Browser gespeichert.',
+    localHint: 'Designmodus, Farbschema und Sprache werden lokal in diesem Browser gespeichert.',
     sessionTitle: 'Sitzung & Anmeldung',
     sessionText:
       'Die Anmeldung erfolgt mit E-Mail-Adresse und Passwort über ein HttpOnly-Cookie (sf_session). Abmelden beendet die Sitzung auf dem Server.',
@@ -613,8 +662,35 @@ const EN: Messages = {
     modeLabel: 'Theme mode',
     lightLabel: 'Light',
     darkLabel: 'Dark',
+    themeLabel: 'Colour scheme',
+    themeHint:
+      'Colour scheme for light and dark mode. It applies immediately and is stored in this browser.',
+    themeCustomTitle: 'Custom theme',
+    themeCustomHint:
+      'A complete theme is derived from an accent and a paper colour; the contrast check keeps text readable.',
+    themeNameLabel: 'Name',
+    themeAccentLabel: 'Accent colour',
+    themePaperLabel: 'Paper colour (light)',
+    themeApply: 'Apply theme',
+    themeReset: 'Delete custom theme',
+    themeJsonTitle: 'Theme as JSON',
+    themeJsonHint:
+      'Paste a theme file or export the current theme. Accepted are complete colour values (light, dark) or the short form name, accent, paper.',
+    themeJsonLabel: 'Theme JSON',
+    themeJsonExport: 'Export current theme',
+    themeJsonImport: 'Apply JSON',
+    themeJsonApplied: 'Theme applied.',
+    themeErrorJson: 'That is not valid JSON.',
+    themeErrorShape:
+      'Structure not recognised: expected name with accent and paper, or name with light and dark.',
+    themeErrorVersion: 'Unknown schemaVersion; version 1 is supported.',
+    themeErrorName: 'Name is missing or longer than 40 characters.',
+    themeErrorColor: 'Every colour must be a hex value, for example #1e3bff.',
+    themeErrorPaperDark: 'The paper colour is too dark; it is the light-mode background.',
+    themeErrorContrast:
+      'Not enough contrast: text must stand out from the background (at least 4.5:1).',
     languageLabel: 'Language',
-    localHint: 'Theme mode and interface language are stored locally in this browser.',
+    localHint: 'Theme mode, colour scheme, and language are stored locally in this browser.',
     sessionTitle: 'Session & Authentication',
     sessionText:
       'Authentication uses an email address and password with an HttpOnly session cookie (sf_session). Signing out invalidates the session on the server.',
