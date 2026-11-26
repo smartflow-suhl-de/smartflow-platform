@@ -1064,6 +1064,9 @@ export function register(ctx: PluginContext): void {
       const body = request.body;
       const modelKey = String(body.modelKey ?? '').trim();
       if (!modelKey) throw new FieldError({ modelKey: 'Please enter the model id.' });
+      if (modelKey === '.' || modelKey === '..') {
+        throw new FieldError({ modelKey: 'The model id must not be a path segment.' });
+      }
       const isDefault = body.isDefault === true;
       const capabilities: Capabilities = {
         tools: (body.capabilities as Capabilities | undefined)?.tools === true,

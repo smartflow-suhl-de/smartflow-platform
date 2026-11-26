@@ -1170,8 +1170,15 @@ test('the pre-flight checks IP literals before the resolver', async () => {
   await assert.rejects(() => assertResolvedTarget(new URL('https://127.0.0.1/v1'), false));
   await assert.rejects(() => assertResolvedTarget(new URL('https://[::1]/v1'), false));
   await assert.rejects(() => assertResolvedTarget(new URL('https://100.100.100.200/v1'), false));
+  await assert.rejects(() => assertResolvedTarget(new URL('https://[::127.0.0.1]/v1'), false));
+  await assert.rejects(() =>
+    assertResolvedTarget(new URL('https://[64:ff9b::169.254.169.254]/v1'), false),
+  );
+  await assert.rejects(() => assertResolvedTarget(new URL('https://[fc00::1]/v1'), false));
+  await assert.rejects(() => assertResolvedTarget(new URL('https://[fe80::1]/v1'), false));
   // The opt-in only lifts loopback, not metadata or link-local.
   await assertResolvedTarget(new URL('https://127.0.0.1/v1'), true);
+  await assertResolvedTarget(new URL('https://[2001:db8::1]/v1'), false);
   await assertResolvedTarget(new URL('https://llm.example/v1'), false);
 });
 
@@ -1226,6 +1233,7 @@ test('chat paths and extra headers reject shadowing and traversal', async (t) =>
   for (const chatPath of [
     '/openai/deployments/{model}/chat/completions',
     '/models/{model}:generateContent',
+    '/v1/caf%C3%A9/chat',
   ]) {
     const accepted = await createProvider(ctx.app, cookie, {
       name: 'Model path',
@@ -1235,7 +1243,15 @@ test('chat paths and extra headers reject shadowing and traversal', async (t) =>
     });
     assert.equal(accepted.chatPath, chatPath);
   }
-  for (const chatPath of ['/v1/{model/chat', '/v1/{}/chat', '/v1/{a b}/chat']) {
+  for (const chatPath of [
+    '/v1/{model/chat',
+    '/v1/{}/chat',
+    '/v1/{a b}/chat',
+    '/%zz',
+    '/v1/%2e%2e/chat',
+    '/v1/%252e%252e/chat',
+    '/v1/%00/chat',
+  ]) {
     const rejected = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/llm/providers',
@@ -1396,4 +1412,29 @@ test('status and models report the same configured state', async (t) => {
   ctx.db.prepare("update llm_model set status = 'disabled' where id = ?").run(modelId);
   assert.equal((await statusOf()).configured, false);
   assert.equal((await modelsOf()).items[0]?.configured, false);
+});
+
+test('a model id cannot be a dot segment', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const provider = await createProvider(ctx.app, cookie, {
+    name: 'Path models',
+    baseUrl: 'https://llm.example/v1',
+    authStyle: 'none',
+  });
+
+  for (const modelKey of ['.', '..']) {
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/llm/providers/${provider.id as string}/models`,
+      headers: { cookie },
+      payload: { modelKey },
+    });
+    assert.equal(response.statusCode, 422, modelKey);
+    assert.ok(
+      (response.json() as { error: { fields: Record<string, string> } }).error.fields.modelKey,
+      modelKey,
+    );
+  }
 });

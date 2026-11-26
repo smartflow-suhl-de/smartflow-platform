@@ -119,15 +119,31 @@ function blockedIpv6(address: string, allowLoopback: boolean): string | null {
   if (((first ?? 0) & 0xff00) === 0xff00) return 'multicast';
   // IPv4-mapped ::ffff:a.b.c.d
   if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
-    const v4 = `${(groups[6] ?? 0) >> 8}.${(groups[6] ?? 0) & 0xff}.${(groups[7] ?? 0) >> 8}.${
-      (groups[7] ?? 0) & 0xff
-    }`;
-    const blocked = blockedIpv4(v4, allowLoopback);
+    const blocked = blockedIpv4(embeddedIpv4(groups), allowLoopback);
     if (blocked) return `ipv4-mapped ${blocked}`;
   }
   // AWS instance metadata (IPv6 ULA endpoint).
   if ((first ?? 0) === 0xfd00 && second === 0xec2) return 'metadata';
+  // Deprecated IPv4-compatible ::a.b.c.d, e.g. [::127.0.0.1].
+  if (groups.slice(0, 6).every((group) => group === 0)) {
+    const blocked = blockedIpv4(embeddedIpv4(groups), allowLoopback);
+    if (blocked) return `ipv4-compatible ${blocked}`;
+  }
+  // NAT64 64:ff9b::/96 embeds an IPv4 address in the last 32 bits.
+  if (first === 0x64 && second === 0xff9b && groups.slice(2, 6).every((group) => group === 0)) {
+    const blocked = blockedIpv4(embeddedIpv4(groups), allowLoopback);
+    if (blocked) return `nat64 ${blocked}`;
+  }
+  // Unique-local fc00::/7 is the IPv6 counterpart of RFC 1918 and is refused
+  // like the metadata endpoint above.
+  if (((first ?? 0) & 0xfe00) === 0xfc00) return 'unique-local';
   return null;
+}
+
+function embeddedIpv4(groups: number[]): string {
+  return `${(groups[6] ?? 0) >> 8}.${(groups[6] ?? 0) & 0xff}.${(groups[7] ?? 0) >> 8}.${
+    (groups[7] ?? 0) & 0xff
+  }`;
 }
 
 function normalizeHost(raw: string): string {
@@ -186,7 +202,36 @@ export async function assertResolvedTarget(url: URL, allowLoopback: boolean): Pr
   }
 }
 
-export const CHAT_PATH_PATTERN = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@%/-]|%[0-9A-Fa-f]{2})*$/;
+export const CHAT_PATH_PATTERN = /^\/(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*$/;
+
+/**
+ * A segment that decodes (repeatedly) into a path separator or a dot segment
+ * could move outside the configured path. `%2e%2e` and `%252e%252e` both count.
+ */
+function hasControlChar(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function unsafeDecodedSegment(segment: string): boolean {
+  let decoded = segment;
+  for (let round = 0; round < 3; round += 1) {
+    if (decoded.includes('..') || decoded.includes('/') || decoded.includes('\\')) return true;
+    if (hasControlChar(decoded)) return true;
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return true;
+    }
+    if (next === decoded) return false;
+    decoded = next;
+  }
+  return decoded.includes('..') || decoded.includes('/') || decoded.includes('\\');
+}
 
 /**
  * Provider paths may carry a model placeholder such as Azure's
@@ -199,9 +244,9 @@ const CHAT_PATH_PLACEHOLDER = /\{[A-Za-z0-9_-]+\}/g;
 export function isValidChatPath(value: string): boolean {
   if (!value.startsWith('/') || value.length > 200) return false;
   if (!CHAT_PATH_PATTERN.test(value.replace(CHAT_PATH_PLACEHOLDER, ''))) return false;
-  if (value.includes('..') || value.includes('?') || value.includes('#')) return false;
+  if (value.includes('?') || value.includes('#')) return false;
   if (value.includes('//')) return false;
-  return true;
+  return !value.split('/').some(unsafeDecodedSegment);
 }
 
 const BLOCKED_HEADERS = new Set([
