@@ -57,3 +57,36 @@ test('a suspended tenant database is closed to every caller', async (t) => {
       (error as { code: string }).code === 'tenant_not_found',
   );
 });
+
+test('a suspension closes the cached tenant database', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+
+  const cookie = await ctx.signIn();
+  const created = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/tenants',
+    headers: { cookie },
+    payload: { name: 'Cache Test' },
+  });
+  const tenant = created.json() as { id: string };
+
+  const handle = ctx.tenantDb(tenant.id);
+  assert.ok(handle.open, 'the handle is open while the tenant is active');
+
+  await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/tenants/${tenant.id}/suspend`,
+    headers: { cookie },
+  });
+
+  assert.equal(handle.open, false, 'the kernel closed the cached handle on suspension');
+
+  assert.throws(
+    () => ctx.tenantDb(tenant.id),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'tenant_suspended');
+      return true;
+    },
+  );
+});

@@ -225,6 +225,20 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     return opened;
   };
 
+  // A plugin may hold a handle across a suspension. Closing and dropping it here
+  // means the next `tenantDb` call re-checks the status, so a suspended tenant
+  // cannot keep reading through an older handle.
+  eventBus.on('tenant.suspended', ({ tenantId }) => {
+    const cached = tenantCache.get(tenantId);
+    if (!cached) return;
+    tenantCache.delete(tenantId);
+    try {
+      cached.close();
+    } catch (error) {
+      app.log.warn({ err: error, tenantId }, 'closing a suspended tenant database failed');
+    }
+  });
+
   const plugins: PluginManifest[] = [];
 
   for (const entry of generatedPlugins) {
@@ -331,10 +345,14 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     { prefix: '/api/v1' },
   );
 
-  app.get('/api/openapi.json', { schema: { hide: true } }, async (_request, reply) => {
-    reply.type('application/json');
-    return app.swagger();
-  });
+  app.get(
+    '/api/openapi.json',
+    { schema: { hide: true }, preHandler: app.authenticate },
+    async (_request, reply) => {
+      reply.type('application/json');
+      return app.swagger();
+    },
+  );
 
   app.addHook('onClose', async () => {
     for (const database of tenantCache.values()) database.close();

@@ -119,7 +119,17 @@ describe('toAppHref', () => {
     assert.equal(toAppHref('/login/confirm?token=abc', origin), '/login/confirm?token=abc');
   });
 
-  it('returns an unparsable link unchanged instead of throwing', () => {
-    assert.equal(toAppHref('http://[::bad', origin), 'http://[::bad');
+  it('falls back to the login route for an unparsable link instead of throwing', () => {
+    assert.equal(toAppHref('http://[::bad', origin), '/login');
+  });
+
+  it('refuses a link with a foreign scheme', () => {
+    assert.equal(toAppHref('javascript:alert(1)', origin), '/login');
+    assert.equal(toAppHref('data:text/html,<script>x</script>', origin), '/login');
+    assert.equal(toAppHref('x:javascript:alert(1)', origin), '/login');
+  });
+
+  it('refuses a link to another origin', () => {
+    assert.equal(toAppHref('https://evil.example/login/confirm?token=abc', origin), '/login');
   });
 });

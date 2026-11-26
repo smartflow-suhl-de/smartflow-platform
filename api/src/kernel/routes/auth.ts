@@ -59,9 +59,21 @@ const authMeSchema = {
 /** Sliding-window-ish counter per sender, held in memory. A restart clears it. */
 function createLimiter(limit: number, windowMs: number) {
   const hits = new Map<string, number[]>();
-  return (key: string, at: number): boolean => {
+
+  const prune = (at: number): void => {
     const since = at - windowMs;
-    const times = (hits.get(key) ?? []).filter((time) => time > since);
+    for (const [key, times] of hits) {
+      const fresh = times.filter((time) => time > since);
+      if (fresh.length === 0) hits.delete(key);
+      else hits.set(key, fresh);
+    }
+  };
+
+  return (key: string, at: number): boolean => {
+    // Bound the map: one entry per attacker-supplied key would otherwise grow
+    // without limit. Pruning on every call keeps it at "keys active in the window".
+    if (hits.size > 10_000) prune(at);
+    const times = (hits.get(key) ?? []).filter((time) => time > at - windowMs);
     if (times.length >= limit) {
       hits.set(key, times);
       return false;
@@ -83,6 +95,10 @@ export interface AuthRouteOptions {
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
   const { auth, config, now, resolveTenant } = options;
   const allowMagicLink = createLimiter(config.rateLimit.magicLink, 60_000);
+  // A second, independent bucket per address: the per-IP limit alone is either
+  // spoofable behind a trusted proxy or a shared bucket for every client, and in
+  // both cases one address could be flooded.
+  const allowMagicLinkForEmail = createLimiter(config.rateLimit.magicLink * 3, 15 * 60_000);
 
   app.post<{ Body: { email?: string } }>(
     '/auth/magic-link',
@@ -121,7 +137,11 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       if (!EMAIL_PATTERN.test(email)) {
         throw new FieldError({ email: 'Please enter a valid email address.' });
       }
-      if (config.rateLimit.enabled && !allowMagicLink(request.ip, now().getTime())) {
+      const nowMs = now().getTime();
+      if (
+        config.rateLimit.enabled &&
+        (!allowMagicLink(request.ip, nowMs) || !allowMagicLinkForEmail(email, nowMs))
+      ) {
         throw new AppError(
           'rate_limited',
           'Too many sign-in attempts. Please try again in a minute.',

@@ -47,14 +47,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV === 'test' ? 'test' : 'development';
   const publicUrl = str(env.SF_PUBLIC_URL, 'http://127.0.0.1:5273');
   const dataDir = resolve(env.SF_DATA_DIR ?? './data');
-  // A magic link may only be returned when the connection is not secure, and
-  // auto-login is a second, explicit opt-in on top of that.
+  const host = str(env.SF_HOST, '127.0.0.1');
+  const loopbackHost =
+    host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
+  // Returning the sign-in link in the response is a development affordance. It
+  // is off in production regardless of the variable, and additionally limited
+  // to a loopback binding over plain http: on a public interface the link would
+  // otherwise be the only credential needed to take over the operator account.
   const devMagicLink =
-    bool(env.SF_DEV_MAGIC_LINK, nodeEnv !== 'production') && !publicUrl.startsWith('https://');
+    nodeEnv !== 'production' &&
+    bool(env.SF_DEV_MAGIC_LINK, true) &&
+    loopbackHost &&
+    !publicUrl.startsWith('https://');
 
   return {
     env: nodeEnv,
-    host: str(env.SF_HOST, '127.0.0.1'),
+    host,
     port: int(env.SF_PORT, 8790),
     publicUrl,
     dataDir,
@@ -64,7 +72,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     devMagicLink,
     devAutoLogin: devMagicLink && bool(env.SF_DEV_AUTO_LOGIN, false),
-    secureCookies: bool(env.SF_SECURE_COOKIES, publicUrl.startsWith('https://')),
+    // Fail closed in production: behind a TLS-terminating proxy `SF_PUBLIC_URL`
+    // may still be http, and a session cookie without `Secure` then travels in
+    // clear text on the last hop. Set `SF_SECURE_COOKIES=0` to opt out explicitly.
+    secureCookies: bool(
+      env.SF_SECURE_COOKIES,
+      nodeEnv === 'production' || publicUrl.startsWith('https://'),
+    ),
     logLevel: str(env.SF_LOG_LEVEL, nodeEnv === 'test' ? 'silent' : 'info'),
     trustProxy: bool(env.SF_TRUST_PROXY, false),
     bodyLimit: int(env.SF_BODY_LIMIT, 1_048_576),

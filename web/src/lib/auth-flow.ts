@@ -30,15 +30,19 @@ export function pendingConfirmationCount(): number {
 
 /**
  * Turn an absolute magic link into a same-origin path the SPA router accepts.
- * Anything that does not parse is returned unchanged, so a broken link still
- * produces a readable error instead of a crash.
+ *
+ * Only http(s) and relative links are accepted; anything with another scheme
+ * (`javascript:`, `data:`, an opaque prefix) falls back to the login route
+ * instead of ending up in an `href`.
  */
-export function toAppHref(link: string, origin: string): string {
+export function toAppHref(link: string, origin: string, fallback = '/login'): string {
   try {
     const parsed = new URL(link, origin);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return fallback;
+    if (parsed.origin !== new URL(origin).origin) return fallback;
     return `${parsed.pathname}${parsed.search}`;
   } catch {
-    return link;
+    return fallback;
   }
 }
 

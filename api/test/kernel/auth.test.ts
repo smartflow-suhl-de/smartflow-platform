@@ -225,6 +225,55 @@ test('auto-login is an explicit opt-in and never applies over https', async (t) 
   assert.equal(blockedBody.autoLogin, undefined);
 });
 
+test('the dev magic link is off in production even when explicitly enabled', async (t) => {
+  const ctx = await createTestApp({ NODE_ENV: 'production', SF_DEV_MAGIC_LINK: '1' });
+  t.after(() => ctx.close());
+
+  assert.equal(ctx.config.devMagicLink, false);
+
+  const request = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/magic-link',
+    payload: { email: ctx.config.operator.email },
+  });
+  const body = request.json() as { link?: string };
+  assert.equal(body.link, undefined, 'production never returns the sign-in link');
+});
+
+test('the dev magic link is off on a public binding', async (t) => {
+  const ctx = await createTestApp({ SF_HOST: '0.0.0.0' });
+  t.after(() => ctx.close());
+
+  assert.equal(ctx.config.devMagicLink, false);
+
+  const request = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/magic-link',
+    payload: { email: ctx.config.operator.email },
+  });
+  assert.equal((request.json() as { link?: string }).link, undefined);
+});
+
+test('the magic link is rate limited per address as well', async (t) => {
+  const ctx = await createTestApp({ SF_RATE_LIMIT_ENABLED: '1', SF_RATE_LIMIT_MAGIC_LINK: '10' });
+  t.after(() => ctx.close());
+
+  // The per-IP limit is 10/min, so 30 requests from different IPs stay under it
+  // but hit the per-address bucket of 30 per 15 minutes.
+  let limited = 0;
+  for (let i = 0; i < 31; i += 1) {
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/magic-link',
+      payload: { email: ctx.config.operator.email },
+      remoteAddress: `10.0.0.${i + 1}`,
+    });
+    if (response.statusCode === 429) limited += 1;
+  }
+  assert.equal(limited, 1, 'exactly the request past the per-address budget is rejected');
+  assert.equal(ctx.config.rateLimit.magicLink, 10);
+});
+
 test('nav is empty for an anonymous request and is empty for the operator without plugin nav entries', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());

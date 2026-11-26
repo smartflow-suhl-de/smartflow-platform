@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export type Db = Database.Database;
@@ -17,8 +17,16 @@ export interface Migration {
  * throw in the middle of a request.
  */
 export function openDatabase(file: string): Db {
-  mkdirSync(dirname(file), { recursive: true });
+  // Tenant data lives in one file per customer, so the directory and the files
+  // must not be world-readable. The mode only applies on creation, which is
+  // exactly when it matters: an existing file keeps its permissions.
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const db = new Database(file);
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    // A file on a filesystem without POSIX permissions: nothing to tighten.
+  }
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');

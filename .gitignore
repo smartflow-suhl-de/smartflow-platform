@@ -13,7 +13,8 @@ data/
 
 # Local configuration and secrets
 .env
-.env.local
+.env.*
+!.env.example
 
 # Plugin registry is generated from manifests at build time
 api/src/kernel/plugin-registry.generated.ts

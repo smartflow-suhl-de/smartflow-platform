@@ -30,11 +30,24 @@ test('an unknown route answers the shared error shape, not HTML', async (t) => {
   assert.ok(body.error.message.length > 0);
 });
 
+test('the OpenAPI document needs a session', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+
+  const anonymous = await ctx.app.inject({ method: 'GET', url: '/api/openapi.json' });
+  assert.equal(anonymous.statusCode, 401);
+});
+
 test('the OpenAPI document is generated from the routes', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
 
-  const response = await ctx.app.inject({ method: 'GET', url: '/api/openapi.json' });
+  const cookie = await ctx.signIn();
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/openapi.json',
+    headers: { cookie },
+  });
   assert.equal(response.statusCode, 200);
   const doc = response.json() as {
     openapi: string;
