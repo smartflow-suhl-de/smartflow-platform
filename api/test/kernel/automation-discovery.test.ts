@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { createTestApp, type TestApp } from './helpers.ts';
-import { PublicRateLimiter } from '../../src/plugins/automation-discovery/server.ts';
+import {
+  PublicRateLimiter,
+  publicRateLimiter,
+} from '../../src/plugins/automation-discovery/server.ts';
+import { analyse, AiUnavailable } from '../../src/plugins/automation-discovery/ai.ts';
 
 interface LlmReply {
   status: number;
@@ -1127,8 +1131,9 @@ test('the public rate limiter stays bounded and prunes on a schedule', () => {
 test('the public route has a coarse per-IP limit across rotating tokens', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
+  publicRateLimiter.clear();
   let lastStatus = 0;
-  for (let index = 0; index < 1201; index += 1) {
+  for (let index = 0; index < 5001; index += 1) {
     const response = await ctx.app.inject({
       method: 'GET',
       url: `/api/v1/discovery/public/${`rotating${index}`.padEnd(43, 'x')}`,
@@ -1137,6 +1142,8 @@ test('the public route has a coarse per-IP limit across rotating tokens', async 
     lastStatus = response.statusCode;
   }
   assert.equal(lastStatus, 429);
+  // The IP limit runs first, so the flood must not insert 5.001 token buckets.
+  assert.ok(publicRateLimiter.size <= 1300, `size ${publicRateLimiter.size}`);
 });
 
 test('two parallel completes create exactly one report', async (t) => {
@@ -1164,4 +1171,88 @@ test('two parallel completes create exactly one report', async (t) => {
     total: number;
   };
   assert.equal(reports.total, 1);
+});
+
+test('the invite total stays stable across pages', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  for (let index = 0; index < 60; index += 1) {
+    await createInvite(ctx, cookie, { customerName: `Firma ${index}` });
+  }
+
+  const totals: number[] = [];
+  const counts: number[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 3; page += 1) {
+    const query: string = `limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const response: { statusCode: number; payload: string; json: () => unknown } =
+      await ctx.app.inject({
+        method: 'GET',
+        url: `/api/v1/discovery/invites?${query}`,
+        headers: { cookie },
+      });
+    assert.equal(response.statusCode, 200, response.payload);
+    const body = response.json() as {
+      items: unknown[];
+      total: number;
+      nextCursor: string | null;
+    };
+    totals.push(body.total);
+    counts.push(body.items.length);
+    cursor = body.nextCursor;
+  }
+  assert.deepEqual(totals, [60, 60, 60]);
+  assert.deepEqual(counts, [25, 25, 10]);
+});
+
+test('a report rejects cluster ids outside the catalogue in short mode', async () => {
+  const report = {
+    summary: 'Kurzer Bericht mit einer erfundenen Cluster-ID.',
+    clusters: [{ id: 'Z', title: 'Erfunden', summary: 'Nicht im Katalog.' }],
+    opportunities: [
+      {
+        title: 'Idee',
+        benefit: 'Nutzen',
+        effort: 'low',
+        risk: 'low',
+        dataMaturity: 'medium',
+        rationale: 'Begründung',
+      },
+    ],
+    quickWins: ['Schnellgewinn'],
+    openQuestions: ['Frage?'],
+    nextStep: 'Erstgespräch.',
+  };
+  const call = async () => ({
+    status: 200,
+    body: JSON.stringify({
+      message: { content: JSON.stringify(report) },
+      model: { modelKey: 'test-model' },
+    }),
+  });
+  await assert.rejects(
+    () =>
+      analyse(call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        selectedClusters: [],
+        answers: [],
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'invalid_output',
+  );
+});
+
+test('a 504 from the provider becomes a timeout reason', async () => {
+  const call = async () => ({ status: 504, body: '' });
+  await assert.rejects(
+    () =>
+      analyse(call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        selectedClusters: ['A'],
+        answers: [],
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'timeout',
+  );
 });

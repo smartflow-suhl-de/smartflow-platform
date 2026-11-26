@@ -119,6 +119,9 @@ export function registerDiscoveryPublicRoute(): void {
     render: ({ token }) => {
       const locale = storedLocale();
       return createElement(DiscoveryPublicPage, {
+        // A different link is a different interview: without the key React
+        // keeps closed/values/hint from the previous token.
+        key: token,
         token,
         locale,
         messages: getMessages(locale),

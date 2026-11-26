@@ -115,6 +115,16 @@ describe('App on public and app paths', () => {
     assert.deepEqual(calls, []);
   });
 
+  it('keys the discovery page by token so a link change remounts it', () => {
+    registerDiscoveryPublicRoute();
+    const route = publicRoutes.find((item) => item.pattern === '/d/:token');
+    assert.ok(route);
+    const first = route.render({ token: 'A'.repeat(43) }) as { key?: string | null };
+    const second = route.render({ token: 'B'.repeat(43) }) as { key?: string | null };
+    assert.equal(first.key, 'A'.repeat(43));
+    assert.equal(second.key, 'B'.repeat(43));
+  });
+
   it('shows the notice for broken /d paths without any request', () => {
     for (const path of ['/d', '/d/', '/d/a/b', '/d/..%2F..%2Ftenants', '/d/%00', '/d/%E0%A4%A']) {
       calls.length = 0;

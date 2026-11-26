@@ -505,6 +505,11 @@ export class PublicRateLimiter {
     return this.#windows.size;
   }
 
+  clear(): void {
+    this.#windows.clear();
+    this.#lastPrune = 0;
+  }
+
   allow(key: string, limit: number, nowMs: number): boolean {
     this.#prune(nowMs);
     const recent = (this.#windows.get(key) ?? []).filter((stamp) => nowMs - stamp < RATE_WINDOW_MS);
@@ -537,20 +542,22 @@ export class PublicRateLimiter {
   }
 }
 
-const publicRateLimiter = new PublicRateLimiter();
+export const publicRateLimiter = new PublicRateLimiter();
 
 function publicRateLimit(): (request: FastifyRequest, reply: FastifyReply) => Promise<void> {
   return async (request, reply) => {
     responseHeaders(reply);
-    const token = (request.params as { token?: string } | undefined)?.token ?? '';
-    const hash = hashToken(token).slice(0, 16);
-    const key = `${hash}:${request.ip}`;
     const now = Date.now();
-    if (!publicRateLimiter.allow(key, RATE_LIMIT_PER_MINUTE, now)) {
+    // The coarse IP cap runs first: a rotating token must not insert a new
+    // bucket and evict someone else's before the IP limit can refuse it.
+    if (!publicRateLimiter.allow(`ip:${request.ip}`, RATE_LIMIT_IP_PER_MINUTE, now)) {
       reply.header('retry-after', '60');
       throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
     }
-    if (!publicRateLimiter.allow(`ip:${request.ip}`, RATE_LIMIT_IP_PER_MINUTE, now)) {
+    const token = (request.params as { token?: string } | undefined)?.token ?? '';
+    const hash = hashToken(token).slice(0, 16);
+    const key = `${hash}:${request.ip}`;
+    if (!publicRateLimiter.allow(key, RATE_LIMIT_PER_MINUTE, now)) {
       reply.header('retry-after', '60');
       throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
     }
@@ -1395,16 +1402,18 @@ export function register(ctx: PluginContext): void {
       };
       expireStale(db, now());
       const limit = query.limit ?? 25;
-      const clauses: string[] = [];
-      const params: unknown[] = [];
+      const filterClauses: string[] = [];
+      const filterParams: unknown[] = [];
       if (query.status) {
-        clauses.push('status = ?');
-        params.push(query.status);
+        filterClauses.push('status = ?');
+        filterParams.push(query.status);
       }
       if (query.q && query.q.trim().length > 0) {
-        clauses.push("(lower(customer_name) like ? or lower(coalesce(contact_email, '')) like ?)");
+        filterClauses.push(
+          "(lower(customer_name) like ? or lower(coalesce(contact_email, '')) like ?)",
+        );
         const pattern = `%${query.q.trim().toLowerCase()}%`;
-        params.push(pattern, pattern);
+        filterParams.push(pattern, pattern);
       }
       const cursor = query.cursor ? decodeCursor(query.cursor) : null;
       if (query.cursor && !cursor) {
@@ -1412,20 +1421,25 @@ export function register(ctx: PluginContext): void {
           fields: { cursor: 'Invalid cursor.' },
         });
       }
+      const pageClauses = [...filterClauses];
+      const pageParams = [...filterParams];
       if (cursor) {
-        clauses.push('(created_at < ? or (created_at = ? and id < ?))');
-        params.push(cursor.created_at, cursor.created_at, cursor.id);
+        pageClauses.push('(created_at < ? or (created_at = ? and id < ?))');
+        pageParams.push(cursor.created_at, cursor.created_at, cursor.id);
       }
-      const where = clauses.length > 0 ? `where ${clauses.join(' and ')}` : '';
+      const filterWhere = filterClauses.length > 0 ? `where ${filterClauses.join(' and ')}` : '';
+      const pageWhere = pageClauses.length > 0 ? `where ${pageClauses.join(' and ')}` : '';
       const rows = db
         .prepare(
-          `select * from discovery_invite ${where} order by created_at desc, id desc limit ?`,
+          `select * from discovery_invite ${pageWhere} order by created_at desc, id desc limit ?`,
         )
-        .all(...params, limit + 1) as InviteRow[];
+        .all(...pageParams, limit + 1) as InviteRow[];
 
+      // The total describes the filter, not the current page: a cursor must not
+      // make "26-50 of 60" shrink to "of 25".
       const totalRow = db
-        .prepare(`select count(*) as total from discovery_invite ${where}`)
-        .get(...params) as { total: number };
+        .prepare(`select count(*) as total from discovery_invite ${filterWhere}`)
+        .get(...filterParams) as { total: number };
 
       const page = rows.slice(0, limit);
       const items = page.map((invite) => {

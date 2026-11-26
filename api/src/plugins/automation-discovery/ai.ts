@@ -293,7 +293,7 @@ function parseReport(raw: unknown, selectedClusters: string[]): AnalysisReport {
   for (const item of clusterList) {
     const entry = asRecord(item);
     const id = typeof entry?.id === 'string' ? entry.id.trim().toUpperCase() : '';
-    if (allowed && !allowed.includes(id)) continue;
+    if (allowed ? !allowed.includes(id) : !CLUSTERS_BY_ID.has(id)) continue;
     if (clusters.some((cluster) => cluster.id === id)) continue;
     clusters.push({
       id,
@@ -392,6 +392,9 @@ export async function analyse(
   }
   if (response.status === 403) {
     throw new AiUnavailable('caller_not_allowed', 'The AI plugin does not allow this caller.');
+  }
+  if (response.status === 504) {
+    throw new AiUnavailable('timeout', 'The AI service timed out.');
   }
   if (response.status !== 200) {
     throw new AiUnavailable('unavailable', `The AI service answered ${response.status}.`);
