@@ -162,7 +162,14 @@ export class LlmRuntime {
       .run(at, status, ms, providerId);
   }
 
-  /** Daily token and monthly budget caps, counted from the usage table. */
+  /**
+   * Daily token and monthly budget caps, counted from the usage table.
+   *
+   * The check runs before the upstream call while usage is written after it,
+   * so concurrent requests can overshoot the cap by at most one in-flight call
+   * per provider. That window is accepted; a hard reservation would need a
+   * shared counter in the kernel.
+   */
   budgetExceeded(provider: ProviderRow): 'daily' | 'monthly' | null {
     if (provider.daily_token_limit > 0) {
       const since = new Date(this.now());
