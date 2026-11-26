@@ -27,6 +27,17 @@ services:
       SF_OPERATOR_EMAIL: ${SF_OPERATOR_EMAIL:?SF_OPERATOR_EMAIL fehlt in .env}
       SF_OPERATOR_NAME: ${SF_OPERATOR_NAME:-Operator}
       SF_LOG_LEVEL: ${SF_LOG_LEVEL:-info}
+      # Mailversand: ohne Host startet der Container nicht (Produktions-Guard),
+      # weil sonst niemand einen Anmeldelink bekommen kann. `:?` macht den
+      # Fehler schon beim Compose-Aufruf sichtbar, nicht erst im Log.
+      SF_SMTP_HOST: ${SF_SMTP_HOST:?SF_SMTP_HOST fehlt in .env}
+      SF_SMTP_PORT: ${SF_SMTP_PORT:-587}
+      SF_SMTP_USER: ${SF_SMTP_USER:-}
+      SF_SMTP_PASS: ${SF_SMTP_PASS:-}
+      # optional: Datei im Container, z. B. aus einem Secret gemountet.
+      SF_SMTP_PASS_FILE: ${SF_SMTP_PASS_FILE:-}
+      SF_SMTP_FROM: ${SF_SMTP_FROM:-}
+      SF_SMTP_REPLY_TO: ${SF_SMTP_REPLY_TO:-}
       # Nur hier korrekt, weil Caddy als einziger Proxy davorsteht und
       # X-Forwarded-* setzt. Ohne Caddy wäre das Vertrauen in den Header falsch;
       # die Topologie gehört deshalb zu dieser Datei, nicht in ein Image-Default.

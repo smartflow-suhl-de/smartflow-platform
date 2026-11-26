@@ -231,6 +231,8 @@ test('the dev magic link is off in production even when explicitly enabled', asy
     SF_PUBLIC_URL: 'https://app.example.test',
     SF_SECURE_COOKIES: '1',
     SF_DEV_MAGIC_LINK: '1',
+    // A production process refuses to start without a transport at all.
+    SF_SMTP_HOST: 'mail.example.test',
   });
   t.after(() => ctx.close());
 

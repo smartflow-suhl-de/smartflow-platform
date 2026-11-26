@@ -106,6 +106,7 @@ export interface Messages {
     submit: string;
     submitting: string;
     sentNotice: string;
+    noTransportNotice: string;
     sessionExpiredNotice: string;
     devLinkNotice: string;
     devLinkAction: string;
@@ -287,6 +288,8 @@ const DE: Messages = {
     submitting: 'Wird angefordert …',
     sentNotice:
       'Falls die Adresse hinterlegt ist, steht ein Anmeldelink bereit. Prüfen Sie Ihr Postfach.',
+    noTransportNotice:
+      'Der Mailversand ist auf dieser Installation nicht eingerichtet. Es wurde keine E-Mail verschickt — wenden Sie sich an den Betrieb.',
     sessionExpiredNotice:
       'Die Sitzung ist abgelaufen. Bitte melden Sie sich erneut an — Ihre Eingaben wurden nicht gespeichert.',
     devLinkNotice:
@@ -485,6 +488,8 @@ const EN: Messages = {
     submit: 'Request sign-in link',
     submitting: 'Requesting …',
     sentNotice: 'If the address is registered, a sign-in link is ready. Check your inbox.',
+    noTransportNotice:
+      'Mail delivery is not configured on this installation. No email was sent — please contact your operations team.',
     sessionExpiredNotice:
       'Your session has expired. Please sign in again — your input was not saved.',
     devLinkNotice: 'Development mode: the generated sign-in link is available directly below.',

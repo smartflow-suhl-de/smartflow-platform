@@ -1,12 +1,12 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { FieldError, type AuthMe } from '../../shared/contract.ts';
 import { SESSION_COOKIE, authMeFor } from '../app.ts';
 import type { AuthService } from '../auth.ts';
-import type { Config } from '../config.ts';
+import { EMAIL_PATTERN, type Config } from '../config.ts';
+import { hashToken } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { AppError } from '../errors.ts';
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { localeFromAcceptLanguage, type Mailer } from '../mailer.ts';
 
 const errorSchema = {
   type: 'object',
@@ -89,7 +89,34 @@ export interface AuthRouteOptions {
   config: Config;
   db: Db;
   now: () => Date;
+  mailer: Mailer;
   resolveTenant: (tenantId: string) => { id: string; name: string; slug: string } | null;
+}
+
+/**
+ * Dispatching is deliberately not awaited: the 202 must go out before the relay
+ * answers, so a slow SMTP server never turns a sign-in request into a timeout.
+ * The failure line carries a truncated hash of the recipient and nothing else —
+ * no address, no link, no token, not even the relay's raw response, which often
+ * quotes the rejected address back.
+ */
+function deliverMagicLink(
+  mailer: Mailer,
+  request: FastifyRequest,
+  mail: { to: string; link: string; expiresAt: string; locale: 'de' | 'en' },
+): void {
+  void mailer.sendMagicLink(mail).catch((error: unknown) => {
+    const failure = error as { code?: string; responseCode?: number; command?: string };
+    request.log.error(
+      {
+        recipient: hashToken(mail.to).slice(0, 16),
+        code: failure.code ?? 'unknown',
+        responseCode: failure.responseCode,
+        command: failure.command,
+      },
+      'magic link mail could not be sent',
+    );
+  });
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
@@ -153,11 +180,23 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       const user = options.db.prepare('select id from users where email = ?').get(email) as
         { id: string } | undefined;
 
+      // Only a known address gets mail, and only when a transport exists. The
+      // answer below is the same either way, so the endpoint stays useless for
+      // account enumeration.
+      if (user !== undefined && options.mailer.isConfigured) {
+        deliverMagicLink(options.mailer, request, {
+          to: email,
+          link,
+          expiresAt,
+          locale: localeFromAcceptLanguage(request.headers['accept-language']),
+        });
+      }
+
       // Development only: the link is returned so the flow can be exercised
       // without a mail transport. Never for an unknown address, never over https.
       const expose = config.devMagicLink && user !== undefined;
       reply.code(202);
-      if (!expose) return { sent: true, expiresAt };
+      if (!expose) return { sent: options.mailer.isConfigured, expiresAt };
       return config.devAutoLogin
         ? { sent: true, expiresAt, link, autoLogin: true }
         : { sent: true, expiresAt, link };

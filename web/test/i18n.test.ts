@@ -217,6 +217,22 @@ describe('formatApiError', () => {
   });
 });
 
+describe('login transport notice', () => {
+  it('has a separate text for a missing transport in both locales', () => {
+    const de = getMessages('de').login;
+    const en = getMessages('en').login;
+
+    assert.ok(de.noTransportNotice.trim().length > 0);
+    assert.ok(en.noTransportNotice.trim().length > 0);
+    assert.notEqual(de.noTransportNotice, en.noTransportNotice);
+    // The two must not be interchangeable: claiming an inbox is exactly the
+    // failure this text exists to prevent.
+    assert.notEqual(de.noTransportNotice, de.sentNotice);
+    assert.notEqual(en.noTransportNotice, en.sentNotice);
+    assert.doesNotMatch(en.noTransportNotice, /inbox/i);
+  });
+});
+
 describe('plural forms', () => {
   it('uses the singular for exactly one tenant', () => {
     assert.equal(getMessages('de').shell.opsTenantsLine(1, 1), '1 / 1 Mandant aktiv');
