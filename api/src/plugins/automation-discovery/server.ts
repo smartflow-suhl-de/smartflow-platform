@@ -61,6 +61,11 @@ const DEFAULT_EXPIRY_DAYS = 14;
 const MAX_EXPIRY_DAYS = 30;
 const RETENTION_DAYS = 90;
 const RATE_LIMIT_PER_MINUTE = 240;
+/** Coarse per-IP cap so rotating tokens cannot fill the limiter map. */
+const RATE_LIMIT_IP_PER_MINUTE = 1200;
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_KEYS = 5_000;
+const RATE_PRUNE_INTERVAL_MS = 30_000;
 /** The one answer key that is not part of a question definition. */
 const CONSENT_KEY = 'consent';
 
@@ -479,33 +484,77 @@ function aiError(error: unknown): AppError {
   return new AppError('discovery_ai_unavailable', 'The AI service is not available.', 503);
 }
 
+/**
+ * Sliding-window limiter with a hard key cap and a timed prune.
+ *
+ * The public route keys by a hash of a customer-chosen token, so the key space
+ * is unbounded. Insertion order doubles as LRU order: a hit moves the key to
+ * the end and the oldest key is evicted above `maxKeys`. Expired keys are swept
+ * on an interval, not on every request.
+ */
+export class PublicRateLimiter {
+  readonly #windows = new Map<string, number[]>();
+  #lastPrune = 0;
+
+  constructor(
+    private readonly maxKeys = RATE_MAX_KEYS,
+    private readonly pruneIntervalMs = RATE_PRUNE_INTERVAL_MS,
+  ) {}
+
+  get size(): number {
+    return this.#windows.size;
+  }
+
+  allow(key: string, limit: number, nowMs: number): boolean {
+    this.#prune(nowMs);
+    const recent = (this.#windows.get(key) ?? []).filter((stamp) => nowMs - stamp < RATE_WINDOW_MS);
+    if (recent.length >= limit) {
+      this.#touch(key, recent);
+      return false;
+    }
+    recent.push(nowMs);
+    this.#touch(key, recent);
+    return true;
+  }
+
+  #touch(key: string, stamps: number[]): void {
+    this.#windows.delete(key);
+    this.#windows.set(key, stamps);
+    while (this.#windows.size > this.maxKeys) {
+      const oldest = this.#windows.keys().next().value;
+      if (oldest === undefined) break;
+      this.#windows.delete(oldest);
+    }
+  }
+
+  #prune(nowMs: number): void {
+    if (nowMs - this.#lastPrune < this.pruneIntervalMs) return;
+    this.#lastPrune = nowMs;
+    const cutoff = nowMs - RATE_WINDOW_MS;
+    for (const [key, stamps] of this.#windows) {
+      if (stamps.every((stamp) => stamp < cutoff)) this.#windows.delete(key);
+    }
+  }
+}
+
+const publicRateLimiter = new PublicRateLimiter();
+
 function publicRateLimit(): (request: FastifyRequest, reply: FastifyReply) => Promise<void> {
   return async (request, reply) => {
     responseHeaders(reply);
-    pruneRateLimit();
     const token = (request.params as { token?: string } | undefined)?.token ?? '';
     const hash = hashToken(token).slice(0, 16);
     const key = `${hash}:${request.ip}`;
     const now = Date.now();
-    const recent = (rateLimitWindows.get(key) ?? []).filter((stamp) => now - stamp < 60_000);
-    if (recent.length >= RATE_LIMIT_PER_MINUTE) {
-      rateLimitWindows.set(key, recent);
+    if (!publicRateLimiter.allow(key, RATE_LIMIT_PER_MINUTE, now)) {
       reply.header('retry-after', '60');
       throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
     }
-    recent.push(now);
-    rateLimitWindows.set(key, recent);
+    if (!publicRateLimiter.allow(`ip:${request.ip}`, RATE_LIMIT_IP_PER_MINUTE, now)) {
+      reply.header('retry-after', '60');
+      throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
+    }
   };
-}
-
-const rateLimitWindows = new Map<string, number[]>();
-
-function pruneRateLimit(): void {
-  if (rateLimitWindows.size < 5000) return;
-  const cutoff = Date.now() - 60_000;
-  for (const [key, stamps] of rateLimitWindows) {
-    if (stamps.every((stamp) => stamp < cutoff)) rateLimitWindows.delete(key);
-  }
 }
 
 export function register(ctx: PluginContext): void {
@@ -567,6 +616,19 @@ export function register(ctx: PluginContext): void {
             created_at text not null
           );
           create index discovery_report_session on discovery_report(session_id);
+        `);
+      },
+    },
+    {
+      version: 2,
+      up(database) {
+        // A racing second complete could insert a second report. Keep the
+        // oldest row per session and make the session the unique key.
+        database.exec(`
+          delete from discovery_report
+           where rowid not in (select min(rowid) from discovery_report group by session_id);
+          drop index if exists discovery_report_session;
+          create unique index discovery_report_session on discovery_report(session_id);
         `);
       },
     },
@@ -1807,7 +1869,7 @@ export function register(ctx: PluginContext): void {
       const stamp = nowIso(now());
       const complete = db.transaction(() => {
         db.prepare(
-          'insert into discovery_report (id, session_id, model, summary_json, created_at) values (?, ?, ?, ?, ?)',
+          'insert into discovery_report (id, session_id, model, summary_json, created_at) values (?, ?, ?, ?, ?) on conflict(session_id) do nothing',
         ).run(newId('rpt'), session.id, result.model, JSON.stringify(result.report), stamp);
         db.prepare(
           'update discovery_session set completed_at = ?, progress = 100, last_seen_at = ? where id = ?',

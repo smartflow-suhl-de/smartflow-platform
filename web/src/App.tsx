@@ -29,6 +29,22 @@ import {
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
+/** A malformed percent escape must not throw during render; null means "not a valid id". */
+export function safeDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+/** The invite id of `/discovery/:id`, or null for a broken percent escape. */
+export function discoveryInviteId(pathname: string): string | null {
+  const match = /^\/discovery\/([^/]+)$/.exec(pathname);
+  if (!match) return null;
+  return safeDecode(match[1] ?? '');
+}
+
 type SessionState =
   | { kind: 'loading' }
   | { kind: 'signed_out' }
@@ -309,9 +325,11 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   } else if (pathname === '/discovery' && auth.user.role === 'operator') {
     content = <DiscoveryPage inviteId={null} search={search} locale={locale} messages={messages} />;
   } else if (/^\/discovery\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
+    // A broken escape (`/discovery/%E0%A4%A`) falls back to the list instead of
+    // throwing a URIError and rendering a blank page.
     content = (
       <DiscoveryPage
-        inviteId={decodeURIComponent(pathname.split('/')[2] ?? '')}
+        inviteId={discoveryInviteId(pathname)}
         search={search}
         locale={locale}
         messages={messages}

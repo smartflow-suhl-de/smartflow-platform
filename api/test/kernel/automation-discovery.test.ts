@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { createTestApp, type TestApp } from './helpers.ts';
+import { PublicRateLimiter } from '../../src/plugins/automation-discovery/server.ts';
 
 interface LlmReply {
   status: number;
@@ -1106,4 +1107,61 @@ test('overview and list show an invitation as expired without a write', async (t
     .prepare('select status from discovery_invite where id = ?')
     .get(invite.id) as { status: string };
   assert.equal(stored.status, 'expired');
+});
+
+test('the public rate limiter stays bounded and prunes on a schedule', () => {
+  const limiter = new PublicRateLimiter(100, 30_000);
+  const start = 1_000_000;
+  for (let index = 0; index < 600; index += 1) {
+    assert.equal(limiter.allow(`token-${index}`, 240, start), true);
+  }
+  assert.equal(limiter.size, 100);
+  // The newest keys survive; the oldest were evicted.
+  assert.equal(limiter.allow('token-599', 240, start), true);
+  assert.equal(limiter.allow('token-0', 240, start), true);
+  // A later request sweeps keys that fell out of the window.
+  assert.equal(limiter.allow('later', 240, start + 61_000), true);
+  assert.ok(limiter.size <= 100);
+});
+
+test('the public route has a coarse per-IP limit across rotating tokens', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  let lastStatus = 0;
+  for (let index = 0; index < 1201; index += 1) {
+    const response = await ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/discovery/public/${`rotating${index}`.padEnd(43, 'x')}`,
+      remoteAddress: '203.0.113.77',
+    });
+    lastStatus = response.statusCode;
+  }
+  assert.equal(lastStatus, 429);
+});
+
+test('two parallel completes create exactly one report', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  stubLlm(ctx, llmReply);
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+  await runInterview(ctx, invite.token);
+
+  const [first, second] = await Promise.all([
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/discovery/public/${invite.token}/complete`,
+    }),
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/discovery/public/${invite.token}/complete`,
+    }),
+  ]);
+  assert.equal(first.statusCode, 200, first.payload);
+  assert.equal(second.statusCode, 200, second.payload);
+
+  const reports = ctx.db.prepare('select count(*) as total from discovery_report').get() as {
+    total: number;
+  };
+  assert.equal(reports.total, 1);
 });

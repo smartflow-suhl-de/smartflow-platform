@@ -180,3 +180,12 @@ describe('initialValues on a rank field', () => {
     assert.deepEqual(values['map.q10.order'], ['second', 'first']);
   });
 });
+
+describe('discoveryInviteId', () => {
+  it('decodes a normal id and refuses a broken percent escape', async () => {
+    const { discoveryInviteId } = await import('../src/App.tsx');
+    assert.equal(discoveryInviteId('/discovery/inv_123'), 'inv_123');
+    assert.equal(discoveryInviteId('/discovery/%E0%A4%A'), null);
+    assert.equal(discoveryInviteId('/discovery/a/b'), null);
+  });
+});
