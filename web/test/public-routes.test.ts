@@ -76,9 +76,10 @@ describe('App on public and app paths', () => {
   it('shows the unavailable notice with noindex and a title for an unserved link', () => {
     const html = render(`/d/${'B'.repeat(43)}`);
     assert.match(html, /<meta name="robots" content="noindex, nofollow"\/>/);
-    assert.match(html, /<title>SmartFlow (Plattform|Platform)<\/title>/);
+    assert.match(html, /<title>Dieser Link ist nicht verfügbar · SmartFlow Plattform<\/title>/);
     assert.match(html, /<h1[^>]*>[^<]*(nicht verfügbar|not available)/);
     assert.match(html, /href="#sf-main"/);
+    assert.match(html, /<main id="sf-main" tabindex="-1"/);
     assert.doesNotMatch(html, /Plattform wird geladen|sf-sidebar/);
     assert.deepEqual(calls, []);
   });
@@ -86,9 +87,11 @@ describe('App on public and app paths', () => {
   it('renders the registered page with its params', () => {
     publicRoutes.push({
       pattern: '/d/:token',
+      title: () => 'Entdeckung',
       render: (params) => createElement('h1', null, `Seite ${params.token}`),
     });
     const html = render(`/d/${'C'.repeat(43)}/`);
+    assert.match(html, /<title>Entdeckung · SmartFlow Plattform<\/title>/);
     assert.ok(html.includes(`<h1>Seite ${'C'.repeat(43)}</h1>`));
   });
 

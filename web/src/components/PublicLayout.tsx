@@ -38,6 +38,10 @@ interface PublicLayoutProps {
   locale: Locale;
   /** Page title; the platform name is appended. */
   title?: string;
+  /** Use the "link unavailable" title instead of `title`. */
+  unavailable?: boolean;
+  /** Changes with every page (the path), so focus moves to the new heading. */
+  focusKey: string;
   children: ReactNode;
 }
 
@@ -45,20 +49,42 @@ interface PublicLayoutProps {
  * Frame for public pages: brand header, one column, footer. No navigation, no
  * account controls. Keeps the page out of search indexes.
  */
-export function PublicLayout({ locale, title, children }: PublicLayoutProps) {
+export function PublicLayout({
+  locale,
+  title,
+  unavailable,
+  focusKey,
+  children,
+}: PublicLayoutProps) {
   const text = TEXT[locale];
   const mainRef = useRef<HTMLElement>(null);
-  const documentTitle = title ? `${title} · ${text.platform}` : text.platform;
+  const pageTitle = unavailable ? text.unavailableTitle : title;
+  const documentTitle = pageTitle ? `${pageTitle} · ${text.platform}` : text.platform;
 
   useEffect(() => {
     // Start on the heading, so a screen reader announces the page, not the
-    // brand. The heading is not a tab stop, it only takes programmatic focus.
-    const heading = mainRef.current?.querySelector('h1');
-    if (heading) {
+    // brand. A page that loads its content later has no heading yet: watch
+    // until one appears, focus it once, then stop. The heading is not a tab
+    // stop, it only takes programmatic focus.
+    const main = mainRef.current;
+    if (!main) return;
+
+    function focusHeading(): boolean {
+      const heading = main?.querySelector('h1');
+      if (!heading) return false;
       heading.setAttribute('tabindex', '-1');
       heading.focus({ preventScroll: true });
+      return true;
     }
-  }, []);
+
+    if (focusHeading()) return;
+    if (typeof MutationObserver === 'undefined') return;
+    const observer = new MutationObserver(() => {
+      if (focusHeading()) observer.disconnect();
+    });
+    observer.observe(main, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [focusKey]);
 
   return (
     <div className="sf-login-shell">
@@ -71,7 +97,7 @@ export function PublicLayout({ locale, title, children }: PublicLayoutProps) {
       <header>
         <BrandLogo size="sm" />
       </header>
-      <main id="sf-main" ref={mainRef} className="sf-login-center">
+      <main id="sf-main" ref={mainRef} tabIndex={-1} className="sf-login-center">
         <div className="sf-login-box">{children}</div>
       </main>
       <footer className="sf-login-footer">{text.legal}</footer>

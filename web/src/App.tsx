@@ -31,21 +31,25 @@ type SessionState =
  * 401 handler. The signed-in app below only mounts for every other path.
  */
 export function App() {
-  const { pathname } = useRoute();
+  const { pathname, search } = useRoute();
   const path = normalizePath(pathname);
   const match = matchPublicRoute(path);
-  if (!match && !isPublicNamespace(path)) return <SessionApp />;
+  if (!match && !isPublicNamespace(path)) return <SessionApp pathname={pathname} search={search} />;
 
   const locale = storedLocale();
   return (
-    <PublicLayout locale={locale}>
+    <PublicLayout
+      locale={locale}
+      focusKey={path}
+      unavailable={!match?.route}
+      title={match?.route?.title?.(match.params)}
+    >
       {match?.route ? match.route.render(match.params) : <PublicUnavailable locale={locale} />}
     </PublicLayout>
   );
 }
 
-function SessionApp() {
-  const { pathname: rawPathname, search } = useRoute();
+function SessionApp({ pathname: rawPathname, search }: { pathname: string; search: string }) {
   // Route matching never sees a trailing or doubled slash, so `/tenants/`
   // resolves to the tenants view instead of the NotFound page.
   const pathname = normalizePath(rawPathname);

@@ -12,6 +12,8 @@ export interface PublicRoute {
   pattern: string;
   /** Page for the route. Rendered inside `PublicLayout`. */
   render: (params: Record<string, string>) => ReactNode;
+  /** Document title for the page, without the platform name. Optional. */
+  title?: (params: Record<string, string>) => string | undefined;
 }
 
 /** A public route's path and the rule each `:param` must satisfy. */
