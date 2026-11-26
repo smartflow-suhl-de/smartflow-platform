@@ -176,7 +176,7 @@ describe('formatApiError', () => {
     const err = new ApiError(429, 'rate_limited', 'x');
     assert.equal(
       formatApiError(err, 'de'),
-      'Zu viele Anmeldeversuche. Bitte versuche es später erneut.',
+      'Zu viele Anmeldeversuche. Bitte später erneut versuchen.',
     );
     assert.equal(formatApiError(err, 'en'), 'Too many sign-in attempts. Please try again later.');
     for (const locale of ['de', 'en'] as const) {

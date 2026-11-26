@@ -680,7 +680,7 @@ export function formatApiError(error: unknown, locale: Locale): string {
       case 'busy':
         return 'Der Anmeldedienst ist gerade ausgelastet. Bitte in einem Moment erneut versuchen.';
       case 'rate_limited':
-        return 'Zu viele Anmeldeversuche. Bitte versuche es später erneut.';
+        return 'Zu viele Anmeldeversuche. Bitte später erneut versuchen.';
       case 'slug_taken':
         return 'Dieser Slug ist bereits vergeben.';
       case 'tenant_not_found':
