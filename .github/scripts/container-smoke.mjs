@@ -10,6 +10,9 @@ const image = process.env.SMOKE_IMAGE ?? 'smartflow-platform:ci';
 const name = process.env.SMOKE_CONTAINER ?? 'smartflow-smoke';
 const port = process.env.SMOKE_PORT ?? '8790';
 const email = process.env.SMOKE_EMAIL ?? 'smoke@example.test';
+// A production image refuses to start without an https origin, so the smoke
+// test supplies the minimum a real deployment would.
+const publicUrl = process.env.SMOKE_PUBLIC_URL ?? 'https://smoke.example.test';
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 60_000);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -60,6 +63,10 @@ const started = docker([
   name,
   '--env',
   `SF_OPERATOR_EMAIL=${email}`,
+  // The production guard refuses to boot without an https origin and a secure
+  // cookie, so the smoke test supplies the minimum a real deployment needs.
+  '--env',
+  `SF_PUBLIC_URL=${publicUrl}`,
   image,
 ]);
 if (started.status !== 0) {
