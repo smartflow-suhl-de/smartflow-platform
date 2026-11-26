@@ -71,6 +71,12 @@ export function normalizeIp(ip: string): string {
   const lower = ip.toLowerCase().split('%')[0] ?? '';
   const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(lower);
   if (mapped) return mapped[1] as string;
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(lower);
+  if (hex) {
+    const hi = Number.parseInt(hex[1] as string, 16);
+    const lo = Number.parseInt(hex[2] as string, 16);
+    return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  }
   if (!lower.includes(':')) return lower;
   const [head = '', tail] = lower.split('::');
   const headGroups = head === '' ? [] : head.split(':');
@@ -102,7 +108,8 @@ function createLimiter(limit: number, windowMs: number) {
     }
   };
 
-  return (key: string, at: number): boolean => {
+  /** Returns 0 when the attempt is allowed, else the milliseconds until the window frees a slot. */
+  return (key: string, at: number): number => {
     // Prune at most once per second, and only when the map is large.
     if (hits.size >= MAX_KEYS && at - lastPrune >= 1000) {
       lastPrune = at;
@@ -118,13 +125,18 @@ function createLimiter(limit: number, windowMs: number) {
     if (times.length >= limit) {
       hits.delete(key);
       hits.set(key, times);
-      return false;
+      return Math.max(1, (times[0] as number) + windowMs - at);
     }
     times.push(at);
     hits.delete(key);
     hits.set(key, times);
-    return true;
+    return 0;
   };
+}
+
+/** Whole seconds, rounded up, never below 1. */
+function retryAfterSeconds(ms: number): string {
+  return String(Math.max(1, Math.ceil(ms / 1000)));
 }
 
 export interface AuthRouteOptions {
@@ -237,9 +249,12 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       }
       if (Object.keys(fields).length > 0) throw new FieldError(fields);
 
-      if (config.rateLimit.enabled && !allowSetup(normalizeIp(request.ip), now().getTime())) {
-        reply.header('Retry-After', '60');
-        throw new AppError('rate_limited', 'Too many attempts. Please try again in a minute.', 429);
+      const setupWaitMs = config.rateLimit.enabled
+        ? allowSetup(normalizeIp(request.ip), now().getTime())
+        : 0;
+      if (setupWaitMs > 0) {
+        reply.header('Retry-After', retryAfterSeconds(setupWaitMs));
+        throw new AppError('rate_limited', 'Too many attempts. Please try again later.', 429);
       }
 
       // A race between two setups is a 409, not a second operator: the service
@@ -292,16 +307,19 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       if (Object.keys(fields).length > 0) throw new FieldError(fields);
 
       const nowMs = now().getTime();
-      if (
-        config.rateLimit.enabled &&
-        (!allowLogin(normalizeIp(request.ip), nowMs) || !allowLoginForEmail(email, nowMs))
-      ) {
-        reply.header('Retry-After', '60');
-        throw new AppError(
-          'rate_limited',
-          'Too many sign-in attempts. Please try again in a minute.',
-          429,
-        );
+      if (config.rateLimit.enabled) {
+        // Same order and short circuit as before; only the bucket that tripped is
+        // remembered, so Retry-After matches its window (60 s or 15 min).
+        const waitMs =
+          allowLogin(normalizeIp(request.ip), nowMs) || allowLoginForEmail(email, nowMs);
+        if (waitMs > 0) {
+          reply.header('Retry-After', retryAfterSeconds(waitMs));
+          throw new AppError(
+            'rate_limited',
+            'Too many sign-in attempts. Please try again later.',
+            429,
+          );
+        }
       }
 
       // Unknown address and wrong password are one answer, byte for byte.
