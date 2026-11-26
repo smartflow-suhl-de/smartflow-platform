@@ -13,6 +13,12 @@ const email = process.env.SMOKE_EMAIL ?? 'smoke@example.test';
 // A production image refuses to start without an https origin, so the smoke
 // test supplies the minimum a real deployment would.
 const publicUrl = process.env.SMOKE_PUBLIC_URL ?? 'https://smoke.example.test';
+// A production process also refuses to boot without a mail transport, because
+// nobody could sign in without one. The smoke test therefore names a host, and
+// deliberately one that never answers: the contract under test is "the process
+// starts and serves HTTP", not "a relay is reachable". The magic-link probe
+// still answers 202 because the send runs after the response.
+const smtpHost = process.env.SMOKE_SMTP_HOST ?? '127.0.0.1';
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 60_000);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -63,10 +69,14 @@ const started = docker([
   name,
   '--env',
   `SF_OPERATOR_EMAIL=${email}`,
-  // The production guard refuses to boot without an https origin and a secure
-  // cookie, so the smoke test supplies the minimum a real deployment needs.
+  // The production guard refuses to boot without an https origin, a secure
+  // cookie and a mail transport: without a relay nobody could receive the only
+  // credential the platform accepts. A real deployment takes all three from
+  // `.env`, so the smoke test supplies them too instead of relaxing the guard.
   '--env',
   `SF_PUBLIC_URL=${publicUrl}`,
+  '--env',
+  `SF_SMTP_HOST=${smtpHost}`,
   image,
 ]);
 if (started.status !== 0) {

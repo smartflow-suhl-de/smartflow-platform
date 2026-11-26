@@ -4,7 +4,12 @@ import { ArrowRightIcon, KeyIcon, MoonIcon, SunIcon } from '../components/icons'
 import { Button, Card, Field, Input } from '../components/ui';
 import { ApiError, api } from '../lib/api';
 import { formatApiError, formatFieldError, type Locale, type Messages } from '../lib/i18n';
-import { confirmMagicLinkOnce, toAppHref, tokenFromSearch } from '../lib/auth-flow';
+import {
+  confirmMagicLinkOnce,
+  magicLinkNotice,
+  toAppHref,
+  tokenFromSearch,
+} from '../lib/auth-flow';
 import { AppLink, navigate } from '../lib/router';
 import type { AuthMe, MagicLinkResponse } from '../lib/types';
 import type { Mode } from '../theme';
@@ -102,6 +107,8 @@ export function LoginPage({
     }
   }
 
+  const resultNotice = magicResult ? magicLinkNotice(magicResult) : null;
+
   return (
     <div className="sf-login-shell">
       <div className="sf-login-bar">
@@ -195,24 +202,30 @@ export function LoginPage({
                     </Button>
                   </form>
 
-                  {magicResult ? (
-                    <div className="sf-login-result" role="status">
-                      {magicResult.link ? (
+                  {resultNotice ? (
+                    <div className="sf-login-result">
+                      {resultNotice.kind === 'dev_link' ? (
                         <>
-                          <div className="sf-alert sf-alert-info">
+                          <div className="sf-alert sf-alert-info" role="status">
                             <span>{messages.login.devLinkNotice}</span>
                           </div>
                           <AppLink
-                            to={toAppHref(magicResult.link, window.location.origin)}
+                            to={toAppHref(resultNotice.link, window.location.origin)}
                             className="sf-btn sf-btn-secondary sf-btn-full"
                           >
                             <span>{messages.login.devLinkAction}</span>
                             <ArrowRightIcon size={14} />
                           </AppLink>
                         </>
-                      ) : (
-                        <div className="sf-alert sf-alert-info">
+                      ) : resultNotice.kind === 'sent' ? (
+                        <div className="sf-alert sf-alert-info" role="status">
                           <span>{messages.login.sentNotice}</span>
+                        </div>
+                      ) : (
+                        // No transport: "check your inbox" would be a lie. The
+                        // alert role is deliberate, the operator has to act.
+                        <div className="sf-alert sf-alert-bad" role="alert">
+                          <span>{messages.login.noTransportNotice}</span>
                         </div>
                       )}
                     </div>

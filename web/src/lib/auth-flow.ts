@@ -1,4 +1,4 @@
-import type { AuthMe } from './types';
+import type { AuthMe, MagicLinkResponse } from './types';
 import { ApiError, api, isAbortError } from './api';
 
 /**
@@ -50,6 +50,23 @@ export function toAppHref(link: string, origin: string, fallback = '/login'): st
 export function tokenFromSearch(search: string): string | null {
   const token = new URLSearchParams(search).get('token');
   return token && token.trim().length > 0 ? token : null;
+}
+
+/**
+ * What the login page owes the visitor after a magic-link request.
+ *
+ * `sent === false` is the API saying it has no transport, so the honest answer
+ * is "nothing was sent" rather than "check your inbox". A dev link needs its own
+ * branch because it is a delivery in the response body, not an email.
+ */
+export type MagicLinkNotice =
+  { kind: 'dev_link'; link: string } | { kind: 'sent' } | { kind: 'no_transport' };
+
+export function magicLinkNotice(
+  response: Pick<MagicLinkResponse, 'sent' | 'link'>,
+): MagicLinkNotice {
+  if (response.link) return { kind: 'dev_link', link: response.link };
+  return response.sent ? { kind: 'sent' } : { kind: 'no_transport' };
 }
 
 /**

@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { loadConfig } from '../../src/kernel/config.ts';
 import { createTestApp } from './helpers.ts';
@@ -7,11 +10,15 @@ import { createTestApp } from './helpers.ts';
  * Production is the one environment where a wrong default is not a papercut:
  * an insecure origin or an insecure session cookie means credentials on the
  * wire. These tests pin the startup guard that refuses to boot instead.
+ *
+ * `SF_SMTP_HOST` is part of the fixture because a production process without a
+ * mail transport cannot let anybody sign in and therefore refuses to start.
  */
 const PROD_HTTPS = {
   NODE_ENV: 'production',
   SF_PUBLIC_URL: 'https://app.example.test',
   SF_SECURE_COOKIES: '1',
+  SF_SMTP_HOST: 'mail.example.test',
 };
 
 test('production start fails when SF_PUBLIC_URL is not https, even with the dev flag', () => {
@@ -124,4 +131,129 @@ test('SF_TRUST_PROXY becomes a hop count, not a blanket trust', () => {
   // client address, and a spoofable header would let one client exhaust it for
   // everyone or dodge it entirely.
   assert.equal(loadConfig({ SF_TRUST_PROXY: 'true' }).trustProxy, 1);
+});
+
+test('production refuses to start without a mail transport', () => {
+  // The old behaviour started, answered 202 and told the user to check an inbox
+  // that could never receive anything.
+  assert.throws(
+    () => loadConfig({ NODE_ENV: 'production', SF_PUBLIC_URL: 'https://app.example.test' }),
+    /SF_SMTP_HOST is required when NODE_ENV=production/,
+  );
+});
+
+test('development and test may run without a transport', () => {
+  assert.equal(loadConfig({ NODE_ENV: 'development' }).smtp.host, null);
+  assert.equal(loadConfig({ NODE_ENV: 'test' }).smtp.host, null);
+});
+
+test('a transport without optional settings uses submission defaults', () => {
+  const smtp = loadConfig({ SF_SMTP_HOST: 'mail.example.test' }).smtp;
+
+  assert.equal(smtp.host, 'mail.example.test');
+  assert.equal(smtp.port, 587);
+  assert.equal(smtp.secure, false);
+  assert.equal(smtp.user, null);
+  assert.equal(smtp.replyTo, null);
+});
+
+test('port 465 implies implicit TLS even though the default is STARTTLS', () => {
+  const config = loadConfig({ SF_SMTP_HOST: 'mail.example.test', SF_SMTP_PORT: '465' });
+
+  assert.equal(config.smtp.port, 465);
+  assert.equal(config.smtp.secure, true);
+  // An explicit value still wins, so a relay that speaks STARTTLS on 465 works.
+  assert.equal(
+    loadConfig({ SF_SMTP_HOST: 'h', SF_SMTP_PORT: '465', SF_SMTP_SECURE: '0' }).smtp.secure,
+    false,
+  );
+});
+
+test('SF_SMTP_FROM defaults to the operator address and must be a real address', () => {
+  assert.equal(loadConfig({}).smtp.from, 'operator@example.com');
+  const displayed = `SmartFlow <${['versand', 'example.test'].join('@')}>`;
+  assert.equal(
+    loadConfig({ SF_SMTP_HOST: 'h', SF_SMTP_FROM: `  ${displayed}  ` }).smtp.from,
+    displayed,
+  );
+  assert.throws(
+    () => loadConfig({ SF_SMTP_HOST: 'h', SF_SMTP_FROM: 'SmartFlow' }),
+    /SF_SMTP_FROM must be a plain email address/,
+  );
+  assert.throws(
+    () => loadConfig({ SF_SMTP_HOST: 'h', SF_SMTP_REPLY_TO: 'keine-adresse' }),
+    /SF_SMTP_REPLY_TO must be a plain email address/,
+  );
+});
+
+test('the password file wins over SF_SMTP_PASS', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sf-smtp-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, 'smtp-pass');
+  writeFileSync(file, '  aus-der-datei\n');
+
+  const smtp = loadConfig({
+    SF_SMTP_HOST: 'mail.example.test',
+    SF_SMTP_USER: 'smartflow',
+    SF_SMTP_PASS: 'aus-der-env',
+    SF_SMTP_PASS_FILE: file,
+  }).smtp;
+
+  assert.equal(smtp.pass, 'aus-der-datei');
+});
+
+test('an unreadable password file names the path and stops the start', () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        SF_SMTP_HOST: 'mail.example.test',
+        SF_SMTP_USER: 'smartflow',
+        SF_SMTP_PASS_FILE: '/nonexistent/sf-smtp-pass',
+      }),
+    /SF_SMTP_PASS_FILE could not be read \(\/nonexistent\/sf-smtp-pass\): ENOENT/,
+  );
+});
+
+test('an empty password file is a startup error and never becomes an empty password', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sf-smtp-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  for (const [name, contents] of [
+    ['empty', ''],
+    ['whitespace', '  \n\t\n'],
+  ] as const) {
+    const file = join(dir, `smtp-pass-${name}`);
+    writeFileSync(file, contents);
+
+    // Without the guard the trimmed value is `''`: either the startup check
+    // reads it as "no password" or an empty one reaches the relay and fails
+    // only on the first sign-in, long after anyone watched the boot logs.
+    assert.throws(
+      () =>
+        loadConfig({
+          SF_SMTP_HOST: 'mail.example.test',
+          SF_SMTP_USER: 'smartflow',
+          SF_SMTP_PASS_FILE: file,
+        }),
+      new RegExp(`SF_SMTP_PASS_FILE is empty \\(${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`),
+      name,
+    );
+  }
+});
+
+test('a partially configured transport stops the start instead of dropping mail', () => {
+  const broken: Array<[Record<string, string>, RegExp]> = [
+    [{ SF_SMTP_PORT: '587' }, /SF_SMTP_HOST is not/],
+    [{ SF_SMTP_USER: 'smartflow' }, /SF_SMTP_HOST is not/],
+    [{ SF_SMTP_PASS: 'geheim' }, /SF_SMTP_HOST is not/],
+    [{ SF_SMTP_PASS_FILE: '/tmp/x' }, /SF_SMTP_HOST is not/],
+    [{ SF_SMTP_HOST: 'h', SF_SMTP_PORT: 'smtp' }, /SF_SMTP_PORT must be a TCP port/],
+    [{ SF_SMTP_HOST: 'h', SF_SMTP_PORT: '70000' }, /SF_SMTP_PORT must be a TCP port/],
+    [{ SF_SMTP_HOST: 'h', SF_SMTP_USER: 'smartflow' }, /no password is available/],
+    [{ SF_SMTP_HOST: 'h', SF_SMTP_PASS: 'geheim' }, /SF_SMTP_USER is not/],
+  ];
+
+  for (const [env, pattern] of broken) {
+    assert.throws(() => loadConfig(env), pattern, JSON.stringify(env));
+  }
 });

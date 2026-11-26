@@ -31,6 +31,7 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
 
 const {
   confirmMagicLinkOnce,
+  magicLinkNotice,
   pendingConfirmationCount,
   sessionProbeOutcome,
   toAppHref,
@@ -140,6 +141,28 @@ describe('sessionProbeOutcome', () => {
   });
 });
 
+describe('magicLinkNotice', () => {
+  it('reports a sent mail as sent', () => {
+    assert.deepEqual(magicLinkNotice({ sent: true }), { kind: 'sent' });
+  });
+
+  it('reports a missing transport instead of asking for the inbox', () => {
+    // The bug: the page promised "check your inbox" while the API had already
+    // answered `sent:false`, so the mail never existed.
+    assert.deepEqual(magicLinkNotice({ sent: false }), { kind: 'no_transport' });
+  });
+
+  it('prefers the dev link over both, because it is a delivery', () => {
+    assert.deepEqual(magicLinkNotice({ sent: true, link: '/login/confirm?token=abc' }), {
+      kind: 'dev_link',
+      link: '/login/confirm?token=abc',
+    });
+    assert.deepEqual(magicLinkNotice({ sent: false, link: '/login/confirm?token=abc' }), {
+      kind: 'dev_link',
+      link: '/login/confirm?token=abc',
+    });
+  });
+});
 describe('toAppHref', () => {
   const origin = 'http://127.0.0.1:5273';
 

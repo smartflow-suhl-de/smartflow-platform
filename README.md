@@ -83,9 +83,19 @@ Die API liest ausschließlich `SF_*`-Variablen mit entwicklungsfreundlichen Defa
 | `SF_BODY_LIMIT`            | `1048576`                    | Max. Request-Body in Bytes                                                                                                                              |
 | `SF_RATE_LIMIT_ENABLED`    | `1`                          | Rate-Limit aktiv                                                                                                                                        |
 | `SF_RATE_LIMIT_MAGIC_LINK` | `10`                         | Magic-Link-Anfragen pro Fenster                                                                                                                         |
+| `SF_SMTP_HOST`             | leer                         | Relay-Host. In `NODE_ENV=production` **Pflicht**, sonst bricht der Start ab                                                                             |
+| `SF_SMTP_PORT`             | `587`                        | Submission-Port; `465` schaltet implizites TLS automatisch ein                                                                                          |
+| `SF_SMTP_SECURE`           | Port `465` ⇒ `1`             | Implizites TLS statt STARTTLS                                                                                                                           |
+| `SF_SMTP_USER`             | leer                         | SMTP-Benutzer; nur zusammen mit Passwort                                                                                                                |
+| `SF_SMTP_PASS`             | leer                         | SMTP-Passwort                                                                                                                                           |
+| `SF_SMTP_PASS_FILE`        | leer                         | Datei mit dem Passwort; hat Vorrang vor `SF_SMTP_PASS`                                                                                                  |
+| `SF_SMTP_FROM`             | `SF_OPERATOR_EMAIL`          | Absender der Anmeldemail; Anzeigename erlaubt                                                                                                           |
+| `SF_SMTP_REPLY_TO`         | leer                         | Optionale Antwortadresse                                                                                                                                |
 
-Es gibt keinen produktiven Mail-Transport: Magic-Links werden im Dev-Modus im Response
-ausgeliefert.
+Der Magic-Link wird per SMTP verschickt, sobald `SF_SMTP_HOST` gesetzt ist. Ohne Transport
+antwortet `POST /api/v1/auth/magic-link` mit `{"sent":false,…}` und die Anmeldeseite sagt,
+dass nichts verschickt wurde; im Entwicklungsmodus gibt sie den Link stattdessen direkt
+zurück. Details und ein Mailpit-Test stehen in [`docs/deployment.md`](docs/deployment.md#mailversand-smtp).
 
 ## Verzeichnisstruktur
 

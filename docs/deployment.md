@@ -21,15 +21,16 @@ mehr dazu unter [Grenzen](#grenzen).
 git clone <repository> smartflow-platform
 cd smartflow-platform
 cp .env.production.example .env
-$EDITOR .env                      # SF_DOMAIN und SF_OPERATOR_EMAIL setzen
+$EDITOR .env                      # SF_DOMAIN, SF_OPERATOR_EMAIL und SF_SMTP_HOST setzen
 docker compose up -d --build
 docker compose ps                 # STATUS muss "healthy" enthalten
 ```
 
-`SF_DOMAIN` und `SF_OPERATOR_EMAIL` sind Pflicht: fehlen sie, bricht Compose ab, bevor
-ein Container startet. `SF_PUBLIC_URL` wird in `compose.yaml` aus `SF_DOMAIN`
+`SF_DOMAIN`, `SF_OPERATOR_EMAIL` und `SF_SMTP_HOST` sind Pflicht: fehlen sie, bricht Compose
+ab, bevor ein Container startet. `SF_PUBLIC_URL` wird in `compose.yaml` aus `SF_DOMAIN`
 zusammengesetzt und deshalb nicht in `.env` gesetzt — die beiden Werte können so nicht
-auseinanderlaufen.
+auseinanderlaufen. Warum der Mailversand Pflicht ist, steht unter
+[Mailversand (SMTP)](#mailversand-smtp).
 
 Das Image setzt bewusst **keinen** Default für `SF_PUBLIC_URL`: die Anwendung verlangt im
 Produktivbetrieb eine `https://`-Origin und startet sonst nicht. Genau das soll beim Start
@@ -41,7 +42,7 @@ smartflow_data`), nicht im Image. Ein `docker compose down` ohne `-v` behält si
 ### Ohne öffentliche Domain ausprobieren
 
 ```bash
-printf 'SF_DOMAIN=localhost\nSF_OPERATOR_EMAIL=ops@example.com\n' > .env
+printf 'SF_DOMAIN=localhost\nSF_OPERATOR_EMAIL=ops@example.com\nSF_SMTP_HOST=<host-oder-ip-des-mailpit>\nSF_SMTP_PORT=1025\n' > .env
 # in deploy/caddy/Caddyfile zusätzlich "tls internal" in den Site-Block schreiben
 docker compose up -d --build       # baut auch das Caddy-Image neu
 curl -k https://localhost/api/v1/health
@@ -49,6 +50,82 @@ curl -k https://localhost/api/v1/health
 
 Selbstsignierte Zertifikate lassen `curl` ohne `-k` scheitern; das ist erwartet und kein
 Fehler der Anwendung.
+
+## Mailversand (SMTP)
+
+Ohne Mailversand ist die Anmeldung im Container unmöglich: die Plattform verschickt den
+Anmeldelink ausschließlich per E-Mail, im Produktivbetrieb gibt sie ihn nie in der Antwort
+zurück. Deshalb ist `SF_SMTP_HOST` im Produktivbetrieb **Pflicht** — fehlt er, bricht der
+Start mit einer klaren Meldung ab, statt einen Container hochzufahren, der niemanden
+hineinlässt.
+
+```bash
+SF_SMTP_HOST=smtp.example.com      # Relay des Providers
+SF_SMTP_PORT=587                   # Empfehlung: Submission mit STARTTLS
+SF_SMTP_USER=smartflow
+SF_SMTP_PASS_FILE=/run/secrets/smtp_pass   # Datei hat Vorrang vor SF_SMTP_PASS
+SF_SMTP_FROM=noreply@example.com        # leer = SF_OPERATOR_EMAIL
+SF_SMTP_REPLY_TO=                  # optional
+```
+
+- **Port 587, nicht 25.** Port 587 ist Submission mit STARTTLS und bei praktisch jedem
+  Anbieter offen. Port 25 ist bei Cloud-Anbietern (Hetzner, AWS, GCP, Azure, viele VPS)
+  ausgehend gesperrt; ein Versand darüber scheitert ohne verwertbare Fehlermeldung.
+- **STARTTLS ist Pflicht.** Ohne implizites TLS (`SF_SMTP_SECURE` nicht gesetzt) verlangt
+  der Versand eine TLS-Aushandlung; ein Relay, das kein STARTTLS anbietet, lässt den Versand
+  scheitern, statt Zugangsdaten und Anmeldelink im Klartext zu übertragen.
+- **Port 465** bedeutet implizites TLS und schaltet `secure` automatisch ein. `SF_SMTP_SECURE`
+  überschreibt das, falls ein Relay es anders will.
+- **Zugangsdaten** entweder über `SF_SMTP_USER` + `SF_SMTP_PASS` oder über
+  `SF_SMTP_PASS_FILE`. Eine Datei ist die bessere Wahl: sie steht nicht in `docker inspect`
+  und nicht in der Prozessumgebung. Eine halbe Kombination (Benutzer ohne Passwort,
+  Passwort ohne Benutzer, unlesbare oder leere Datei) bricht den Start ab.
+- **Absender** muss eine Adresse sein, die das Relay akzeptiert; die meisten Anbieter
+  verlangen die eigene Domain. Ein Anzeigename ist erlaubt:
+  `"SmartFlow <noreply@example.com>"`.
+
+### Versand prüfen
+
+Der schnellste Beleg ist ein lokaler Mailpit-Container. Er zeigt die Nachricht im Browser und
+braucht keine Zugangsdaten — seit der STARTTLS-Pflicht aber ein Zertifikat, sonst scheitert
+der Versand am fehlenden TLS:
+
+```bash
+docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit \
+  --smtp-tls-cert /pfad/cert.pem --smtp-tls-key /pfad/key.pem
+# in .env für einen Testlauf:
+#   SF_SMTP_HOST=host.docker.internal   # oder die IP des Hosts im Docker-Netz
+#   SF_SMTP_PORT=1025
+#   SF_SMTP_USER=
+#   SF_SMTP_PASS=
+docker compose up -d app
+curl -X POST https://<SF_DOMAIN>/api/v1/auth/magic-link \
+  -H 'content-type: application/json' -d '{"email":"<SF_OPERATOR_EMAIL>"}'
+# http://localhost:8025 öffnen: Betreff, Text und Link stehen dort.
+```
+
+Ein selbstsigniertes Zertifikat muss der Anwendung zusätzlich als vertrauenswürdig gelten;
+sonst steht im Log ein TLS-Fehler statt einer Zustellung.
+
+Die Antwort ist immer `202` mit `{"sent":true,"expiresAt":"…"}` — unabhängig davon, ob die
+Adresse bekannt ist. Ohne Transport lautet sie `{"sent":false,…}`, und die Anmeldeseite
+sagt dann, dass nichts verschickt wurde, statt „prüfen Sie Ihr Postfach“ zu behaupten.
+
+Ein Versandfehler (Relay lehnt ab, Zeitüberschreitung) ändert die Antwort nicht: der
+Versand läuft nach der Antwort, der Fehler steht im Log mit einem gekürzten Hash des
+Empfängers, dem SMTP-Code und dem Kommando — nie mit Adresse, Link oder Token.
+
+```bash
+docker compose logs app | grep 'magic link mail could not be sent'
+```
+
+### Grenzen des Versands
+
+- **Keine Zustellgarantie.** SPF, DKIM und DMARC müssen beim Relay bzw. in der DNS-Zone
+  der Absenderdomain eingerichtet sein, sonst landet die Mail im Spam oder wird abgewiesen.
+  Das ist Aufgabe des Mailproviders, nicht dieser Anwendung.
+- **Ein Versuch, kein Retry.** Schlägt der Versand fehl, wird nicht erneut versucht; die
+  Person fordert einfach einen neuen Link an. Ein Mail-Queue-System gibt es nicht.
 
 ## Update
 
@@ -141,10 +218,6 @@ Healthcheck soll erst danach greifen.
 - **Eine Instanz.** Jeder Mandant hat eine eigene SQLite-Datei, und SQLite erlaubt genau
   einen schreibenden Prozess. `docker compose up --scale app=2` ist kein Skalierungspfad,
   sondern Datenverlust. Für mehr Last braucht es zuerst einen Wechsel der Datenbank.
-- **Kein Mailversand.** Magic-Links werden im Container nicht verschickt: es gibt noch
-  keinen Transport. Der Produktivmodus gibt den Link auch nicht in der Antwort zurück.
-  Eine Anmeldung ist im Container deshalb derzeit nicht möglich — das ist eine bekannte
-  Lücke, kein Konfigurationsfehler.
 - **Kein Registry-Push.** `docker compose up --build` baut auf dem Zielhost. Ein
   Registry-Workflow (Push, Tag-Strategie, Rollback per Tag) ist nicht eingerichtet.
 - **Kein Rollback-Kommando.** Ein Update zurückzudrehen heißt: alten Stand auschecken,

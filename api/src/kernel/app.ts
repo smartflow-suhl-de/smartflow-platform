@@ -27,6 +27,7 @@ import { migrate, openDatabase, tenantDatabaseFile, type Db, type Migration } fr
 import { AppError, notFound, unauthorized } from './errors.ts';
 import { EventBus } from './event-bus.ts';
 import { newId } from './ids.ts';
+import { NodemailerMailer, NoopMailer, type Mailer } from './mailer.ts';
 import { generatedPlugins } from './plugin-registry.generated.ts';
 import { platformMigrations } from './platform-migrations.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
@@ -49,6 +50,8 @@ export interface BuiltApp {
   auth: AuthService;
   /** Manifests in registration order — the nav route renders from these. */
   plugins: PluginManifest[];
+  /** The transport the login route uses; `NoopMailer` when none is configured. */
+  mailer: Mailer;
   /**
    * Verified tenant database. Kernel-side jobs need the same boundary the
    * plugins get: unknown tenant → 404, suspended tenant → 403.
@@ -70,6 +73,11 @@ export interface BuildOptions {
   logger?: boolean;
   /** Test hook: capture the log lines instead of writing them to stdout. */
   logStream?: { write(line: string): void };
+  /**
+   * Test hook: the mail transport. Without it the app picks its own from
+   * `SF_SMTP_*`, which in tests means `NoopMailer` — no socket is ever opened.
+   */
+  mailer?: Mailer;
 }
 
 /**
@@ -125,6 +133,13 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   const auth = new AuthService(db, config, now, (name, payload) => eventBus.emit(name, payload));
   auth.seedOperator();
   auth.pruneSessions();
+
+  // The transport is chosen once at startup. A process without `SF_SMTP_HOST`
+  // keeps a no-op mailer: it answers honestly that nothing was sent instead of
+  // pretending a mailbox was filled.
+  const mailer =
+    options.mailer ??
+    (config.smtp.host === null ? new NoopMailer() : new NodemailerMailer(config.smtp, now));
 
   await app.register(cookie);
   await app.register(swagger, {
@@ -363,6 +378,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
         config,
         db,
         now,
+        mailer,
         resolveTenant: (tenantId) => tenantDirectory?.resolve(tenantId) ?? null,
       });
       registerNavRoutes(scope, { plugins });
@@ -422,12 +438,19 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   }
 
   app.addHook('onClose', async () => {
+    // The route does not await a send, so one may still be on the wire here.
+    // Waiting for it (bounded) beats closing the transporter underneath it.
+    await mailer.close({
+      onStillOpen: (count) => {
+        app.log.warn({ count }, 'shutdown closed the mail transport with sends still open');
+      },
+    });
     for (const database of tenantCache.values()) database.close();
     tenantCache.clear();
     db.close();
   });
 
-  return { app, config, db, auth, plugins, tenantDb, internalToken };
+  return { app, config, db, auth, plugins, mailer, tenantDb, internalToken };
 }
 
 /** The built SPA shell, or `null` when `webDir` carries no `index.html`. */
