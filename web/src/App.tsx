@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from './components/AppShell';
-import { api, setUnauthorizedHandler } from './lib/api';
-import { applyLocale, getMessages, storedLocale, type Locale } from './lib/i18n';
-import { buildNavigation, resolveAliasRedirect } from './lib/navigation';
+import { Button } from './components/ui';
+import { api, isAbortError, setUnauthorizedHandler } from './lib/api';
+import { sessionProbeOutcome } from './lib/auth-flow';
+import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
+import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
 import { navigate, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { HelpPage } from './pages/Help';
@@ -13,12 +15,21 @@ import { SettingsPage } from './pages/Settings';
 import { TenantsPage } from './pages/Tenants';
 import { applyMode, storedMode, type Mode } from './theme';
 
+const PLATFORM_TITLE = 'SmartFlow Plattform';
+
 type SessionState =
-  { kind: 'loading' } | { kind: 'signed_out' } | { kind: 'signed_in'; auth: AuthMe };
+  | { kind: 'loading' }
+  | { kind: 'signed_out' }
+  | { kind: 'unavailable' }
+  | { kind: 'signed_in'; auth: AuthMe };
 
 export function App() {
   const { pathname, search } = useRoute();
   const [session, setSession] = useState<SessionState>({ kind: 'loading' });
+  const [probeVersion, setProbeVersion] = useState(0);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(() => storedMode());
   const [locale, setLocale] = useState<Locale>(() => storedLocale());
   const [health, setHealth] = useState<HealthResponse | null>(null);
@@ -41,7 +52,10 @@ export function App() {
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      // A 401 on a data route means the cookie is gone: drop the session and
+      // tell the login page why its form is back, instead of failing silently.
       setSession({ kind: 'signed_out' });
+      setSessionExpired(true);
       setStats(null);
       setApiNav([]);
     });
@@ -57,12 +71,13 @@ export function App() {
         setSession({ kind: 'signed_in', auth });
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        setSession({ kind: 'signed_out' });
+        const outcome = sessionProbeOutcome(error);
+        if (outcome === 'aborted') return;
+        setSession({ kind: outcome === 'signed_out' ? 'signed_out' : 'unavailable' });
       });
 
     return () => controller.abort();
-  }, []);
+  }, [probeVersion]);
 
   useEffect(() => {
     if (session.kind !== 'signed_in') return;
@@ -75,7 +90,7 @@ export function App() {
         setHealthError(false);
       })
       .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (isAbortError(error)) return;
         setHealthError(true);
       });
 
@@ -112,6 +127,11 @@ export function App() {
   }, [role, apiNav, messages, stats?.suspended]);
 
   useEffect(() => {
+    const label = session.kind === 'signed_in' ? pageTitle(pathname, navItems) : null;
+    document.title = label ? `${label} · ${PLATFORM_TITLE}` : PLATFORM_TITLE;
+  }, [pathname, navItems, session.kind]);
+
+  useEffect(() => {
     if (session.kind !== 'signed_in') return;
     if (pathname === '/login' || pathname === '/login/confirm') {
       navigate('/', { replace: true });
@@ -129,21 +149,57 @@ export function App() {
 
   const handleSignedIn = useCallback((auth: AuthMe) => {
     setSession({ kind: 'signed_in', auth });
+    setSessionExpired(false);
+    setLogoutError(null);
+  }, []);
+
+  const retrySession = useCallback(() => {
+    setSession({ kind: 'loading' });
+    setProbeVersion((v) => v + 1);
   }, []);
 
   const handleLogout = useCallback(() => {
-    void api.logout().finally(() => {
-      setSession({ kind: 'signed_out' });
-      setStats(null);
-      setApiNav([]);
-      navigate('/', { replace: true });
-    });
-  }, []);
+    setLoggingOut(true);
+    setLogoutError(null);
+    api
+      .logout()
+      .then(() => {
+        setSession({ kind: 'signed_out' });
+        setSessionExpired(false);
+        setStats(null);
+        setApiNav([]);
+        navigate('/', { replace: true });
+      })
+      .catch((error: unknown) => {
+        // The server session may still be alive, so stay signed in: pretending
+        // to be logged out would silently sign the next reload back in.
+        if (isAbortError(error)) return;
+        setLogoutError(formatApiError(error, locale));
+      })
+      .finally(() => setLoggingOut(false));
+  }, [locale]);
 
   if (session.kind === 'loading') {
     return (
       <div className="sf-center-load" role="status">
         <span className="label">{messages.common.loadingPlatform}</span>
+      </div>
+    );
+  }
+
+  if (session.kind === 'unavailable') {
+    return (
+      <div className="sf-center-load">
+        <div className="sf-unavailable">
+          {/* The alert carries only the text: the retry button must not be
+              re-announced every time the probe fails again. */}
+          <p className="sf-unavailable-text" role="alert">
+            {messages.shell.systemUnavailable}
+          </p>
+          <Button variant="secondary" size="sm" onClick={retrySession}>
+            {messages.common.retry}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -156,6 +212,7 @@ export function App() {
         mode={mode}
         locale={locale}
         messages={messages}
+        notice={sessionExpired ? messages.login.sessionExpiredNotice : null}
         onModeChange={handleModeChange}
         onLocaleChange={handleLocaleChange}
         onSignedIn={handleSignedIn}
@@ -216,6 +273,8 @@ export function App() {
       stats={stats}
       mode={mode}
       messages={messages}
+      loggingOut={loggingOut}
+      logoutError={logoutError}
       onModeChange={handleModeChange}
       onLogout={handleLogout}
     >

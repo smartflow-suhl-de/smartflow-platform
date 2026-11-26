@@ -1,12 +1,12 @@
 import {
   forwardRef,
-  useEffect,
-  useRef,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
+  useRef,
 } from 'react';
 import { CloseIcon } from './icons';
+import { useFocusTrap } from './useFocusTrap';
 
 function joinClasses(...parts: Array<string | false | undefined>): string {
   return parts.filter(Boolean).join(' ');
@@ -236,26 +236,14 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const onCancelRef = useRef(onCancel);
-  const busyRef = useRef(busy);
-  onCancelRef.current = onCancel;
-  busyRef.current = busy;
 
-  useEffect(() => {
-    if (!open) return;
-    cancelRef.current?.focus();
-
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape' && !busyRef.current) {
-        event.preventDefault();
-        onCancelRef.current();
-      }
-    }
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open]);
+  useFocusTrap(dialogRef, open, {
+    onEscape: onCancel,
+    escapeDisabled: busy,
+    initialFocusRef: cancelRef,
+  });
 
   if (!open) return null;
 
@@ -263,10 +251,12 @@ export function ConfirmModal({
     <>
       <div className="sf-overlay-backdrop" onClick={() => !busy && onCancel()} aria-hidden="true" />
       <div
+        ref={dialogRef}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="sf-confirm-title"
         aria-describedby="sf-confirm-desc"
+        tabIndex={-1}
         className="sf-modal"
       >
         <div className="sf-modal-head">

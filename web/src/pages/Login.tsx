@@ -15,6 +15,8 @@ export interface LoginPageProps {
   mode: Mode;
   locale: Locale;
   messages: Messages;
+  /** Shown above the form, e.g. after a data route answered 401. */
+  notice?: string | null;
   onModeChange: (mode: Mode) => void;
   onLocaleChange: (locale: Locale) => void;
   onSignedIn: (auth: AuthMe) => void;
@@ -26,6 +28,7 @@ export function LoginPage({
   mode,
   locale,
   messages,
+  notice = null,
   onModeChange,
   onLocaleChange,
   onSignedIn,
@@ -148,6 +151,12 @@ export function LoginPage({
                 <>
                   <h1 className="sf-login-title">{messages.login.title}</h1>
                   <p className="sf-login-subtitle">{messages.login.subtitle}</p>
+
+                  {notice ? (
+                    <div className="sf-alert sf-alert-bad" role="alert">
+                      <span>{notice}</span>
+                    </div>
+                  ) : null}
 
                   <form className="sf-login-form" onSubmit={handleSubmit}>
                     {formError ? (

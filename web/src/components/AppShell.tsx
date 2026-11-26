@@ -46,6 +46,8 @@ export interface AppShellProps {
   stats: TenantStats | null;
   mode: Mode;
   messages: Messages;
+  loggingOut: boolean;
+  logoutError: string | null;
   onModeChange: (mode: Mode) => void;
   onLogout: () => void;
   children: ReactNode;
@@ -60,6 +62,8 @@ export function AppShell({
   stats,
   mode,
   messages,
+  loggingOut,
+  logoutError,
   onModeChange,
   onLogout,
   children,
@@ -68,6 +72,7 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode | null>(null);
   const asideRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -79,6 +84,16 @@ export function AppShell({
 
   useEffect(() => {
     setDrawerOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    // A route change replaces the page content, which drops keyboard focus to
+    // `<body>`: the next Tab would start at the sidebar again. Move it to the
+    // content instead, but only when nothing else claimed focus — a sidebar
+    // click keeps its own focus, and `?create=1` focuses the form field.
+    if (document.activeElement === document.body) {
+      mainRef.current?.focus();
+    }
   }, [pathname]);
 
   useEffect(() => {
@@ -260,6 +275,7 @@ export function AppShell({
             <button
               type="button"
               onClick={onLogout}
+              disabled={loggingOut}
               aria-label={messages.shell.logout}
               title={messages.shell.logout}
               className="sf-foot-icon-btn sf-foot-logout"
@@ -267,6 +283,11 @@ export function AppShell({
               <LogOutIcon size={15} />
             </button>
           </div>
+          {logoutError ? (
+            <div className="sf-foot-error" role="alert">
+              {logoutError}
+            </div>
+          ) : null}
         </div>
       </aside>
 
@@ -330,7 +351,9 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="sf-content">{children}</main>
+        <main ref={mainRef} tabIndex={-1} className="sf-content">
+          {children}
+        </main>
 
         <CommandPalette
           open={paletteMode !== null}

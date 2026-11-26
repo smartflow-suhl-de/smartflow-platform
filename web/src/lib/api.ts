@@ -15,6 +15,12 @@ import type {
 
 const API_PREFIX = '/api/v1';
 
+/**
+ * Upper bound for a single request. Without it a hanging `/auth/confirm` would
+ * leave the login spinner running forever.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -213,6 +219,36 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * True for an aborted request.
+ *
+ * Checks `name` instead of `instanceof DOMException`: the rejection can arrive
+ * as a `DOMException` or as the plain `Error` an `AbortSignal` reason carries,
+ * and both must stay recognisable for the effects that ignore aborts.
+ */
+export function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+/**
+ * Normalise anything `fetch` threw into an error the callers understand.
+ *
+ * A caller abort stays untouched: effects abort on unmount and must be able to
+ * ignore the rejection instead of rendering it as a failure. Everything else —
+ * including the `TimeoutError` from `AbortSignal.timeout` — means the API did
+ * not answer and becomes a `network_error`.
+ */
+export function translateFetchError(error: unknown): unknown {
+  if (isAbortError(error)) return error;
+  return new ApiError(0, 'network_error', 'Network request failed');
+}
+
+/** Combined caller signal and request timeout, or just the timeout. */
+function requestSignal(signal: AbortSignal | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 async function requestJson(path: string, options: RequestOptions = {}): Promise<unknown> {
   const headers: Record<string, string> = { accept: 'application/json' };
   if (options.body !== undefined) {
@@ -220,34 +256,40 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
   }
 
   let response: Response;
+  let text: string;
+  // `fetch` and the body read share one `try`: an abort while the body streams
+  // in rejects `response.text()` too, and used to surface as a raw TypeError.
   try {
     response = await fetch(`${API_PREFIX}${path}`, {
       method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
       headers,
       credentials: 'same-origin',
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: options.signal,
+      signal: requestSignal(options.signal),
     });
+    text = await response.text();
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw error;
-    }
-    throw new ApiError(0, 'network_error', 'Network request failed');
+    throw translateFetchError(error);
   }
 
-  const text = await response.text();
   let payload: unknown = null;
+  let parsed = true;
   if (text.length > 0) {
     try {
       payload = JSON.parse(text);
     } catch {
-      payload = { error: { code: 'invalid_body', message: text.slice(0, 200) } };
+      parsed = false;
     }
   }
 
   if (!response.ok) {
     if (response.status === 401 && options.notifyUnauthorized !== false) {
       unauthorizedHandler?.();
+    }
+    // A non-JSON body (an HTML error page from a proxy, a truncated stream)
+    // must not become the user-facing message.
+    if (!parsed) {
+      throw new ApiError(response.status, `http_${response.status}`, `HTTP ${response.status}`);
     }
     throw extractApiError(response.status, payload);
   }
