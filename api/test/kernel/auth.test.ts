@@ -407,18 +407,64 @@ test('rate limits key IPv6 senders by /64 and cover setup', async (t) => {
   });
   assert.equal(other.statusCode, 401);
 
-  // Setup has its own bucket and is limited too (valid bodies, one /64).
+  // Setup is limited too: a valid body reaches the limiter. Each attempt creates
+  // nothing only because the operator already exists, so it answers 409 until 429.
+  await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/setup', payload: SETUP });
   const setupCodes: number[] = [];
-  for (let i = 1; i <= 3; i += 1) {
+  let setupRetry: unknown;
+  for (let i = 1; i <= 4; i += 1) {
     const r = await ctx.app.inject({
       method: 'POST',
       url: '/api/v1/auth/setup',
-      headers: { 'x-forwarded-for': `2001:db8:ffff:1::${i}` },
-      payload: { email: 'bad', name: 'x', password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+      headers: { 'x-forwarded-for': '2001:db8:ffff:1::1' },
+      payload: SETUP,
     });
     setupCodes.push(r.statusCode);
+    setupRetry = r.headers['retry-after'];
   }
-  assert.deepEqual(setupCodes, [422, 422, 422], 'validation runs before the limiter');
+  assert.deepEqual(setupCodes, [409, 409, 429, 429]);
+  assert.equal(setupRetry, '60');
+});
+
+test('login Retry-After follows the bucket that tripped', async (t) => {
+  // Per-IP budget 2 (60 s) is never reached: ten different addresses, one account.
+  const ctx = await createTestApp({ SF_RATE_LIMIT_ENABLED: '1', SF_RATE_LIMIT_LOGIN: '2' });
+  t.after(() => ctx.close());
+  await ctx.app.inject({ method: 'POST', url: '/api/v1/auth/setup', payload: SETUP });
+  const seen: Array<{ code: number; retry: unknown }> = [];
+  for (let i = 1; i <= 8; i += 1) {
+    const r = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/login',
+      payload: { email: TEST_EMAIL, password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+      remoteAddress: `10.1.0.${i}`,
+    });
+    seen.push({ code: r.statusCode, retry: r.headers['retry-after'] });
+  }
+  // Email budget is 2 * 3 = 6 per 15 min; attempts 7 and 8 trip it.
+  assert.deepEqual(
+    seen.map((x) => x.code),
+    [401, 401, 401, 401, 401, 401, 429, 429],
+  );
+  const retry = Number(seen[6]?.retry);
+  assert.ok(retry > 60 && retry <= 900, `Retry-After ${retry} must reflect the 15 min window`);
+
+  // The per-IP bucket still answers with its own, short window.
+  const ip = await createTestApp({ SF_RATE_LIMIT_ENABLED: '1', SF_RATE_LIMIT_LOGIN: '1' });
+  t.after(() => ip.close());
+  await ip.app.inject({ method: 'POST', url: '/api/v1/auth/setup', payload: SETUP });
+  await ip.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    payload: { email: TEST_EMAIL, password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+  });
+  const second = await ip.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    payload: { email: TEST_EMAIL, password: 'SI_SECRET_PASSWORD_9WM0PL2K' },
+  });
+  assert.equal(second.statusCode, 429);
+  assert.ok(Number(second.headers['retry-after']) <= 60);
 });
 
 test('normalizeIp unpacks IPv4-mapped IPv6 and cuts IPv6 to /64', () => {
@@ -427,4 +473,9 @@ test('normalizeIp unpacks IPv4-mapped IPv6 and cuts IPv6 to /64', () => {
   assert.equal(normalizeIp('2001:db8:abcd:1::5'), '2001:db8:abcd:1::/64');
   assert.equal(normalizeIp('2001:0db8:abcd:0001:ffff:ffff:ffff:ffff'), '2001:db8:abcd:1::/64');
   assert.equal(normalizeIp('::1'), '0:0:0:0::/64');
+  assert.equal(normalizeIp('fe80::1%eth0'), 'fe80:0:0:0::/64');
+  assert.equal(normalizeIp('2001:DB8:AbCd:1::5'), '2001:db8:abcd:1::/64');
+  assert.equal(normalizeIp('2001:db8::1'), '2001:db8:0:0::/64');
+  assert.equal(normalizeIp('::FFFF:203.0.113.7'), '203.0.113.7');
+  assert.equal(normalizeIp('::ffff:7f00:1'), '127.0.0.1');
 });
