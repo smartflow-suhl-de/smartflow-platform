@@ -1,0 +1,37 @@
+# Overlay: Testzugang über einen eigenen Tailnet-Knoten. Nur tailnet-intern,
+# kein Funnel, keine veröffentlichten Ports, kein Produktivzugang.
+#
+#   docker compose -f compose.yaml -f compose.tailscale.yaml up -d
+#
+# Der Knoten läuft als eigener Container im Compose-Netz und erreicht die App
+# über den Dienstnamen. Bewusst kein `network_mode: service:app`: das geteilte
+# Namespace ginge mit jedem Neustart von `app` verloren.
+#
+# Nur `SF_TS_*` aus `.env` verwenden, nie `TS_*` aus der Host-Umgebung lesen:
+# dort können `TS_HOSTNAME`/`TS_AUTHKEY` global gesetzt sein und würden den
+# Knoten umbenennen.
+
+services:
+  tailscale:
+    build:
+      context: ./deploy/tailscale
+    image: smartflow-platform-tailscale:local
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      TS_USERSPACE: 'true'
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_HOSTNAME: ${SF_TS_NODE_NAME:-smartflow-platform}
+      TS_SERVE_CONFIG: /config/serve.json
+      # Optional; leer, wenn der Knoten-Zustand im Volume schon autorisiert ist.
+      TS_AUTHKEY: ${SF_TS_AUTHKEY:-}
+      TS_EXTRA_ARGS: --accept-dns=false --accept-routes=false
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+
+volumes:
+  tailscale_state:
+    # Fester Name: ein bereits autorisierter Knoten-Zustand wird wiederverwendet.
+    name: ${SF_TS_STATE_VOLUME:-smartflow-ts-state}

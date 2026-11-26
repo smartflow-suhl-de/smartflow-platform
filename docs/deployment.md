@@ -62,6 +62,26 @@ curl -k https://localhost/api/v1/health
 Selbstsignierte Zertifikate lassen `curl` ohne `-k` scheitern; das ist erwartet und kein
 Fehler der Anwendung.
 
+## Testzugang über Tailscale
+
+Optionales Overlay `compose.tailscale.yaml`: ein eigener Tailnet-Knoten als Dienst, der
+die App per HTTPS (Tailscale-Zertifikat) unter `https://<SF_TS_NODE_NAME>.<tailnet>.ts.net/`
+erreichbar macht.
+
+```bash
+docker compose -f compose.yaml -f compose.tailscale.yaml up -d
+curl https://smartflow-platform.<tailnet>.ts.net/api/v1/health
+```
+
+- **Optional (`.env`):** `SF_TS_NODE_NAME` (Standard `smartflow-platform`), `SF_TS_AUTHKEY`
+  (nur beim ersten Start eines neuen Knotens), `SF_TS_STATE_VOLUME` (Standard `smartflow-ts-state`).
+  Ist der Knoten-Zustand im Volume schon autorisiert, ist kein Auth-Key nötig.
+- **Tailnet-intern, kein Produktivzugang:** kein Funnel (`AllowFunnel` ist `false`), keine
+  veröffentlichten Ports, kein DNS-Eintrag außerhalb des Tailnets. `SF_DOMAIN` und
+  `SF_PUBLIC_URL` bleiben unberührt; produktiv bleibt Caddy der Zugang.
+- Nur `SF_TS_*` aus `.env` gelten; globale `TS_*`-Variablen des Hosts werden nicht gelesen.
+- Ohne das Overlay (`-f compose.yaml` allein) ändert sich nichts.
+
 ## Update
 
 ```bash
