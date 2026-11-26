@@ -35,7 +35,12 @@ services:
     # Der Healthcheck stammt aus dem Image und trägt `depends_on` unten.
 
   caddy:
-    image: caddy:2-alpine
+    # Gebaut statt bind-gemountet: ein Bind-Mount einer einzelnen Datei hängt am
+    # Host-Pfad und an den Mount-Fähigkeiten des Daemons und scheitert auf Hosts
+    # mit User-Namespaces. Preis dafür: ein Rebuild, wenn sich das Caddyfile ändert.
+    build:
+      context: ./deploy/caddy
+    image: smartflow-platform-caddy:local
     restart: unless-stopped
     depends_on:
       app:
@@ -49,7 +54,6 @@ services:
       - '443:443'
       - '443:443/udp'
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
 

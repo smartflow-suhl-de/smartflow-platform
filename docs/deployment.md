@@ -8,8 +8,10 @@ mehr dazu unter [Grenzen](#grenzen).
 
 - Docker mit Compose v2 (`docker compose version`)
 - Ein Host, auf dem Port `80` und `443` frei sind
-- Eine Domain, die auf den Host zeigt — für automatisches HTTPS. Ohne öffentliche
-  Domain: `tls internal` im `Caddyfile` aktivieren (siehe Kommentar dort); Caddy
+- Eine Domain, die auf den Host zeigt — für automatisches HTTPS. Das Caddyfile liegt
+  unter `deploy/caddy/Caddyfile` und wird in ein eigenes Image gebacken: eine Änderung
+  daran braucht `docker compose up -d --build caddy`. Ohne öffentliche
+  Domain: `tls internal` in `deploy/caddy/Caddyfile` aktivieren (siehe Kommentar dort); Caddy
   stellt dann ein Zertifikat aus der eigenen CA aus, die Clients müssen deren
   Wurzelzertifikat einmalig importieren.
 
@@ -40,8 +42,8 @@ smartflow_data`), nicht im Image. Ein `docker compose down` ohne `-v` behält si
 
 ```bash
 printf 'SF_DOMAIN=localhost\nSF_OPERATOR_EMAIL=ops@example.com\n' > .env
-# im Caddyfile zusätzlich "tls internal" in den Site-Block schreiben
-docker compose up -d --build
+# in deploy/caddy/Caddyfile zusätzlich "tls internal" in den Site-Block schreiben
+docker compose up -d --build       # baut auch das Caddy-Image neu
 curl -k https://localhost/api/v1/health
 ```
 
