@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { Button } from './components/ui';
+import { PublicLayout, PublicUnavailable } from './components/PublicLayout';
 import { ToastProvider } from './components/Toast';
 import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './lib/api';
 import { sessionProbeOutcome } from './lib/auth-flow';
 import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
+import { matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { HelpPage } from './pages/Help';
@@ -24,7 +26,24 @@ type SessionState =
   | { kind: 'unavailable' }
   | { kind: 'signed_in'; auth: AuthMe };
 
+/**
+ * Public paths render before any session work: no probe, no health call, no
+ * 401 handler. The signed-in app below only mounts for every other path.
+ */
 export function App() {
+  const { pathname } = useRoute();
+  const match = matchPublicRoute(normalizePath(pathname));
+  if (!match) return <SessionApp />;
+
+  const locale = storedLocale();
+  return (
+    <PublicLayout locale={locale}>
+      {match.route ? match.route.render(match.params) : <PublicUnavailable locale={locale} />}
+    </PublicLayout>
+  );
+}
+
+function SessionApp() {
   const { pathname: rawPathname, search } = useRoute();
   // Route matching never sees a trailing or doubled slash, so `/tenants/`
   // resolves to the tenants view instead of the NotFound page.
