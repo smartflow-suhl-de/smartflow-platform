@@ -1,0 +1,656 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-25T22:43:32.651Z",
+  "title": "Design System: SmartFlow Plattform",
+  "extensions": {
+    "colorMeta": {
+      "paper": {
+        "role": "neutral",
+        "displayName": "Warmes Papier",
+        "canonical": "#f2efe7",
+        "tonalRamp": [
+          "#12161a",
+          "#2b312f",
+          "#464d48",
+          "#636a62",
+          "#83897f",
+          "#a5a99c",
+          "#c9c8b9",
+          "#e3ddcf",
+          "#f2efe7"
+        ]
+      },
+      "paper-raised": {
+        "role": "neutral",
+        "displayName": "Papier erhöht",
+        "canonical": "#faf8f2",
+        "tonalRamp": [
+          "#141310",
+          "#2e2c26",
+          "#4a463c",
+          "#676154",
+          "#867f6f",
+          "#a79f8d",
+          "#c9c1ad",
+          "#e6e0d2",
+          "#faf8f2"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Fläche",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#121212",
+          "#2c2c2c",
+          "#474747",
+          "#636363",
+          "#808080",
+          "#9e9e9e",
+          "#bfbfbf",
+          "#dedede",
+          "#ffffff"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Tinte",
+        "canonical": "#12161a",
+        "tonalRamp": [
+          "#12161a",
+          "#2a3036",
+          "#434a50",
+          "#5d656b",
+          "#788087",
+          "#959da3",
+          "#b4bbc0",
+          "#d6dade",
+          "#eef0ea"
+        ]
+      },
+      "ink-soft": {
+        "role": "neutral",
+        "displayName": "Tinte weich",
+        "canonical": "#454c52",
+        "tonalRamp": [
+          "#161b1f",
+          "#2c3339",
+          "#454c52",
+          "#5f676d",
+          "#7a8288",
+          "#979ea4",
+          "#b6bcc1",
+          "#d7dbde",
+          "#eef0ea"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Tinte gedämpft",
+        "canonical": "#5f676d",
+        "tonalRamp": [
+          "#191d20",
+          "#30363a",
+          "#4a5157",
+          "#656d73",
+          "#81898f",
+          "#9ea5ab",
+          "#bcc2c6",
+          "#dadddf",
+          "#eef0ea"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Haarlinie",
+        "canonical": "#ddd7c8",
+        "tonalRamp": [
+          "#211f19",
+          "#38352c",
+          "#524e42",
+          "#6c6759",
+          "#88826f",
+          "#a69f8b",
+          "#c6bfa9",
+          "#e2dccd",
+          "#f5f2ea"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Linie stark",
+        "canonical": "#b9b2a0",
+        "tonalRamp": [
+          "#1d1b15",
+          "#34312a",
+          "#4e4a40",
+          "#696456",
+          "#857f6c",
+          "#a39c87",
+          "#c1baa5",
+          "#ded8c8",
+          "#f2eee4"
+        ]
+      },
+      "cobalt": {
+        "role": "primary",
+        "displayName": "Kobalt",
+        "canonical": "#1e3bff",
+        "tonalRamp": [
+          "#060d33",
+          "#0d1a66",
+          "#1427a6",
+          "#1a32d6",
+          "#1e3bff",
+          "#556eff",
+          "#8696ff",
+          "#b7c0ff",
+          "#e2e6ff"
+        ]
+      },
+      "cobalt-deep": {
+        "role": "primary",
+        "displayName": "Kobalt tief",
+        "canonical": "#1428b8",
+        "tonalRamp": [
+          "#050926",
+          "#0a1248",
+          "#0f1c74",
+          "#12239a",
+          "#1428b8",
+          "#3c54d3",
+          "#6f85e6",
+          "#a6b3f2",
+          "#dfe4fb"
+        ]
+      },
+      "signal": {
+        "role": "secondary",
+        "displayName": "Signal",
+        "canonical": "#ff5a1f",
+        "tonalRamp": [
+          "#2b0d02",
+          "#521b06",
+          "#7f2a0b",
+          "#b23c11",
+          "#ff5a1f",
+          "#ff7f4f",
+          "#ffa583",
+          "#ffcbb6",
+          "#ffe9e0"
+        ]
+      },
+      "good": {
+        "role": "tertiary",
+        "displayName": "Grün bestätigt",
+        "canonical": "#0b7a53",
+        "tonalRamp": [
+          "#032018",
+          "#06392a",
+          "#08563f",
+          "#0a6a4a",
+          "#0b7a53",
+          "#1f9d70",
+          "#4dbe94",
+          "#8ad9bc",
+          "#dff4eb"
+        ]
+      },
+      "warn": {
+        "role": "tertiary",
+        "displayName": "Gelb-Ocker",
+        "canonical": "#7a4a00",
+        "tonalRamp": [
+          "#201202",
+          "#3a2204",
+          "#573306",
+          "#6a4005",
+          "#7a4a00",
+          "#a46510",
+          "#c98637",
+          "#e3b077",
+          "#f6e4c8"
+        ]
+      },
+      "bad": {
+        "role": "tertiary",
+        "displayName": "Rot bestätigt",
+        "canonical": "#bb2d1e",
+        "tonalRamp": [
+          "#2b0704",
+          "#4c0f09",
+          "#731810",
+          "#9c2418",
+          "#bb2d1e",
+          "#d95040",
+          "#e97f72",
+          "#f2b1a7",
+          "#fbe3df"
+        ]
+      },
+      "dark-paper": {
+        "role": "neutral",
+        "displayName": "Dark Paper",
+        "canonical": "#0d1013",
+        "tonalRamp": [
+          "#0d1013",
+          "#0b0e10",
+          "#090c0e",
+          "#08090b",
+          "#060708",
+          "#040506",
+          "#020303",
+          "#010101",
+          "#0d1013"
+        ]
+      },
+      "dark-paper-raised": {
+        "role": "neutral",
+        "displayName": "Dark Raised",
+        "canonical": "#14181c",
+        "tonalRamp": [
+          "#14181c",
+          "#111518",
+          "#0e1114",
+          "#0c0e10",
+          "#090b0c",
+          "#060708",
+          "#030404",
+          "#010102",
+          "#14181c"
+        ]
+      },
+      "dark-surface": {
+        "role": "neutral",
+        "displayName": "Dark Surface",
+        "canonical": "#171c21",
+        "tonalRamp": [
+          "#171c21",
+          "#14181c",
+          "#111418",
+          "#0d1013",
+          "#0a0c0f",
+          "#07080a",
+          "#040405",
+          "#010202",
+          "#171c21"
+        ]
+      },
+      "dark-ink": {
+        "role": "neutral",
+        "displayName": "Dark Ink",
+        "canonical": "#eef0ea",
+        "tonalRamp": [
+          "#eef0ea",
+          "#cdcec9",
+          "#abada8",
+          "#8a8b88",
+          "#696a67",
+          "#474846",
+          "#262625",
+          "#0e0e0e",
+          "#eef0ea"
+        ]
+      },
+      "dark-ink-soft": {
+        "role": "neutral",
+        "displayName": "Dark Ink Soft",
+        "canonical": "#b5bcc2",
+        "tonalRamp": [
+          "#b5bcc2",
+          "#9ca2a7",
+          "#82878c",
+          "#696d71",
+          "#505355",
+          "#36383a",
+          "#1d1e1f",
+          "#0b0b0c",
+          "#b5bcc2"
+        ]
+      },
+      "dark-ink-muted": {
+        "role": "neutral",
+        "displayName": "Dark Ink Muted",
+        "canonical": "#98a1a8",
+        "tonalRamp": [
+          "#98a1a8",
+          "#838a90",
+          "#6d7479",
+          "#585d61",
+          "#43474a",
+          "#2e3032",
+          "#181a1b",
+          "#090a0a",
+          "#98a1a8"
+        ]
+      },
+      "dark-line": {
+        "role": "neutral",
+        "displayName": "Dark Line",
+        "canonical": "#262c31",
+        "tonalRamp": [
+          "#262c31",
+          "#21262a",
+          "#1b2023",
+          "#161a1c",
+          "#111316",
+          "#0b0d0f",
+          "#060708",
+          "#020303",
+          "#262c31"
+        ]
+      },
+      "dark-line-strong": {
+        "role": "neutral",
+        "displayName": "Dark Line Strong",
+        "canonical": "#3b434a",
+        "tonalRamp": [
+          "#3b434a",
+          "#333a40",
+          "#2a3035",
+          "#22272b",
+          "#1a1d21",
+          "#121416",
+          "#090b0c",
+          "#040404",
+          "#3b434a"
+        ]
+      },
+      "dark-cobalt": {
+        "role": "primary",
+        "displayName": "Kobalt Hell",
+        "canonical": "#6d84ff",
+        "tonalRamp": [
+          "#6d84ff",
+          "#5e72db",
+          "#4e5fb8",
+          "#3f4d94",
+          "#303a70",
+          "#21284d",
+          "#111529",
+          "#07080f",
+          "#6d84ff"
+        ]
+      },
+      "dark-cobalt-deep": {
+        "role": "primary",
+        "displayName": "Kobalt Hell tief",
+        "canonical": "#4b62ff",
+        "tonalRamp": [
+          "#4b62ff",
+          "#4154db",
+          "#3647b8",
+          "#2c3994",
+          "#212b70",
+          "#171d4d",
+          "#0c1029",
+          "#05060f",
+          "#4b62ff"
+        ]
+      },
+      "dark-signal": {
+        "role": "secondary",
+        "displayName": "Signal Hell",
+        "canonical": "#ff7a45",
+        "tonalRamp": [
+          "#ff7a45",
+          "#db693b",
+          "#b85832",
+          "#944728",
+          "#70361e",
+          "#4d2515",
+          "#29140b",
+          "#0f0704",
+          "#ff7a45"
+        ]
+      },
+      "dark-good": {
+        "role": "tertiary",
+        "displayName": "Grün hell",
+        "canonical": "#3ddb9f",
+        "tonalRamp": [
+          "#3ddb9f",
+          "#34bc89",
+          "#2c9e72",
+          "#237f5c",
+          "#1b6046",
+          "#124230",
+          "#0a2319",
+          "#040d0a",
+          "#3ddb9f"
+        ]
+      },
+      "dark-warn": {
+        "role": "tertiary",
+        "displayName": "Gelb-Ocker hell",
+        "canonical": "#f0b447",
+        "tonalRamp": [
+          "#f0b447",
+          "#ce9b3d",
+          "#ad8233",
+          "#8b6829",
+          "#6a4f1f",
+          "#483615",
+          "#261d0b",
+          "#0e0b04",
+          "#f0b447"
+        ]
+      },
+      "dark-bad": {
+        "role": "tertiary",
+        "displayName": "Rot hell",
+        "canonical": "#ff6b57",
+        "tonalRamp": [
+          "#ff6b57",
+          "#db5c4b",
+          "#b84d3f",
+          "#943e32",
+          "#702f26",
+          "#4d201a",
+          "#29110e",
+          "#0f0605",
+          "#ff6b57"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Ein Seitentitel pro Seite, 36 px, mobil 30 px."
+      },
+      "metric": {
+        "displayName": "Kennzahl",
+        "purpose": "Zahlen in KPI-Kacheln, 24 px Bricolage."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Kartentitel, 17 px."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Listeneinträge und Dialogtitel, 15 px."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Fließtext und Tabellenzellen, 14 px Schibsted."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Rubriken und Spaltenköpfe, 11 px Mono, Großbuchstaben."
+      },
+      "data": {
+        "displayName": "Daten",
+        "purpose": "Zeitstempel, IDs, Codes, 12 px Mono tabellarisch."
+      }
+    },
+    "shadows": [
+      {
+        "name": "overlay",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Modal, Sheet, Popover — nie an Karten."
+      },
+      {
+        "name": "menu",
+        "value": "0 20px 25px -5px rgb(0 0 0 / 0.1)",
+        "purpose": "Dropdown und Select-Liste."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "ease-out",
+        "purpose": "Farb- und Zustandswechsel, 150 ms."
+      },
+      {
+        "name": "slide-up",
+        "value": "slide-up 160ms ease-out both",
+        "purpose": "Einblenden von Karteninhalten; respektiert prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Brand Logo",
+      "kind": "custom",
+      "description": "SF-Signet (3 px Radius, Tinte auf Papier) neben zweizeiliger Wortmarke SMARTFLOW / Plattform.",
+      "html": "<div class=\"ds-brand\"><div class=\"ds-brand-mark\">SF</div><div><div class=\"ds-brand-eyebrow\">SmartFlow</div><div class=\"ds-brand-name\">Plattform</div></div></div>",
+      "css": ".ds-brand { display: inline-flex; align-items: center; gap: 10px; } .ds-brand-mark { display: flex; width: 32px; height: 32px; align-items: center; justify-content: center; border-radius: 3px; background: var(--color-ink, #12161a); color: var(--color-paper, #f2efe7); font-family: var(--font-display, system-ui); font-size: 14px; font-weight: 700; line-height: 1; } .ds-brand-eyebrow { font-family: var(--font-mono, ui-monospace); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-ink-muted, #5f676d); line-height: 1.25; } .ds-brand-name { font-family: var(--font-display, system-ui); font-size: 17px; font-weight: 600; line-height: 1; color: var(--color-ink, #12161a); }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Der dunkelste Knopf ist der wichtigste; höchstens einer pro Fläche.",
+      "html": "<button class=\"ds-btn-primary\">Anlegen</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 3px; border: 1px solid var(--color-ink, #12161a); background: var(--color-ink, #12161a); color: var(--color-paper, #f2efe7); font-family: var(--font-sans, system-ui); font-size: 13px; font-weight: 500; cursor: pointer; transition: background 150ms ease-out; } .ds-btn-primary:hover { background: var(--color-ink-soft, #454c52); } .ds-btn-primary:focus-visible { outline: 2px solid var(--color-cobalt, #1e3bff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Standardaktion in weißen Flächen; Hover verstärkt nur die Linie.",
+      "html": "<button class=\"ds-btn-secondary\">Aktualisieren</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 3px; border: 1px solid var(--color-line, #ddd7c8); background: var(--color-surface, #ffffff); color: var(--color-ink, #12161a); font-family: var(--font-sans, system-ui); font-size: 13px; font-weight: 500; cursor: pointer; transition: background 150ms ease-out, border-color 150ms ease-out; } .ds-btn-secondary:hover { border-color: var(--color-line-strong, #b9b2a0); background: var(--color-paper-raised, #faf8f2); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--color-cobalt, #1e3bff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Kopfzeilen und Schließen; nur bei Hover bekommt sie Fläche.",
+      "html": "<button class=\"ds-btn-ghost\" aria-label=\"Schließen\">×</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; height: 36px; padding: 0 10px; border-radius: 3px; border: 1px solid transparent; background: transparent; color: var(--color-ink-soft, #454c52); font-size: 13px; cursor: pointer; transition: background 150ms ease-out; } .ds-btn-ghost:hover { background: rgb(18 22 26 / 0.05); color: var(--color-ink, #12161a); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--color-cobalt, #1e3bff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Zustandswort in Mono, Ton bestimmt Rahmen, Fläche und Text.",
+      "html": "<span class=\"ds-badge ds-badge-good\">gesund</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 2px; border: 1px solid var(--color-line, #ddd7c8); background: var(--color-paper-raised, #faf8f2); color: var(--color-ink-soft, #454c52); font-family: var(--font-mono, ui-monospace); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; } .ds-badge-good { border-color: rgb(11 122 83 / 0.3); background: rgb(11 122 83 / 0.08); color: var(--color-good, #0b7a53); } .ds-badge-bad { border-color: rgb(187 45 30 / 0.3); background: rgb(187 45 30 / 0.08); color: var(--color-bad, #bb2d1e); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Weiße Fläche über Papier, 1-px-Linie, kein Schatten.",
+      "html": "<section class=\"ds-card\"><div class=\"ds-card-head\"><div class=\"ds-card-eyebrow\">Bestand</div><h2 class=\"ds-card-title\">Kunden</h2></div><div class=\"ds-card-body\">Inhalt</div></section>",
+      "css": ".ds-card { border: 1px solid var(--color-line, #ddd7c8); border-radius: 4px; background: var(--color-surface, #ffffff); color: var(--color-ink, #12161a); } .ds-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--color-line, #ddd7c8); padding: 12px 16px; } .ds-card-eyebrow { font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-ink-muted, #5f676d); } .ds-card-title { margin: 2px 0 0; font-family: var(--font-display, system-ui); font-size: 17px; font-weight: 600; line-height: 1.25; letter-spacing: -0.015em; } .ds-card-body { padding: 16px; font-size: 13px; line-height: 1.5; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Felder sind weiß, scharf und bekommen bei Fokus einen Kobaltrahmen.",
+      "html": "<input class=\"ds-input\" placeholder=\"Firma\" aria-label=\"Firma\" />",
+      "css": ".ds-input { height: 36px; width: 100%; border-radius: 3px; border: 1px solid var(--color-line, #ddd7c8); background: var(--color-surface, #ffffff); padding: 0 12px; color: var(--color-ink, #12161a); font-family: var(--font-sans, system-ui); font-size: 13px; } .ds-input::placeholder { color: var(--color-ink-muted, #5f676d); } .ds-input:focus { border-color: var(--color-cobalt, #1e3bff); outline: none; box-shadow: 0 0 0 2px rgb(30 59 255 / 0.15); }"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "28 px hoch; der aktive Eintrag ist der einzige dunkle Balken der Sidebar.",
+      "html": "<a class=\"ds-nav-item ds-nav-item-active\" href=\"#\"><span class=\"ds-nav-dot\"></span>Gesundheit</a>",
+      "css": ".ds-nav-item { display: flex; align-items: center; gap: 10px; height: 28px; padding: 0 8px; border-radius: 3px; color: var(--color-ink-soft, #454c52); font-family: var(--font-sans, system-ui); font-size: 13px; text-decoration: none; transition: background 150ms ease-out; } .ds-nav-item:hover { background: rgb(18 22 26 / 0.05); color: var(--color-ink, #12161a); } .ds-nav-item-active { background: var(--color-ink, #12161a); color: var(--color-paper, #f2efe7); } .ds-nav-dot { width: 15px; height: 2px; background: currentColor; }"
+    },
+    {
+      "name": "KPI Tile",
+      "kind": "custom",
+      "description": "Kennzahl mit Label und Hinweis; die Zahl trägt die Tonfarbe des Zustands.",
+      "html": "<div class=\"ds-kpi\"><div class=\"ds-kpi-label\">Gesundheit</div><div class=\"ds-kpi-value\">gesund</div><div class=\"ds-kpi-hint\">letzte Prüfung 21:04</div></div>",
+      "css": ".ds-kpi { border: 1px solid var(--color-line, #ddd7c8); border-radius: 4px; background: var(--color-surface, #ffffff); padding: 14px 16px; } .ds-kpi-label { font-family: var(--font-mono, ui-monospace); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-ink-muted, #5f676d); } .ds-kpi-value { margin-top: 8px; font-family: var(--font-display, system-ui); font-size: 24px; font-weight: 600; line-height: 1; letter-spacing: -0.03em; color: var(--color-good, #0b7a53); } .ds-kpi-hint { margin-top: 6px; font-size: 12px; color: var(--color-ink-muted, #5f676d); }"
+    },
+    {
+      "name": "Sidebar Footer",
+      "kind": "nav",
+      "description": "Zweizeilige Sidebar-Fußzeile: oben Nutzername (ink-soft) + Version (Mono 11, ink-muted), darunter 28-px-Iconzeile mit Einstellungen, Hilfe links und Abmelden rechts.",
+      "html": "<div class=\"ds-sidebar-foot\"><div class=\"ds-foot-meta\"><span class=\"ds-foot-user\" title=\"carsten@smartflow-suhl.de\">Carsten Bröckert</span><span class=\"ds-foot-ver\">v0.1.9</span></div><div class=\"ds-foot-bar\"><a class=\"ds-foot-icon\" href=\"#\" aria-label=\"Einstellungen\" title=\"Einstellungen\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z\"/></svg></a><a class=\"ds-foot-icon\" href=\"#\" aria-label=\"Hilfe\" title=\"Hilfe\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3\"/><line x1=\"12\" y1=\"17\" x2=\"12.01\" y2=\"17\"/></svg></a><button class=\"ds-foot-icon ds-foot-logout\" type=\"button\" aria-label=\"Abmelden\" title=\"Abmelden\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\"/><polyline points=\"16 17 21 12 16 7\"/><line x1=\"21\" y1=\"12\" x2=\"9\" y2=\"12\"/></svg></button></div></div>",
+      "css": ".ds-sidebar-foot { width: 230px; border-top: 1px solid var(--color-line, #ddd7c8); background: var(--color-paper-raised, #faf8f2); padding: 8px; font-family: var(--font-sans, system-ui); } .ds-foot-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 4px 8px; margin-bottom: 4px; } .ds-foot-user { font-size: 12px; color: var(--color-ink-soft, #454c52); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-foot-ver { flex: none; font-family: var(--font-mono, ui-monospace); font-size: 11px; font-weight: 400; color: var(--color-ink-muted, #5f676d); font-variant-numeric: tabular-nums; } .ds-foot-bar { display: flex; align-items: center; gap: 4px; } .ds-foot-icon { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 3px; border: none; background: transparent; color: var(--color-ink-muted, #5f676d); cursor: pointer; text-decoration: none; transition: background 150ms ease-out, color 150ms ease-out; } .ds-foot-icon:hover { background: rgb(18 22 26 / 0.05); color: var(--color-ink, #12161a); } .ds-foot-icon:focus-visible { outline: 2px solid var(--color-cobalt, #1e3bff); outline-offset: 2px; } .ds-foot-logout { margin-left: auto; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Das Instrument",
+    "overview": "Die Plattform ist ein Messgerät, kein Schaufenster. Jede Fläche beantwortet eine Frage des Betreibers: Was läuft, was braucht Aufmerksamkeit, was ist zuletzt passiert. Dichte ist erwünscht, Unruhe nicht — deshalb trägt warmes Papier die Fläche, fast schwarze Tinte den Text, und Farbe erscheint nur dort, wo sie eine Bedeutung hat.\n\nDie Anmutung ist präzise und trocken: 1-px-Haarlinien statt Schatten, 3-px-Kanten an Bedienelementen, Mono-Ziffern für alles Messbare. Es gibt keine Dekoration, keine Verläufe, keine Hero-Flächen. Ein Diagramm, eine Tabelle und eine Zahl sind die legitimen Hauptdarsteller.\n\nDie Marke und das Designsystem sind direkt aus dem Vorgänger-Repository (SmartFlow Plattform) übernommen: dieselben Tokens, dieselben Schriften, dieselben Bausteine. Neue Plugins erfinden nichts, sie setzen das Instrument fort.",
+    "keyCharacteristics": [
+      "Warmes Papier als Grund, weiße Karten als Flächen, Haarlinien als Trennung (mit abgestimmtem Dunkelmodus).",
+      "Kobalt ist Auswahl und Aktion, Signal-Orange ist Warnung, Grün/Gelb/Rot sind Zustände.",
+      "Bricolage Grotesque für Überschriften und Kennzahlen, Schibsted Grotesk für Text, Martian Mono für Labels und Zahlen.",
+      "Scharfe, kleine Radien (2–5 px); Schatten nur über Overlays.",
+      "Feste Typo-Rampe ohne Zwischenstufen."
+    ],
+    "rules": [
+      {
+        "name": "Die Ein-Stimme-Regel",
+        "body": "Kobalt und Signal teilen sich nie dieselbe Fläche. Kobalt markiert, wo man ist oder was man tun kann; Signal markiert, was schiefgeht. Zusammen decken sie höchstens ein Zehntel des Bildschirms.",
+        "section": "colors"
+      },
+      {
+        "name": "Die Papier-Regel",
+        "body": "Papier ist Grund, Fläche ist Karte. Eine Karte auf einer Karte gibt es nicht; was enger zusammengehört, wird durch eine Haarlinie getrennt.",
+        "section": "colors"
+      },
+      {
+        "name": "Die Rampen-Regel",
+        "body": "Es gibt genau diese Stufen: 11 · 12 · 13 · 14 · 15 · 17 · 24 · 30 · 36 px. Keine Zwischenstufe, nichts unter 12 px außer Labels.",
+        "section": "typography"
+      },
+      {
+        "name": "Die Ziffern-Regel",
+        "body": "Alles, was sich ändert oder verglichen wird, steht in Martian Mono mit tabellarischen Ziffern. Fließtext bleibt Grotesk.",
+        "section": "typography"
+      },
+      {
+        "name": "Die Flach-Regel",
+        "body": "Flächen sind flach im Ruhezustand. Wer Tiefe braucht, ändert den Tonwert oder zieht eine Linie, nicht den Schatten.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do nutze die Tokens aus web/src/index.css (paper, ink, surface, line, cobalt, signal) und halte neue UI-Bausteine strikt im System. Ein neues Plugin erbt das Instrument, es gestaltet es nicht neu.",
+      "Do trenne mit 1-px-Haarlinien und Tonwert, nicht mit Schatten oder Farbflächen.",
+      "Do setze Zahlen, Zeiten und IDs in Martian Mono mit tabellarischen Ziffern.",
+      "Do halte die Typo-Rampe ein (11/12/13/14/15/17/24/30/36) und beschränke dich auf einen Display-Titel pro Seite.",
+      "Do nutze Kobalt für Auswahl und Fokus, Rot/Gelb/Grün nur für Zustände, Signal ausschließlich als Warnung."
+    ],
+    "donts": [
+      "Don't führe neue Farben, Verläufe, Schatten an Karten oder große Radien ein.",
+      "Don't baue Hero-Flächen, Marketing-Absätze oder dekorative Illustrationen; die Plattform ist ein Arbeitsgerät.",
+      "Don't verschachtele Karten in Karten oder lege Karten auf farbige Flächen.",
+      "Don't nutze Signalorange als Fläche für normale Aktionen oder als Akzent in Diagrammen ohne Warnbedeutung.",
+      "Don't erfinde neue Schriftgrößen, Pillen-Buttons oder Icon-only-Aktionen ohne aria-label."
+    ]
+  }
+}
