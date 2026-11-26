@@ -7,7 +7,7 @@ import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './l
 import { sessionProbeOutcome } from './lib/auth-flow';
 import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
-import { matchPublicRoute } from './lib/public-routes';
+import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { HelpPage } from './pages/Help';
@@ -32,13 +32,14 @@ type SessionState =
  */
 export function App() {
   const { pathname } = useRoute();
-  const match = matchPublicRoute(normalizePath(pathname));
-  if (!match) return <SessionApp />;
+  const path = normalizePath(pathname);
+  const match = matchPublicRoute(path);
+  if (!match && !isPublicNamespace(path)) return <SessionApp />;
 
   const locale = storedLocale();
   return (
     <PublicLayout locale={locale}>
-      {match.route ? match.route.render(match.params) : <PublicUnavailable locale={locale} />}
+      {match?.route ? match.route.render(match.params) : <PublicUnavailable locale={locale} />}
     </PublicLayout>
   );
 }

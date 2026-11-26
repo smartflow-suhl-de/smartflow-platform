@@ -64,7 +64,7 @@ export function PublicLayout({ locale, title, children }: PublicLayoutProps) {
     <div className="sf-login-shell">
       {/* React 19 moves these into the document head. */}
       <title>{documentTitle}</title>
-      <meta name="robots" content="noindex" />
+      <meta name="robots" content="noindex, nofollow" />
       <a href="#sf-main" className="sf-skip-link">
         {text.skip}
       </a>
