@@ -343,7 +343,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   } else if (/^\/llm\/[^/]+\/edit$/.test(pathname) && auth.user.role === 'operator') {
     content = (
       <LlmProviderFormPage
-        providerId={decodeURIComponent(pathname.split('/')[2] ?? '')}
+        providerId={safeDecode(pathname.split('/')[2] ?? '') ?? ''}
         locale={locale}
         messages={messages}
       />
@@ -351,7 +351,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   } else if (/^\/llm\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
     content = (
       <LlmProviderDetailPage
-        providerId={decodeURIComponent(pathname.split('/')[2] ?? '')}
+        providerId={safeDecode(pathname.split('/')[2] ?? '') ?? ''}
         locale={locale}
         messages={messages}
       />

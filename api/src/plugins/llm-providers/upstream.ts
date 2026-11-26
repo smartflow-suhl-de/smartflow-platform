@@ -1,4 +1,5 @@
 import type { InternalMessage, InternalToolCall, ResponseFormat } from './protocol.ts';
+import { assertResolvedTarget, isBlockedExtraHeader, loopbackAllowed } from './ssrf.ts';
 import {
   chatEndpoint,
   embedEndpoint,
@@ -47,11 +48,16 @@ function buildHeaders(
   apiKey: string | null,
   extraHeaders: Record<string, string>,
 ): Record<string, string> {
+  const authName = (provider.auth_header ?? 'Authorization').toLowerCase();
   const headers: Record<string, string> = {
     accept: 'application/json',
     'content-type': 'application/json',
-    ...extraHeaders,
   };
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    // A stored extra header must never shadow the secret or a managed header.
+    if (isBlockedExtraHeader(name) || name.toLowerCase() === authName) continue;
+    headers[name] = value;
+  }
   if (provider.auth_style === 'bearer' && apiKey) {
     headers[provider.auth_header ?? 'Authorization'] = `Bearer ${apiKey}`;
   } else if (provider.auth_style === 'header' && apiKey) {
@@ -68,18 +74,37 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-/** Reads the body once and refuses an oversized answer before parsing it. */
+/**
+ * Streams the body and stops at the cap, so a provider cannot make the process
+ * buffer an unbounded answer before the length is known.
+ */
 async function readBody(response: Response): Promise<string> {
-  const text = await response.text();
-  if (Buffer.byteLength(text, 'utf8') > MAX_BODY_BYTES) {
-    throw new UpstreamError(
-      'invalid_response',
-      'The provider response is too large.',
-      false,
-      'response over 4 MiB',
-    );
+  if (!response.body) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new UpstreamError(
+          'invalid_response',
+          'The provider response is too large.',
+          false,
+          'response over 4 MiB',
+        );
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join('');
+  } finally {
+    reader.releaseLock();
   }
-  return text;
 }
 
 async function request(
@@ -90,6 +115,12 @@ async function request(
   init: { method: 'GET' | 'POST'; body?: unknown },
   timeoutMs: number,
 ): Promise<unknown> {
+  try {
+    await assertResolvedTarget(new URL(url), loopbackAllowed());
+  } catch {
+    throw new UpstreamError('network', 'The provider target is not allowed.', false);
+  }
+
   let response: Response;
   try {
     response = await fetch(url, {

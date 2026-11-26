@@ -17,6 +17,10 @@ interface ProviderBody {
   extraHeaders?: Record<string, string>;
 }
 
+/** The suite stubs fetch, so the DNS resolver is skipped but literal IP rules stay. */
+process.env.NODE_ENV = 'test';
+process.env.SF_LLM_SKIP_DNS_CHECK = '1';
+
 const TEST_KEY = ['sk', 'test', '123456'].join('-');
 const SECOND_KEY = ['sk', 'test', 'second2'].join('-');
 const SECRET_HEADER = 'x-internal-token';
@@ -914,4 +918,218 @@ test('a rate-limited primary falls back to its configured model', async (t) => {
   };
   assert.equal(usage.model_id, fallbackModel.id);
   assert.equal(usage.status, 'ok');
+});
+
+test('a changed host cannot reuse the stored key or extra headers', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const rotatedKey = ['sk', 'test', 'rotated'].join('-');
+  const provider = await createProvider(ctx.app, cookie, {
+    name: 'Alt',
+    baseUrl: 'https://old.example/v1',
+    authStyle: 'bearer',
+    apiKey: TEST_KEY,
+    extraHeaders: { 'X-Organization': 'alt' },
+  });
+
+  const withoutKey = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/llm/providers/${provider.id as string}`,
+    headers: { cookie },
+    payload: { baseUrl: 'https://new.example/v1' },
+  });
+  assert.equal(withoutKey.statusCode, 422);
+  assert.ok(
+    (withoutKey.json() as { error: { fields: Record<string, string> } }).error.fields.baseUrl,
+  );
+
+  const viaTest = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/llm/providers/test',
+    headers: { cookie },
+    payload: { providerId: provider.id, baseUrl: 'https://new.example/v1' },
+  });
+  assert.equal(viaTest.statusCode, 422);
+
+  const rotatedBody: Record<string, unknown> = {
+    baseUrl: 'https://new.example/v1',
+    extraHeaders: {},
+  };
+  rotatedBody['apiKey'] = rotatedKey;
+  const withKey = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/llm/providers/${provider.id as string}`,
+    headers: { cookie },
+    payload: rotatedBody,
+  });
+  assert.equal(withKey.statusCode, 200, withKey.payload);
+  const row = ctx.db
+    .prepare('select base_url, extra_headers_sealed from llm_provider where id = ?')
+    .get(provider.id as string) as { base_url: string; extra_headers_sealed: string | null };
+  assert.equal(row.base_url, 'https://new.example/v1');
+  assert.equal(row.extra_headers_sealed, null);
+});
+
+test('metadata, link-local, unspecified and loopback targets are rejected', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  for (const baseUrl of [
+    'https://169.254.169.254/v1',
+    'https://169.254.170.2/v1',
+    'https://[::ffff:169.254.169.254]/v1',
+    'https://metadata.google.internal./v1',
+    'https://[fd00:ec2::254]/v1',
+    'https://[fe90::1]/v1',
+    'https://[::]/v1',
+    'https://0.0.0.0/v1',
+    'https://127.0.0.1/v1',
+    'https://[::1]/v1',
+    'https://localhost/v1',
+  ]) {
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/llm/providers',
+      headers: { cookie },
+      payload: { name: 'X', baseUrl, authStyle: 'none' },
+    });
+    assert.equal(response.statusCode, 422, baseUrl);
+    assert.ok(
+      (response.json() as { error: { fields: Record<string, string> } }).error.fields.baseUrl,
+      baseUrl,
+    );
+  }
+});
+
+test('loopback is allowed only with the explicit opt-in', async (t) => {
+  const previousHttp = process.env.SF_LLM_ALLOW_HTTP;
+  const previousLoopback = process.env.SF_LLM_ALLOW_LOOPBACK;
+  process.env.SF_LLM_ALLOW_HTTP = '1';
+  process.env.SF_LLM_ALLOW_LOOPBACK = '1';
+  t.after(() => {
+    if (previousHttp === undefined) delete process.env.SF_LLM_ALLOW_HTTP;
+    else process.env.SF_LLM_ALLOW_HTTP = previousHttp;
+    if (previousLoopback === undefined) delete process.env.SF_LLM_ALLOW_LOOPBACK;
+    else process.env.SF_LLM_ALLOW_LOOPBACK = previousLoopback;
+  });
+
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const created = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/llm/providers',
+    headers: { cookie },
+    payload: {
+      name: 'Lokal',
+      baseUrl: 'http://127.0.0.1:8080/v1',
+      authStyle: 'none',
+    },
+  });
+  assert.equal(created.statusCode, 201, created.payload);
+});
+
+test('chat paths and extra headers reject shadowing and traversal', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const traversal = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/llm/providers',
+    headers: { cookie },
+    payload: {
+      name: 'X',
+      baseUrl: 'https://llm.example/v1',
+      chatPath: '/v1/../admin',
+      authStyle: 'none',
+    },
+  });
+  assert.equal(traversal.statusCode, 422);
+
+  for (const extraHeaders of [
+    { Authorization: 'Bearer x' },
+    { Cookie: 'sf_session=x' },
+    { 'X-Api-Key': 'x' },
+    Object.fromEntries(Array.from({ length: 21 }, (_, index) => [`X-H${index}`, 'x'])),
+  ]) {
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/llm/providers',
+      headers: { cookie },
+      payload: {
+        name: 'X',
+        baseUrl: 'https://llm.example/v1',
+        authStyle: 'none',
+        extraHeaders,
+      },
+    });
+    assert.equal(response.statusCode, 422, JSON.stringify(extraHeaders));
+  }
+});
+
+test('model discovery is rate limited per operator', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const provider = await createProvider(ctx.app, cookie, {
+    name: 'Discovery',
+    baseUrl: 'https://llm.example/v1',
+    authStyle: 'none',
+  });
+  stubFetch(t, () => json({ data: [{ id: 'm-1' }] }));
+
+  const first = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/llm/providers/${provider.id as string}/models/refresh`,
+    headers: { cookie },
+  });
+  assert.equal(first.statusCode, 200, first.payload);
+  const second = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/llm/providers/${provider.id as string}/models/refresh`,
+    headers: { cookie },
+  });
+  assert.equal(second.statusCode, 429);
+  assert.equal(
+    (second.json() as { error: { code: string } }).error.code,
+    'llm_refresh_rate_limited',
+  );
+});
+
+test('a failed embedding call is a 502 and never echoes the upstream body', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const provider = await createProvider(ctx.app, cookie, {
+    name: 'Embedding failure',
+    baseUrl: 'https://llm.example/v1',
+    authStyle: 'none',
+  });
+  const model = await createModel(ctx.app, cookie, provider.id, {
+    modelKey: 'bge-m3',
+    label: 'BGE-M3',
+    capabilities: { embeddings: true },
+  });
+  await createPurpose(ctx.app, cookie, { purpose: 'embedding', modelId: model.id });
+  stubFetch(t, () => json({ error: { message: 'UPSTREAM-SECRET-DETAIL' } }, 500));
+
+  const response = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/llm/internal/embed',
+    headers: { 'x-internal-token': ctx.internalToken, 'x-internal-caller': 'agent' },
+    payload: { purpose: 'embedding', input: ['Hallo Welt'] },
+  });
+  assert.equal(response.statusCode, 502, response.payload);
+  assert.equal((response.json() as { error: { code: string } }).error.code, 'llm_provider_error');
+  assert.equal(response.payload.includes('UPSTREAM-SECRET-DETAIL'), false);
+
+  const usage = ctx.db
+    .prepare('select status, error_code from llm_usage order by created_at desc limit 1')
+    .get() as { status: string; error_code: string | null };
+  assert.equal(usage.status, 'error');
+  assert.equal(usage.error_code, 'llm_provider_error');
 });

@@ -191,7 +191,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
   /** Sliding one-minute window; process-local by design and documented as such. */
   const windows = new Map<string, number[]>();
   function allowRate(key: string, limit: number): boolean {
-    const now = Date.now();
+    const now = runtime.now().getTime();
     const recent = (windows.get(key) ?? []).filter((stamp) => now - stamp < 60_000);
     if (recent.length >= limit) {
       windows.set(key, recent);
@@ -464,8 +464,12 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         };
         return response;
       } catch (error) {
-        usageError(error, caller, purpose, target, body, started);
-        throw error;
+        // Map upstream failures before they reach Fastify: its 500 handler logs
+        // the error object, and an unmapped UpstreamError carries the raw
+        // provider detail. The mapped AppError has a stable code and no body.
+        const mapped = error instanceof UpstreamError ? mapUpstream(error) : error;
+        usageError(mapped, caller, purpose, target, body, started);
+        throw mapped;
       }
     },
   );
@@ -587,8 +591,12 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         };
         return response;
       } catch (error) {
-        usageError(error, caller, purpose, target, body, started);
-        throw error;
+        // Map upstream failures before they reach Fastify: its 500 handler logs
+        // the error object, and an unmapped UpstreamError carries the raw
+        // provider detail. The mapped AppError has a stable code and no body.
+        const mapped = error instanceof UpstreamError ? mapUpstream(error) : error;
+        usageError(mapped, caller, purpose, target, body, started);
+        throw mapped;
       }
     },
   );

@@ -5,6 +5,12 @@ import { AppError } from '../../kernel/errors.ts';
 import { newId } from '../../kernel/ids.ts';
 import { registerInternalRoutes } from './internal.ts';
 import { manifest } from './manifest.ts';
+import {
+  isValidChatPath,
+  isBlockedExtraHeader,
+  loopbackAllowed,
+  validateBaseUrl as validateTargetUrl,
+} from './ssrf.ts';
 import type { AuthStyle, Capabilities, ProviderStatus, ProviderTestResult } from './protocol.ts';
 import { LlmRuntime, readInt } from './runtime.ts';
 import {
@@ -161,6 +167,14 @@ const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 const PLUGIN_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const PURPOSE_NAME = /^[a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*$/;
 
+function originOf(raw: string): string {
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return raw;
+  }
+}
+
 function parseLimit(raw: string | undefined): number {
   const value = raw === undefined ? Number.NaN : Number.parseInt(raw, 10);
   if (!Number.isFinite(value)) return DEFAULT_LIMIT;
@@ -168,54 +182,59 @@ function parseLimit(raw: string | undefined): number {
 }
 
 function validateBaseUrl(raw: string, allowHttp: boolean): string {
-  let url: URL;
   try {
-    url = new URL(raw.trim());
-  } catch {
+    return validateTargetUrl(raw, { allowHttp, allowLoopback: loopbackAllowed() });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'scheme') {
+      throw new FieldError({
+        baseUrl:
+          'Use https. Plain http is only allowed for internal gateways with SF_LLM_ALLOW_HTTP=1.',
+      });
+    }
+    if (code === 'credentials') {
+      throw new FieldError({ baseUrl: 'Do not put credentials in the URL.' });
+    }
+    if (code === 'query') {
+      throw new FieldError({ baseUrl: 'The base URL must not contain a query or fragment.' });
+    }
+    if (code === 'loopback') {
+      throw new FieldError({
+        baseUrl:
+          'A loopback address needs SF_LLM_ALLOW_LOOPBACK=1 on the server, for a local gateway.',
+      });
+    }
+    if (code === 'host' || code === 'address') {
+      throw new FieldError({ baseUrl: 'This address is not allowed.' });
+    }
     throw new FieldError({ baseUrl: 'Please enter a valid URL.' });
   }
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && allowHttp)) {
-    throw new FieldError({
-      baseUrl:
-        'Use https. Plain http is only allowed for internal gateways with SF_LLM_ALLOW_HTTP=1.',
-    });
-  }
-  if (url.username || url.password) {
-    throw new FieldError({ baseUrl: 'Do not put credentials in the URL.' });
-  }
-  if (url.search || url.hash) {
-    throw new FieldError({ baseUrl: 'The base URL must not contain a query or fragment.' });
-  }
-  const host = url.hostname.replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
-  if (
-    host === '169.254.169.254' ||
-    host === 'metadata.google.internal' ||
-    host.endsWith('.metadata.google.internal') ||
-    host === '0.0.0.0' ||
-    host.startsWith('fe80:')
-  ) {
-    throw new FieldError({ baseUrl: 'This address is not allowed.' });
-  }
-  const path = url.pathname.replace(/\/+$/, '');
-  return `${url.origin}${path === '/' ? '' : path}`;
 }
 
 function validateChatPath(raw: string): string {
   const value = raw.trim();
-  if (!value.startsWith('/') || value.length > 200 || value.includes('://')) {
-    throw new FieldError({ chatPath: 'The chat path must start with "/".' });
+  if (!isValidChatPath(value)) {
+    throw new FieldError({
+      chatPath: 'Use a relative path without "..", query, fragment or double slash.',
+    });
   }
   return value;
 }
 
 function validateExtraHeaders(raw: Record<string, string>): { sealed: string; names: string[] } {
+  const entries = Object.entries(raw);
+  if (entries.length > 20) {
+    throw new FieldError({ extraHeaders: 'Use at most 20 extra headers.' });
+  }
   const names: string[] = [];
-  for (const [name, value] of Object.entries(raw)) {
+  for (const [name, value] of entries) {
     if (!HEADER_NAME.test(name)) {
       throw new FieldError({ extraHeaders: `Invalid header name: ${name}` });
     }
-    if (name.toLowerCase() === 'host' || name.toLowerCase() === 'content-length') {
-      throw new FieldError({ extraHeaders: `Header ${name} is managed by the platform.` });
+    if (isBlockedExtraHeader(name)) {
+      throw new FieldError({
+        extraHeaders: `Header ${name} is managed by the platform or carries credentials.`,
+      });
     }
     if (value.length > 2000) {
       throw new FieldError({ extraHeaders: `Header ${name} is too long.` });
@@ -578,7 +597,10 @@ export function register(ctx: PluginContext): void {
 
       const now = ctx.now().toISOString();
       const id = newId('llm_p');
-      const extra = draft.extraHeaders ? validateExtraHeaders(draft.extraHeaders) : null;
+      const extra =
+        draft.extraHeaders && Object.keys(draft.extraHeaders).length > 0
+          ? validateExtraHeaders(draft.extraHeaders)
+          : null;
       db.prepare(
         `insert into llm_provider
          (id, name, preset, base_url, chat_path, api_version, auth_style, auth_header,
@@ -657,6 +679,20 @@ export function register(ctx: PluginContext): void {
       const existing = runtime.provider(request.params.id);
       if (!existing) throw new AppError('llm_provider_not_found', 'Provider not found.', 404);
       const body = request.body;
+      const originChanged =
+        originOf(body.baseUrl ?? existing.base_url) !== originOf(existing.base_url);
+      if (
+        originChanged &&
+        existing.api_key_sealed !== null &&
+        (body.authStyle ?? existing.auth_style) !== 'none' &&
+        !body.apiKey
+      ) {
+        // A stored credential belongs to the old host. Reusing it on a new host
+        // would hand the secret to whoever controls that host.
+        throw new FieldError({
+          baseUrl: 'A changed host needs a new API key for this gateway.',
+        });
+      }
       const draft = validateDraft(
         {
           name: body.name ?? existing.name,
@@ -685,7 +721,10 @@ export function register(ctx: PluginContext): void {
       );
 
       const now = ctx.now().toISOString();
-      const extra = draft.extraHeaders ? validateExtraHeaders(draft.extraHeaders) : null;
+      const extra =
+        draft.extraHeaders && Object.keys(draft.extraHeaders).length > 0
+          ? validateExtraHeaders(draft.extraHeaders)
+          : null;
       db.prepare(
         `update llm_provider set
            name = ?, preset = ?, base_url = ?, chat_path = ?, api_version = ?,
@@ -702,16 +741,24 @@ export function register(ctx: PluginContext): void {
         draft.apiVersion,
         draft.authStyle,
         draft.authHeader,
-        draft.apiKey ? runtime.sealKey(draft.apiKey) : existing.api_key_sealed,
+        draft.apiKey
+          ? runtime.sealKey(draft.apiKey)
+          : originChanged
+            ? null
+            : existing.api_key_sealed,
         draft.apiKey ? now : existing.api_key_updated_at,
         body.extraHeaders !== undefined
           ? extra
             ? runtime.sealHeaders(body.extraHeaders)
             : null
-          : existing.extra_headers_sealed,
+          : originChanged
+            ? null
+            : existing.extra_headers_sealed,
         body.extraHeaders !== undefined
           ? JSON.stringify(extra?.names ?? [])
-          : existing.extra_header_names,
+          : originChanged
+            ? '[]'
+            : existing.extra_header_names,
         draft.timeoutMs,
         draft.maxRetries,
         draft.rateLimitPerMinute,
@@ -761,10 +808,28 @@ export function register(ctx: PluginContext): void {
 
   const testTimes = new Map<string, number>();
 
+  /** Model discovery hits the provider too; one refresh per user per 10 s. */
+  const refreshTimes = new Map<string, number>();
+  function allowRefresh(userId: string): boolean {
+    const now = ctx.now().getTime();
+    const last = refreshTimes.get(userId) ?? 0;
+    if (now - last < 10_000) return false;
+    refreshTimes.set(userId, now);
+    if (refreshTimes.size > 1000) {
+      for (const [key, stamp] of refreshTimes) {
+        if (now - stamp > 60_000) refreshTimes.delete(key);
+      }
+    }
+    return true;
+  }
+
   function buildTestProvider(
     existing: ProviderRow | undefined,
     body: ProviderBody,
   ): { provider: ProviderRow; apiKey: string | null; headers: Record<string, string> } {
+    const originChanged =
+      existing !== undefined &&
+      originOf(body.baseUrl ?? existing.base_url) !== originOf(existing.base_url);
     const draft = validateDraft(
       {
         name: body.name ?? existing?.name ?? 'Draft',
@@ -790,6 +855,17 @@ export function register(ctx: PluginContext): void {
       existing?.api_key_sealed !== null && existing !== undefined,
       runtime.allowHttp,
     );
+    if (
+      originChanged &&
+      draft.authStyle !== 'none' &&
+      !draft.apiKey &&
+      existing !== undefined &&
+      existing.api_key_sealed !== null
+    ) {
+      throw new FieldError({
+        baseUrl: 'A changed host needs a new API key for this gateway.',
+      });
+    }
     const provider: ProviderRow = {
       id: existing?.id ?? 'draft',
       name: draft.name,
@@ -799,9 +875,12 @@ export function register(ctx: PluginContext): void {
       api_version: draft.apiVersion,
       auth_style: draft.authStyle,
       auth_header: draft.authHeader,
-      api_key_sealed: existing?.api_key_sealed ?? null,
+      api_key_sealed: originChanged && !draft.apiKey ? null : (existing?.api_key_sealed ?? null),
       api_key_updated_at: existing?.api_key_updated_at ?? null,
-      extra_headers_sealed: existing?.extra_headers_sealed ?? null,
+      extra_headers_sealed:
+        originChanged && body.extraHeaders === undefined
+          ? null
+          : (existing?.extra_headers_sealed ?? null),
       extra_header_names: existing?.extra_header_names ?? '[]',
       timeout_ms: draft.timeoutMs,
       max_retries: draft.maxRetries,
@@ -818,8 +897,11 @@ export function register(ctx: PluginContext): void {
       updated_at: existing?.updated_at ?? ctx.now().toISOString(),
       created_by: existing?.created_by ?? 'draft',
     };
-    const apiKey = body.apiKey ?? (existing ? runtime.openKey(existing) : null);
-    const headers = body.extraHeaders ?? (existing ? runtime.openHeaders(existing) : {});
+    const apiKey =
+      draft.apiKey ?? (existing !== undefined && !originChanged ? runtime.openKey(existing) : null);
+    const headers =
+      body.extraHeaders ??
+      (existing !== undefined && !originChanged ? runtime.openHeaders(existing) : {});
     return { provider, apiKey, headers };
   }
 
@@ -1132,11 +1214,19 @@ export function register(ctx: PluginContext): void {
           401: errorSchema,
           403: errorSchema,
           404: errorSchema,
+          429: errorSchema,
           502: errorSchema,
         },
       },
     },
     async (request) => {
+      if (!allowRefresh(request.user?.id ?? 'unknown')) {
+        throw new AppError(
+          'llm_refresh_rate_limited',
+          'Please wait a few seconds before refreshing again.',
+          429,
+        );
+      }
       const provider = runtime.provider(request.params.id);
       if (!provider) throw new AppError('llm_provider_not_found', 'Provider not found.', 404);
       const key = runtime.openKey(provider);

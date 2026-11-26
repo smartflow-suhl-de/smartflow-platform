@@ -165,7 +165,7 @@ export class LlmRuntime {
   /** Daily token and monthly budget caps, counted from the usage table. */
   budgetExceeded(provider: ProviderRow): 'daily' | 'monthly' | null {
     if (provider.daily_token_limit > 0) {
-      const since = new Date();
+      const since = new Date(this.now());
       since.setUTCHours(0, 0, 0, 0);
       const row = this.db
         .prepare(
@@ -176,7 +176,7 @@ export class LlmRuntime {
       if (row.tokens >= provider.daily_token_limit) return 'daily';
     }
     if (provider.monthly_budget_micros > 0) {
-      const since = new Date();
+      const since = new Date(this.now());
       since.setUTCDate(1);
       since.setUTCHours(0, 0, 0, 0);
       const row = this.db
