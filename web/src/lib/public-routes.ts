@@ -1,5 +1,9 @@
 import type { ReactNode } from 'react';
 
+import { createElement } from 'react';
+import { DiscoveryPublicPage } from '../pages/DiscoveryPublic';
+import { getMessages, storedLocale } from './i18n';
+
 /**
  * Public routes: pages that render without a session, outside the app shell.
  *
@@ -103,3 +107,27 @@ export function matchPublicRoute(pathname: string): PublicMatch | null {
 export function isPublicPath(pathname: string): boolean {
   return matchPublicRoute(pathname) !== null;
 }
+
+// The automation discovery interview renders inside `PublicLayout`, which
+// already provides brand header, main landmark, title and noindex. Registering
+// here keeps page-specific paths out of `App`.
+export function registerDiscoveryPublicRoute(): void {
+  if (publicRoutes.some((route) => route.pattern === '/d/:token')) return;
+  publicRoutes.push({
+    pattern: '/d/:token',
+    title: () => getMessages(storedLocale()).discovery.publicTitle,
+    render: ({ token }) => {
+      const locale = storedLocale();
+      return createElement(DiscoveryPublicPage, {
+        // A different link is a different interview: without the key React
+        // keeps closed/values/hint from the previous token.
+        key: token,
+        token,
+        locale,
+        messages: getMessages(locale),
+      });
+    },
+  });
+}
+
+registerDiscoveryPublicRoute();

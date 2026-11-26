@@ -1,5 +1,14 @@
 import type {
   AuthMe,
+  DiscoveryInvite,
+  DiscoveryInviteCreated,
+  DiscoveryInviteDetail,
+  DiscoveryInviteListResponse,
+  DiscoveryInviteStatus,
+  DiscoveryLocale,
+  DiscoveryMode,
+  DiscoveryOverview,
+  DiscoveryReport,
   HealthResponse,
   LoginInput,
   NavEntry,
@@ -407,5 +416,152 @@ export const api = {
     return parseTenant(
       await requestJson(`/tenants/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
     );
+  },
+
+  // --- Automatisierungs-Scout ---------------------------------------------
+
+  async listDiscoveryInvites(
+    params: { status?: DiscoveryInviteStatus; q?: string; limit?: number; cursor?: string | null },
+    signal?: AbortSignal,
+  ): Promise<DiscoveryInviteListResponse> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.q && params.q.trim().length > 0) query.set('q', params.q.trim());
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const suffix = query.toString();
+    const raw = await requestJson(
+      suffix.length > 0 ? `/discovery/invites?${suffix}` : '/discovery/invites',
+      { signal },
+    );
+    return raw as DiscoveryInviteListResponse;
+  },
+
+  async createDiscoveryInvite(input: {
+    customerName: string;
+    contactEmail?: string;
+    locale?: DiscoveryLocale;
+    mode?: DiscoveryMode;
+    expiresInDays?: number;
+    tenantId?: string;
+  }): Promise<DiscoveryInviteCreated> {
+    return (await requestJson('/discovery/invites', {
+      method: 'POST',
+      body: input,
+    })) as DiscoveryInviteCreated;
+  },
+
+  async getDiscoveryInvite(id: string, signal?: AbortSignal): Promise<DiscoveryInviteDetail> {
+    return (await requestJson(`/discovery/invites/${encodeURIComponent(id)}`, {
+      signal,
+    })) as DiscoveryInviteDetail;
+  },
+
+  async revokeDiscoveryInvite(id: string): Promise<{ invite: DiscoveryInvite }> {
+    return (await requestJson(`/discovery/invites/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST',
+    })) as { invite: DiscoveryInvite };
+  },
+
+  async resendDiscoveryInvite(id: string): Promise<DiscoveryInviteCreated> {
+    return (await requestJson(`/discovery/invites/${encodeURIComponent(id)}/resend`, {
+      method: 'POST',
+    })) as DiscoveryInviteCreated;
+  },
+
+  async getDiscoveryReport(id: string): Promise<{ report: DiscoveryReport }> {
+    return (await requestJson(`/discovery/invites/${encodeURIComponent(id)}/report`)) as {
+      report: DiscoveryReport;
+    };
+  },
+
+  async discoveryOverview(signal?: AbortSignal): Promise<DiscoveryOverview> {
+    return (await requestJson('/discovery/overview', { signal })) as DiscoveryOverview;
+  },
+};
+
+export interface DiscoveryPublicResponse {
+  status: number;
+  payload: unknown;
+}
+
+/**
+ * The public interview has no session and must not send the operator cookie.
+ * A completed link answers 410 with the finished report on purpose, so that
+ * status is data here, not an error. Everything else keeps the shared error
+ * shape.
+ */
+async function requestPublic(
+  path: string,
+  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<DiscoveryPublicResponse> {
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (options.body !== undefined) headers['content-type'] = 'application/json';
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetch(`${API_PREFIX}${path}`, {
+      method: options.method ?? (options.body === undefined ? 'GET' : 'POST'),
+      headers,
+      credentials: 'omit',
+      cache: 'no-store',
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: requestSignal(options.signal),
+    });
+    text = await response.text();
+  } catch (error) {
+    throw translateFetchError(error);
+  }
+  let payload: unknown = null;
+  if (text.length > 0) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+  if (response.status >= 500) {
+    throw extractApiError(response.status, payload);
+  }
+  if (response.status === 410) {
+    return { status: 410, payload };
+  }
+  if (!response.ok) {
+    throw extractApiError(response.status, payload);
+  }
+  return { status: response.status, payload };
+}
+
+export const discoveryPublic = {
+  async state(token: string, signal?: AbortSignal): Promise<DiscoveryPublicResponse> {
+    return requestPublic(`/discovery/public/${encodeURIComponent(token)}`, { signal });
+  },
+
+  async saveAnswers(
+    token: string,
+    answers: Array<{ key: string; value: unknown }>,
+  ): Promise<DiscoveryPublicResponse> {
+    return requestPublic(`/discovery/public/${encodeURIComponent(token)}/answers`, {
+      body: { answers },
+    });
+  },
+
+  async advance(token: string, shortcut = false): Promise<DiscoveryPublicResponse> {
+    return requestPublic(`/discovery/public/${encodeURIComponent(token)}/advance`, {
+      body: { shortcut },
+    });
+  },
+
+  async contact(token: string, wanted: boolean, way: string): Promise<DiscoveryPublicResponse> {
+    return requestPublic(`/discovery/public/${encodeURIComponent(token)}/contact`, {
+      body: { wanted, way },
+    });
+  },
+
+  async complete(token: string): Promise<DiscoveryPublicResponse> {
+    return requestPublic(`/discovery/public/${encodeURIComponent(token)}/complete`, {
+      method: 'POST',
+      body: {},
+    });
   },
 };

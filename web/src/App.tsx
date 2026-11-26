@@ -11,6 +11,7 @@ import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
+import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
 import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
@@ -27,6 +28,22 @@ import {
 } from './theme';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
+
+/** A malformed percent escape must not throw during render; null means "not a valid id". */
+export function safeDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
+/** The invite id of `/discovery/:id`, or null for a broken percent escape. */
+export function discoveryInviteId(pathname: string): string | null {
+  const match = /^\/discovery\/([^/]+)$/.exec(pathname);
+  if (!match) return null;
+  return safeDecode(match[1] ?? '');
+}
 
 type SessionState =
   | { kind: 'loading' }
@@ -303,6 +320,19 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         locale={locale}
         messages={messages}
         onStatsChange={refreshStats}
+      />
+    );
+  } else if (pathname === '/discovery' && auth.user.role === 'operator') {
+    content = <DiscoveryPage inviteId={null} search={search} locale={locale} messages={messages} />;
+  } else if (/^\/discovery\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
+    // A broken escape (`/discovery/%E0%A4%A`) falls back to the list instead of
+    // throwing a URIError and rendering a blank page.
+    content = (
+      <DiscoveryPage
+        inviteId={discoveryInviteId(pathname)}
+        search={search}
+        locale={locale}
+        messages={messages}
       />
     );
   } else if (pathname === '/settings') {
