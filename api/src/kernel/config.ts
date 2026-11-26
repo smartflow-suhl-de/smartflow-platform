@@ -7,6 +7,12 @@ export interface Config {
   port: number;
   publicUrl: string;
   dataDir: string;
+  /**
+   * Directory of the built SPA to serve next to the API, or `null` for an
+   * API-only process. The kernel serves `index.html` and the hashed assets from
+   * here; everything else stays the client's business.
+   */
+  webDir: string | null;
   operator: { email: string; name: string };
   devMagicLink: boolean;
   /**
@@ -47,6 +53,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     env.NODE_ENV === 'production' ? 'production' : env.NODE_ENV === 'test' ? 'test' : 'development';
   const publicUrl = str(env.SF_PUBLIC_URL, 'http://127.0.0.1:5273');
   const dataDir = resolve(env.SF_DATA_DIR ?? './data');
+  const webDirValue = env.SF_WEB_DIR;
+  const webDir = webDirValue === undefined || webDirValue === '' ? null : resolve(webDirValue);
   const host = str(env.SF_HOST, '127.0.0.1');
   const loopbackHost =
     host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
@@ -86,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: int(env.SF_PORT, 8790),
     publicUrl,
     dataDir,
+    webDir,
     operator: {
       email: str(env.SF_OPERATOR_EMAIL, 'operator@example.com').trim().toLowerCase(),
       name: str(env.SF_OPERATOR_NAME, 'Operator'),

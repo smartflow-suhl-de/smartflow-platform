@@ -1,0 +1,62 @@
+# Ein Host, ein Prozess: die Plattform hält je Mandant eine eigene SQLite-Datei,
+# also genau einen schreibenden Prozess. Mehr Replicas sind kein Skalierungspfad,
+# sondern Datenverlust — deshalb bewusst ein einziger `app`-Dienst.
+#
+# Caddy terminiert TLS und ist der einzige Dienst mit veröffentlichten Ports.
+# `app` ist nur im Compose-Netz erreichbar.
+#
+# Pflichtwerte kommen aus `.env` (Compose liest sie automatisch). Vorlage:
+# `.env.production.example`. Fehlt ein Pflichtwert, bricht schon die
+# Konfiguration ab, statt einen Container mit leerem Hostnamen zu starten.
+
+name: smartflow
+
+services:
+  app:
+    build:
+      context: .
+    image: smartflow-platform:local
+    restart: unless-stopped
+    environment:
+      # Aus SF_DOMAIN zusammengesetzt, damit Site-Adresse und Anwendungs-Origin
+      # nicht auseinanderlaufen können.
+      SF_PUBLIC_URL: https://${SF_DOMAIN:?SF_DOMAIN fehlt in .env}
+      SF_OPERATOR_EMAIL: ${SF_OPERATOR_EMAIL:?SF_OPERATOR_EMAIL fehlt in .env}
+      SF_OPERATOR_NAME: ${SF_OPERATOR_NAME:-Operator}
+      SF_LOG_LEVEL: ${SF_LOG_LEVEL:-info}
+      # Nur hier korrekt, weil Caddy als einziger Proxy davorsteht und
+      # X-Forwarded-* setzt. Ohne Caddy wäre das Vertrauen in den Header falsch;
+      # die Topologie gehört deshalb zu dieser Datei, nicht in ein Image-Default.
+      SF_TRUST_PROXY: '1'
+    volumes:
+      - data:/data
+    expose:
+      - '8790'
+    # Der Healthcheck stammt aus dem Image und trägt `depends_on` unten.
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      SF_DOMAIN: ${SF_DOMAIN:?SF_DOMAIN fehlt in .env}
+      # Für die ACME-Registrierung bei Let's Encrypt.
+      SF_OPERATOR_EMAIL: ${SF_OPERATOR_EMAIL:?SF_OPERATOR_EMAIL fehlt in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  # Plattform-Datenbank, je Mandant eine Datenbank und der Schlüssel für die
+  # Sitzungen — der einzige Teil, der gesichert werden muss.
+  data:
+  # Zertifikate und ACME-Zustand; ein Verlust kostet nur eine Neuausstellung.
+  caddy_data:
+  caddy_config:

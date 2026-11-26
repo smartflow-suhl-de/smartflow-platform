@@ -111,5 +111,20 @@ const unknown = request('/api/v1/nope');
 check(unknown.status === 404, 'an unknown API route answers 404');
 check(unknown.body.includes('not_found'), 'the 404 uses the shared error shape, not HTML');
 
+// The image ships the built SPA and serves it from the same process. Without
+// these probes a regression that drops the web build still looks healthy: the
+// API keeps answering while `/` is a 404 for every browser.
+const root = request('/', `, { headers: { accept: 'text/html' } }`);
+check(root.status === 200, 'the SPA root answers 200');
+check(root.body.includes('<div id="root"'), 'the SPA root is the built index, not JSON');
+
+const deepLink = request('/tenants', `, { headers: { accept: 'text/html' } }`);
+check(deepLink.status === 200, 'a deep link answers 200');
+check(deepLink.body.includes('<div id="root"'), 'a deep link is the SPA shell, not a 404');
+
+const apiAsBrowser = request('/api/v1/nope', `, { headers: { accept: 'text/html' } }`);
+check(apiAsBrowser.status === 404, 'an unknown API route is not masked by the SPA fallback');
+check(apiAsBrowser.body.includes('not_found'), 'the API 404 keeps its JSON shape');
+
 docker(['rm', '--force', name]);
 console.log('container smoke passed');

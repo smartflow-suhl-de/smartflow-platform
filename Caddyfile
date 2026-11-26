@@ -1,0 +1,16 @@
+# Caddy holt das Zertifikat automatisch, sobald SF_DOMAIN öffentlich auf diesen
+# Host zeigt (ACME/HTTP-01). Für eine interne oder noch nicht aufgelöste Domain
+# schlägt das fehl: dann in diesem Block `tls internal` ergänzen und den
+# Caddy-Container neu starten — Caddy nutzt dann seine eigene CA, deren
+# Wurzelzertifikat die Clients einmalig importieren müssen.
+{
+	email {$SF_OPERATOR_EMAIL}
+}
+
+{$SF_DOMAIN} {
+	encode zstd gzip
+
+	# Ein Ziel, ein Origin: die API liefert die SPA unter `/` und `/assets/*`
+	# selbst aus, Caddy reicht nur durch.
+	reverse_proxy app:8790
+}
