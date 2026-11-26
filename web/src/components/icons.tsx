@@ -193,6 +193,8 @@ export function navIconByName(name: string, size = 15) {
       return <SettingsIcon size={size} />;
     case 'circle-help':
       return <CircleHelpIcon size={size} />;
+    case 'compass':
+      return <CompassIcon size={size} />;
     default:
       return <PuzzleIcon size={size} />;
   }

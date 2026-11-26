@@ -11,6 +11,8 @@ import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
+import { DiscoveryPage } from './pages/Discovery';
+import { DiscoveryPublicPage } from './pages/DiscoveryPublic';
 import { HelpPage } from './pages/Help';
 import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
@@ -242,6 +244,17 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
       .finally(() => setLoggingOut(false));
   }, [locale]);
 
+  // The public interview lives outside the session and the shell: a customer
+  // opens /d/<token> without a login, so it renders before every session branch.
+  // When the public-route registry from the frontend work lands, this check
+  // moves there; until then it is the one deliberate App.tsx edit.
+  if (pathname.startsWith('/d/')) {
+    const token = pathname.slice(3);
+    if (token.length > 0) {
+      return <DiscoveryPublicPage token={token} locale={locale} messages={messages} />;
+    }
+  }
+
   if (session.kind === 'loading') {
     return (
       <div className="sf-center-load" role="status">
@@ -303,6 +316,17 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         locale={locale}
         messages={messages}
         onStatsChange={refreshStats}
+      />
+    );
+  } else if (pathname === '/discovery' && auth.user.role === 'operator') {
+    content = <DiscoveryPage inviteId={null} search={search} locale={locale} messages={messages} />;
+  } else if (/^\/discovery\/[^/]+$/.test(pathname) && auth.user.role === 'operator') {
+    content = (
+      <DiscoveryPage
+        inviteId={decodeURIComponent(pathname.split('/')[2] ?? '')}
+        search={search}
+        locale={locale}
+        messages={messages}
       />
     );
   } else if (pathname === '/settings') {

@@ -247,6 +247,131 @@ export interface Messages {
     apiText: string;
     openApiLink: string;
   };
+  discovery: {
+    title: string;
+    description: string;
+    createTitle: string;
+    customerLabel: string;
+    customerPlaceholder: string;
+    emailLabel: string;
+    emailPlaceholder: string;
+    localeLabel: string;
+    modeLabel: string;
+    modeShort: string;
+    modeStandard: string;
+    modeFull: string;
+    expiryLabel: string;
+    expiryHint: string;
+    tenantLabel: string;
+    tenantNone: string;
+    createSubmit: string;
+    creating: string;
+    linkTitle: string;
+    linkNote: string;
+    linkCopy: string;
+    linkCopied: string;
+    mailUnavailable: string;
+    listTitle: string;
+    listSummary: (shown: number, total: number) => string;
+    searchLabel: string;
+    searchPlaceholder: string;
+    filterAll: string;
+    colCustomer: string;
+    colStatus: string;
+    colProgress: string;
+    colExpires: string;
+    colActions: string;
+    statusOpen: string;
+    statusInProgress: string;
+    statusCompleted: string;
+    statusRevoked: string;
+    statusExpired: string;
+    actionOpen: string;
+    actionRevoke: string;
+    actionResend: string;
+    back: string;
+    detailTitle: string;
+    answersTitle: string;
+    noAnswers: string;
+    reportTitle: string;
+    reportSummary: string;
+    reportClusters: string;
+    reportOpportunities: string;
+    reportQuickWins: string;
+    reportOpenQuestions: string;
+    reportNextStep: string;
+    colBenefit: string;
+    colEffort: string;
+    colRisk: string;
+    colData: string;
+    reportUnavailable: string;
+    revokeConfirmTitle: string;
+    revokeConfirmBody: string;
+    revokeButton: string;
+    revokedToast: string;
+    linkRotatedToast: string;
+    emptyTitle: string;
+    emptyDescription: string;
+    prevPage: string;
+    nextPage: string;
+    pageStatus: (from: number, to: number, total: number) => string;
+    kpiTotal: string;
+    kpiOpen: string;
+    kpiInProgress: string;
+    kpiCompleted: string;
+    overviewRecent: string;
+    contactLabel: string;
+    loadError: string;
+    publicBrand: string;
+    publicTitle: string;
+    publicIntro: string;
+    consentTitle: string;
+    consentNote: string;
+    start: string;
+    next: string;
+    finish: string;
+    saving: string;
+    saved: string;
+    progressLabel: string;
+    stepOf: (done: number, total: number) => string;
+    hintTitle: string;
+    examplesTitle: string;
+    ideasTitle: string;
+    ideasHint: string;
+    contactTitle: string;
+    contactQuestion: string;
+    contactWay: string;
+    contactWayHint: string;
+    yes: string;
+    no: string;
+    optional: string;
+    reportTitlePublic: string;
+    reportIntro: string;
+    benefit: string;
+    effort: string;
+    risk: string;
+    dataMaturity: string;
+    completedTitle: string;
+    completedBody: string;
+    expiredTitle: string;
+    expiredBody: string;
+    revokedTitle: string;
+    revokedBody: string;
+    invalidTitle: string;
+    invalidBody: string;
+    errorTitle: string;
+    errorBody: string;
+    retry: string;
+    aiUnavailable: string;
+    skipShort: string;
+    skipShortHint: string;
+    saveLater: string;
+    saveLaterHint: string;
+    requiredMark: string;
+    fieldRequired: string;
+    publicFooter: string;
+    backToStart: string;
+  };
 }
 
 const DE: Messages = {
@@ -484,6 +609,142 @@ const DE: Messages = {
       'Alle Endpunkte der Plattform liegen unter /api/v1. Die laufende Spezifikation steht als OpenAPI-Dokument bereit.',
     openApiLink: 'OpenAPI-Spezifikation öffnen',
   },
+  discovery: {
+    title: 'Automatisierungs-Scout',
+    description:
+      'Einmal-Link pro Kunde, KI-Interview ohne Anmeldung und eine priorisierte Auswertung für das Erstgespräch.',
+    createTitle: 'Neue Einladung',
+    customerLabel: 'Kunde',
+    customerPlaceholder: 'Firma oder Ansprechpartner',
+    emailLabel: 'E-Mail des Ansprechpartners (optional)',
+    emailPlaceholder: 'name@firma.de',
+    localeLabel: 'Sprache des Interviews',
+    modeLabel: 'Umfang',
+    modeShort: 'Kurzcheck (nur Landkarte)',
+    modeStandard: 'Standard (Landkarte + 3 Themen)',
+    modeFull: 'Voll (Landkarte + 5 Themen)',
+    expiryLabel: 'Gültigkeit in Tagen',
+    expiryHint: '1 bis 30 Tage. Standard sind 14 Tage.',
+    tenantLabel: 'Mandant (optional)',
+    tenantNone: 'Kein Mandantenbezug',
+    createSubmit: 'Einladung anlegen',
+    creating: 'Wird angelegt …',
+    linkTitle: 'Link für den Kunden',
+    linkNote:
+      'Dieser Link erscheint nur jetzt. Kopieren Sie ihn und senden Sie ihn selbst – dieser Stand hat keinen Mailversand.',
+    linkCopy: 'Link kopieren',
+    linkCopied: 'Link kopiert',
+    mailUnavailable:
+      'Kein Mailversand in diesem Stand. Der Link wurde nicht per E-Mail verschickt.',
+    listTitle: 'Einladungen',
+    listSummary: (shown: number, total: number) => `${shown} von ${total} Einladungen.`,
+    searchLabel: 'Suchen',
+    searchPlaceholder: 'Kunde oder E-Mail',
+    filterAll: 'Alle',
+    colCustomer: 'Kunde',
+    colStatus: 'Status',
+    colProgress: 'Fortschritt',
+    colExpires: 'Gültig bis',
+    colActions: 'Aktionen',
+    statusOpen: 'Offen',
+    statusInProgress: 'Läuft',
+    statusCompleted: 'Abgeschlossen',
+    statusRevoked: 'Widerrufen',
+    statusExpired: 'Abgelaufen',
+    actionOpen: 'Öffnen',
+    actionRevoke: 'Widerrufen',
+    actionResend: 'Neuen Link erzeugen',
+    back: 'Zurück zur Liste',
+    detailTitle: 'Einladung',
+    answersTitle: 'Antworten',
+    noAnswers: 'Noch keine Antworten.',
+    reportTitle: 'Auswertung',
+    reportSummary: 'Zusammenfassung',
+    reportClusters: 'Themen',
+    reportOpportunities: 'Automatisierungsideen',
+    reportQuickWins: 'Schnelle Erfolge',
+    reportOpenQuestions: 'Offene Fragen',
+    reportNextStep: 'Nächster Schritt',
+    colBenefit: 'Nutzen',
+    colEffort: 'Aufwand',
+    colRisk: 'Risiko',
+    colData: 'Datenreife',
+    reportUnavailable: 'Noch keine Auswertung. Sie entsteht beim Abschluss des Interviews.',
+    revokeConfirmTitle: 'Einladung widerrufen?',
+    revokeConfirmBody:
+      'Der Link funktioniert sofort nicht mehr. Bereits gespeicherte Antworten bleiben für Sie lesbar.',
+    revokeButton: 'Widerrufen',
+    revokedToast: 'Einladung widerrufen.',
+    linkRotatedToast: 'Neuer Link erzeugt. Der alte Link ist ungültig.',
+    emptyTitle: 'Noch keine Einladungen',
+    emptyDescription: 'Legen Sie oben die erste Einladung an. Der Link erscheint genau einmal.',
+    prevPage: 'Zurück',
+    nextPage: 'Weiter',
+    pageStatus: (from: number, to: number, total: number) => `${from}–${to} von ${total}`,
+    kpiTotal: 'Einladungen',
+    kpiOpen: 'Offen',
+    kpiInProgress: 'Laufen',
+    kpiCompleted: 'Abgeschlossen',
+    overviewRecent: 'Letzte Aktivitäten',
+    contactLabel: 'Kontakt',
+    loadError: 'Die Einladungen konnten nicht geladen werden.',
+    publicBrand: 'SmartFlow',
+    publicTitle: 'Automatisierungs-Check',
+    publicIntro:
+      'Ein kurzes Interview zu Ihren Abläufen. Am Ende erhalten Sie eine Auswertung mit konkreten Automatisierungsideen.',
+    consentTitle: 'Bevor es losgeht',
+    consentNote:
+      'Ihre Antworten werden zur Erstellung der Auswertung an einen KI-Dienst übermittelt. Wir speichern sie 90 Tage nach Abschluss und löschen sie danach. Es gibt kein Konto und kein Passwort.',
+    start: 'Interview starten',
+    next: 'Weiter',
+    finish: 'Auswertung erstellen',
+    saving: 'Wird gespeichert …',
+    saved: 'Antwort gespeichert',
+    progressLabel: 'Fortschritt',
+    stepOf: (done: number, total: number) => `Schritt ${done} von ${total}`,
+    hintTitle: 'Hinweis',
+    examplesTitle: 'Beispiele',
+    ideasTitle: 'Vorschlag, unverbindlich',
+    ideasHint: 'Markieren Sie, was für Sie relevant ist.',
+    contactTitle: 'Erstgespräch',
+    contactQuestion: 'Möchten Sie ein Erstgespräch?',
+    contactWay: 'Wie erreichen wir Sie am besten?',
+    contactWayHint: 'Zum Beispiel Telefon am Vormittag oder eine E-Mail-Adresse.',
+    yes: 'Ja',
+    no: 'Nein',
+    optional: 'optional',
+    reportTitlePublic: 'Ihre Auswertung',
+    reportIntro:
+      'Die Auswertung ist ein Vorschlag, keine Zusage. Zahlen und Aufwände sind Schätzungen aus Ihren Angaben.',
+    benefit: 'Nutzen',
+    effort: 'Aufwand',
+    risk: 'Risiko',
+    dataMaturity: 'Datenreife',
+    completedTitle: 'Vielen Dank',
+    completedBody:
+      'Das Interview ist abgeschlossen. Der Link ist jetzt schreibgeschützt; Sie können die Auswertung jederzeit erneut ansehen.',
+    expiredTitle: 'Link abgelaufen',
+    expiredBody:
+      'Dieser Link ist nicht mehr gültig. Bitte wenden Sie sich an Ihren Ansprechpartner.',
+    revokedTitle: 'Link widerrufen',
+    revokedBody: 'Dieser Link wurde widerrufen. Bitte wenden Sie sich an Ihren Ansprechpartner.',
+    invalidTitle: 'Link nicht gefunden',
+    invalidBody:
+      'Dieser Link ist unbekannt. Prüfen Sie die Adresse oder wenden Sie sich an Ihren Ansprechpartner.',
+    errorTitle: 'Das hat nicht geklappt',
+    errorBody: 'Bitte versuchen Sie es erneut. Ihre gespeicherten Antworten bleiben erhalten.',
+    retry: 'Erneut versuchen',
+    aiUnavailable:
+      'Der KI-Dienst antwortet gerade nicht. Ihre Antworten sind gespeichert; bitte versuchen Sie es gleich noch einmal.',
+    skipShort: 'Abkürzen: ohne Vertiefung fortfahren',
+    skipShortHint: 'Sie können nach der Landkarte direkt zur Auswertung.',
+    saveLater: 'Speichern und später weiter',
+    saveLaterHint: 'Ihr Fortschritt ist gespeichert. Öffnen Sie denselben Link später erneut.',
+    requiredMark: 'Pflichtfeld',
+    fieldRequired: 'Bitte beantworten Sie diese Frage.',
+    publicFooter: 'Ihre Angaben werden vertraulich behandelt.',
+    backToStart: 'Zurück',
+  },
 };
 
 const EN: Messages = {
@@ -714,6 +975,139 @@ const EN: Messages = {
     apiText:
       'All platform routes are served under /api/v1. The live contract is published as an OpenAPI document.',
     openApiLink: 'Open OpenAPI specification',
+  },
+  discovery: {
+    title: 'Automation scout',
+    description:
+      'One link per customer, an AI interview without sign-in and a prioritised assessment for the first call.',
+    createTitle: 'New invitation',
+    customerLabel: 'Customer',
+    customerPlaceholder: 'Company or contact',
+    emailLabel: 'Contact email (optional)',
+    emailPlaceholder: 'name@company.com',
+    localeLabel: 'Interview language',
+    modeLabel: 'Scope',
+    modeShort: 'Short check (map only)',
+    modeStandard: 'Standard (map + 3 topics)',
+    modeFull: 'Full (map + 5 topics)',
+    expiryLabel: 'Valid for days',
+    expiryHint: '1 to 30 days. The default is 14.',
+    tenantLabel: 'Tenant (optional)',
+    tenantNone: 'No tenant',
+    createSubmit: 'Create invitation',
+    creating: 'Creating …',
+    linkTitle: 'Link for the customer',
+    linkNote:
+      'This link is shown only now. Copy it and send it yourself – this build has no mail transport.',
+    linkCopy: 'Copy link',
+    linkCopied: 'Link copied',
+    mailUnavailable: 'No mail transport in this build. The link was not sent by email.',
+    listTitle: 'Invitations',
+    listSummary: (shown: number, total: number) => `${shown} of ${total} invitations.`,
+    searchLabel: 'Search',
+    searchPlaceholder: 'Customer or email',
+    filterAll: 'All',
+    colCustomer: 'Customer',
+    colStatus: 'Status',
+    colProgress: 'Progress',
+    colExpires: 'Valid until',
+    colActions: 'Actions',
+    statusOpen: 'Open',
+    statusInProgress: 'In progress',
+    statusCompleted: 'Completed',
+    statusRevoked: 'Revoked',
+    statusExpired: 'Expired',
+    actionOpen: 'Open',
+    actionRevoke: 'Revoke',
+    actionResend: 'Create new link',
+    back: 'Back to the list',
+    detailTitle: 'Invitation',
+    answersTitle: 'Answers',
+    noAnswers: 'No answers yet.',
+    reportTitle: 'Assessment',
+    reportSummary: 'Summary',
+    reportClusters: 'Topics',
+    reportOpportunities: 'Automation opportunities',
+    reportQuickWins: 'Quick wins',
+    reportOpenQuestions: 'Open questions',
+    reportNextStep: 'Next step',
+    colBenefit: 'Benefit',
+    colEffort: 'Effort',
+    colRisk: 'Risk',
+    colData: 'Data maturity',
+    reportUnavailable: 'No assessment yet. It is created when the interview is completed.',
+    revokeConfirmTitle: 'Revoke the invitation?',
+    revokeConfirmBody:
+      'The link stops working immediately. Answers that were already saved stay readable for you.',
+    revokeButton: 'Revoke',
+    revokedToast: 'Invitation revoked.',
+    linkRotatedToast: 'New link created. The old link is invalid.',
+    emptyTitle: 'No invitations yet',
+    emptyDescription: 'Create the first invitation above. The link is shown exactly once.',
+    prevPage: 'Previous',
+    nextPage: 'Next',
+    pageStatus: (from: number, to: number, total: number) => `${from}–${to} of ${total}`,
+    kpiTotal: 'Invitations',
+    kpiOpen: 'Open',
+    kpiInProgress: 'In progress',
+    kpiCompleted: 'Completed',
+    overviewRecent: 'Recent activity',
+    contactLabel: 'Contact',
+    loadError: 'The invitations could not be loaded.',
+    publicBrand: 'SmartFlow',
+    publicTitle: 'Automation check',
+    publicIntro:
+      'A short interview about your processes. At the end you receive an assessment with concrete automation ideas.',
+    consentTitle: 'Before we start',
+    consentNote:
+      'Your answers are sent to an AI service to produce the assessment. We store them for 90 days after completion and delete them afterwards. There is no account and no password.',
+    start: 'Start the interview',
+    next: 'Continue',
+    finish: 'Create assessment',
+    saving: 'Saving …',
+    saved: 'Answer saved',
+    progressLabel: 'Progress',
+    stepOf: (done: number, total: number) => `Step ${done} of ${total}`,
+    hintTitle: 'Hint',
+    examplesTitle: 'Examples',
+    ideasTitle: 'Suggestion, not binding',
+    ideasHint: 'Mark what is relevant for you.',
+    contactTitle: 'Initial call',
+    contactQuestion: 'Would you like an initial call?',
+    contactWay: 'How can we best reach you?',
+    contactWayHint: 'For example a phone call in the morning or an email address.',
+    yes: 'Yes',
+    no: 'No',
+    optional: 'optional',
+    reportTitlePublic: 'Your assessment',
+    reportIntro:
+      'This assessment is a proposal, not a promise. Figures and effort are estimates from your answers.',
+    benefit: 'Benefit',
+    effort: 'Effort',
+    risk: 'Risk',
+    dataMaturity: 'Data maturity',
+    completedTitle: 'Thank you',
+    completedBody:
+      'The interview is complete. The link is now read-only; you can view the assessment again at any time.',
+    expiredTitle: 'Link expired',
+    expiredBody: 'This link is no longer valid. Please contact your SmartFlow contact.',
+    revokedTitle: 'Link revoked',
+    revokedBody: 'This link was revoked. Please contact your SmartFlow contact.',
+    invalidTitle: 'Link not found',
+    invalidBody: 'This link is unknown. Check the address or contact your SmartFlow contact.',
+    errorTitle: 'That did not work',
+    errorBody: 'Please try again. Your saved answers are kept.',
+    retry: 'Try again',
+    aiUnavailable:
+      'The AI service is not answering right now. Your answers are saved; please try again shortly.',
+    skipShort: 'Shortcut: continue without the deep dive',
+    skipShortHint: 'After the map you can go straight to the assessment.',
+    saveLater: 'Save and continue later',
+    saveLaterHint: 'Your progress is saved. Open the same link again later.',
+    requiredMark: 'Required',
+    fieldRequired: 'Please answer this question.',
+    publicFooter: 'Your answers are treated confidentially.',
+    backToStart: 'Back',
   },
 };
 
