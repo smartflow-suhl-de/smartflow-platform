@@ -734,6 +734,32 @@ input:-webkit-autofill:active {
   color: var(--color-ink);
 }
 
+/* Off-screen until focused: a keyboard user sees it as the first stop, a
+ * screen reader reads it in the document order. `display: none` or
+ * `visibility: hidden` would remove it from the accessibility tree instead. */
+.sf-skip-link {
+  position: fixed;
+  top: var(--spacing-sm);
+  left: var(--spacing-sm);
+  z-index: 100;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-ink);
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transform: translateY(calc(-100% - var(--spacing-xl)));
+}
+
+.sf-skip-link:focus-visible,
+.sf-skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 2px;
+}
+
 .sf-sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -903,12 +929,26 @@ input:-webkit-autofill:active {
   height: 16px;
   padding: 0 var(--spacing-xs);
   border-radius: var(--radius-badge);
-  border: 1px solid color-mix(in srgb, var(--color-bad) 30%, transparent);
-  background: color-mix(in srgb, var(--color-bad) 8%, transparent);
-  color: var(--color-bad);
+  border: 1px solid var(--color-line-strong);
+  background: transparent;
+  color: var(--color-ink-soft);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1;
+}
+
+/* Tone of the counter, taken from the badge the navigation hands over:
+ * `bad` marks suspended tenants, `signal` an open action. */
+.sf-nav-count-bad {
+  border-color: color-mix(in srgb, var(--color-bad) 30%, transparent);
+  background: color-mix(in srgb, var(--color-bad) 8%, transparent);
+  color: var(--color-bad);
+}
+
+.sf-nav-count-signal {
+  border-color: color-mix(in srgb, var(--color-signal) 30%, transparent);
+  background: color-mix(in srgb, var(--color-signal) 8%, transparent);
+  color: var(--color-signal);
 }
 
 .sf-nav-count-active {
@@ -1647,4 +1687,21 @@ input:-webkit-autofill:active {
 .sf-text-link:hover {
   color: var(--color-cobalt);
   text-decoration-color: var(--color-cobalt);
+}
+
+/* --- Reduced motion ------------------------------------------------------ */
+
+/* Only the movement goes away, never the state: the drawer still ends at
+ * `translateX(0)`, so it appears instantly and stays visible instead of
+ * sliding in. Durations are 0.01ms rather than 0 so `transitionend` and
+ * animation event handlers keep firing. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

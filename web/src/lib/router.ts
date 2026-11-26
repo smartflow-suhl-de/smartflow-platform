@@ -11,6 +11,16 @@ export interface RouteLocation {
   search: string;
 }
 
+/**
+ * Canonical form of a path, for route comparison: repeated slashes collapse and
+ * a trailing slash goes away, while `/` stays `/`. A browser or a hand-typed
+ * URL produces both shapes for the same view.
+ */
+export function normalizePath(pathname: string): string {
+  const segments = pathname.split('/').filter((segment) => segment.length > 0);
+  return segments.length === 0 ? '/' : `/${segments.join('/')}`;
+}
+
 /** Read the current location in the shape the app routes on. */
 export function readLocation(): RouteLocation {
   return {

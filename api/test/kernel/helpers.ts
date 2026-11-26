@@ -23,7 +23,15 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
-export async function createTestApp(overrides: Record<string, string> = {}): Promise<TestApp> {
+export interface TestAppOptions {
+  /** Capture the request log instead of discarding it. */
+  logStream?: { write(line: string): void };
+}
+
+export async function createTestApp(
+  overrides: Record<string, string> = {},
+  options: TestAppOptions = {},
+): Promise<TestApp> {
   const dataDir = mkdtempSync(join(tmpdir(), 'sf-test-'));
   mkdirSync(dataDir, { recursive: true });
 
@@ -38,7 +46,11 @@ export async function createTestApp(overrides: Record<string, string> = {}): Pro
     ...overrides,
   });
 
-  const { app, db, tenantDb, internalToken } = await buildApp({ config, logger: false });
+  const { app, db, tenantDb, internalToken } = await buildApp({
+    config,
+    logger: options.logStream !== undefined,
+    ...(options.logStream ? { logStream: options.logStream } : {}),
+  });
 
   return {
     app,

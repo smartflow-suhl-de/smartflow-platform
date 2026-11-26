@@ -41,6 +41,24 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+/**
+ * Reports that the platform itself is not answering.
+ *
+ * Fires when a request got no answer or a 5xx. It only ever reports the
+ * failure, never the recovery: a healthy `/nav` or `/stats` answer says
+ * nothing about a `/tenants` route that just returned 502, so a success must
+ * not clear the flag. The shell drops it on the next successful health probe.
+ */
+let outageHandler: (() => void) | null = null;
+
+export function setOutageHandler(handler: (() => void) | null): void {
+  outageHandler = handler;
+}
+
+function reportOutage(): void {
+  outageHandler?.();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -269,8 +287,15 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
     });
     text = await response.text();
   } catch (error) {
-    throw translateFetchError(error);
+    const failure = translateFetchError(error);
+    // A caller abort says nothing about the platform's health.
+    if (!isAbortError(failure)) reportOutage();
+    throw failure;
   }
+
+  // Only a 5xx is an outage. A 2xx (or a 4xx the request itself caused) proves
+  // nothing about the routes that are still failing, so it must not clear it.
+  if (response.status >= 500) reportOutage();
 
   let payload: unknown = null;
   let parsed = true;

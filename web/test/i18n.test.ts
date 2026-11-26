@@ -56,6 +56,23 @@ describe('i18n catalogue', () => {
     assert.equal(getMessages('de'), getMessages('de'));
     assert.notEqual(getMessages('de'), getMessages('en'));
   });
+
+  it('carries the shell and form texts in both languages', () => {
+    for (const locale of ['de', 'en'] as const) {
+      const messages = getMessages(locale);
+      assert.ok(messages.common.platformUnavailable.trim().length > 0, locale);
+      assert.ok(messages.shell.skipToContent.trim().length > 0, locale);
+      assert.ok(messages.tenants.formInvalid.trim().length > 0, locale);
+      assert.ok(messages.tenants.slugHint.trim().length > 0, locale);
+    }
+
+    assert.notEqual(getMessages('de').shell.skipToContent, getMessages('en').shell.skipToContent);
+    assert.notEqual(
+      getMessages('de').common.platformUnavailable,
+      getMessages('en').common.platformUnavailable,
+    );
+    assert.notEqual(getMessages('de').tenants.formInvalid, getMessages('en').tenants.formInvalid);
+  });
 });
 
 describe('locale persistence', () => {
@@ -176,6 +193,19 @@ describe('formatApiError', () => {
   it('falls back to the server message for an unknown code', () => {
     const error = new ApiError(500, 'weird_code', 'Something odd happened');
     assert.equal(formatApiError(error, 'de'), 'Something odd happened');
+  });
+
+  it('replaces a raw 5xx status with the platform-unavailable text', () => {
+    for (const code of ['http_500', 'http_502', 'http_503', 'http_0']) {
+      const raw = new ApiError(502, code, 'HTTP 502');
+      assert.equal(formatApiError(raw, 'de'), getMessages('de').common.platformUnavailable, code);
+      assert.equal(formatApiError(raw, 'en'), getMessages('en').common.platformUnavailable, code);
+    }
+  });
+
+  it('rewrites no 4xx status, which still describes the request', () => {
+    const error = new ApiError(404, 'http_404', 'HTTP 404');
+    assert.equal(formatApiError(error, 'de'), 'HTTP 404');
   });
 
   it('uses the unknown-error text for a non-Error throw', () => {

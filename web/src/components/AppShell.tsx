@@ -5,7 +5,7 @@ import { AppLink, navigate } from '../lib/router';
 import type { HealthResponse, SessionUser, TenantStats } from '../lib/types';
 import type { Mode } from '../theme';
 import { BrandLogo } from './BrandLogo';
-import { CommandPalette, type PaletteMode } from './CommandPalette';
+import { CommandPalette } from './CommandPalette';
 import {
   CloseIcon,
   LogOutIcon,
@@ -49,6 +49,7 @@ export interface AppShellProps {
   loggingOut: boolean;
   logoutError: string | null;
   onModeChange: (mode: Mode) => void;
+  onRetryHealth: () => void;
   onLogout: () => void;
   children: ReactNode;
 }
@@ -65,12 +66,13 @@ export function AppShell({
   loggingOut,
   logoutError,
   onModeChange,
+  onRetryHealth,
   onLogout,
   children,
 }: AppShellProps) {
   const desktop = useIsDesktop();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [paletteMode, setPaletteMode] = useState<PaletteMode | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const asideRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -104,7 +106,7 @@ export function AppShell({
     function onKeyDown(event: KeyboardEvent): void {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
-        setPaletteMode((prev) => (prev === 'search' ? null : 'search'));
+        setPaletteOpen((prev) => !prev);
       }
     }
     window.addEventListener('keydown', onKeyDown);
@@ -173,6 +175,12 @@ export function AppShell({
 
   return (
     <div className="sf-shell">
+      {/* First stop for keyboard users and the first thing a screen reader
+          reads: it jumps over the sidebar straight to the page content. */}
+      <a href="#sf-main" className="sf-skip-link">
+        {messages.shell.skipToContent}
+      </a>
+
       <aside
         id="sf-main-sidebar"
         ref={asideRef}
@@ -234,7 +242,13 @@ export function AppShell({
                       <span className="sf-nav-label">{item.label}</span>
                       {item.badge ? (
                         <span
-                          className={active ? 'sf-nav-count sf-nav-count-active' : 'sf-nav-count'}
+                          className={[
+                            'sf-nav-count',
+                            `sf-nav-count-${item.badge.tone}`,
+                            active ? 'sf-nav-count-active' : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
                         >
                           {item.badge.value}
                         </span>
@@ -317,7 +331,7 @@ export function AppShell({
 
             <button
               type="button"
-              onClick={() => setPaletteMode('search')}
+              onClick={() => setPaletteOpen(true)}
               aria-label={messages.shell.searchAria}
               className="sf-search-trigger"
             >
@@ -330,6 +344,13 @@ export function AppShell({
               <div className="sf-topbar-health">
                 <span className={`sf-dot ${systemHealth.dot}`} aria-hidden="true" />
                 <span className="label">{systemHealth.label}</span>
+                {/* The indicator otherwise only resets once another request
+                    answers; this lets the operator ask again without a reload. */}
+                {healthError ? (
+                  <Button variant="ghost" size="sm" onClick={onRetryHealth}>
+                    {messages.common.retry}
+                  </Button>
+                ) : null}
               </div>
               <Button
                 variant="secondary"
@@ -351,16 +372,15 @@ export function AppShell({
           </div>
         </header>
 
-        <main ref={mainRef} tabIndex={-1} className="sf-content">
+        <main id="sf-main" ref={mainRef} tabIndex={-1} className="sf-content">
           {children}
         </main>
 
         <CommandPalette
-          open={paletteMode !== null}
-          mode={paletteMode ?? 'search'}
+          open={paletteOpen}
           items={navItems}
           messages={messages}
-          onClose={() => setPaletteMode(null)}
+          onClose={() => setPaletteOpen(false)}
         />
       </div>
     </div>

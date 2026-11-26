@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 
 /**
  * The API client is the only seam between the SPA and the server, so its
@@ -31,8 +31,14 @@ globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}
   return respond(url, init);
 }) as typeof fetch;
 
-const { ApiError, api, setUnauthorizedHandler, translateFetchError, REQUEST_TIMEOUT_MS } =
-  await import('../src/lib/api.ts');
+const {
+  ApiError,
+  api,
+  setOutageHandler,
+  setUnauthorizedHandler,
+  translateFetchError,
+  REQUEST_TIMEOUT_MS,
+} = await import('../src/lib/api.ts');
 
 describe('api requests', () => {
   beforeEach(() => {
@@ -350,6 +356,77 @@ describe('api error handling', () => {
       },
     );
   });
+});
+
+describe('api outage reporting', () => {
+  beforeEach(() => {
+    calls = [];
+    setUnauthorizedHandler(null);
+    setOutageHandler(null);
+  });
+
+  it('reports a 5xx as an outage', async () => {
+    let outages = 0;
+    setOutageHandler(() => {
+      outages += 1;
+    });
+    respond = () => jsonResponse(502, { error: { code: 'upstream_down', message: 'no' } });
+
+    await assert.rejects(() => api.tenantStats());
+    assert.equal(outages, 1);
+  });
+
+  it('reports an unanswered request as an outage', async () => {
+    let outages = 0;
+    setOutageHandler(() => {
+      outages += 1;
+    });
+    respond = () => {
+      throw new TypeError('fetch failed');
+    };
+
+    await assert.rejects(() => api.nav());
+    assert.equal(outages, 1);
+  });
+
+  it('keeps a latched outage when a different route answers 200', async () => {
+    // The bug QA found: `/tenants` fails, `/nav` still answers, and the 200
+    // asserted "system nominal" while the tenant route stayed broken.
+    let outages = 0;
+    setOutageHandler(() => {
+      outages += 1;
+    });
+    respond = (url) =>
+      url.endsWith('/tenants')
+        ? jsonResponse(502, { error: { code: 'upstream_down', message: 'no' } })
+        : jsonResponse(200, { items: [] });
+
+    await assert.rejects(() => api.listTenants({}));
+    await api.nav();
+
+    assert.equal(outages, 1);
+  });
+
+  it('stays silent for a 4xx and for a caller abort', async () => {
+    let outages = 0;
+    setOutageHandler(() => {
+      outages += 1;
+    });
+
+    respond = () => jsonResponse(422, { error: { code: 'validation_failed', message: 'no' } });
+    await assert.rejects(() => api.requestMagicLink('nope'));
+
+    respond = () => {
+      throw new DOMException('aborted', 'AbortError');
+    };
+    await assert.rejects(() => api.health());
+
+    assert.equal(outages, 0);
+  });
+
+  // The handler is module state: leaving it installed would make every later
+  // request in this file report into a dead test.
+  afterEach(() => setOutageHandler(null));
 });
 
 describe('translateFetchError', () => {

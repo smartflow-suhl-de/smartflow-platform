@@ -126,6 +126,10 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
           name: formatFieldError('name', err.fields.name, locale),
           slug: formatFieldError('slug', err.fields.slug, locale),
         });
+        // The contract also allows a `form` key for a failure without a field
+        // path. It belongs above the form; dropping it would leave the submit
+        // silently unanswered.
+        if (err.fields.form !== undefined) setError(messages.tenants.formInvalid);
       } else {
         setError(formatApiError(err, locale));
       }
@@ -265,11 +269,13 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
           />
 
           <div className="sf-toolbar">
-            <div className="sf-tabs" role="tablist" aria-label={messages.tenants.colStatus}>
+            {/* Filters, not tabs: all three options stay visible and each one
+                narrows the same list. `tablist` would promise arrow-key
+                navigation and a `tabpanel` that do not exist. */}
+            <div className="sf-tabs" role="group" aria-label={messages.tenants.colStatus}>
               <button
                 type="button"
-                role="tab"
-                aria-selected={statusFilter === 'all'}
+                aria-pressed={statusFilter === 'all'}
                 onClick={() => applyFilter('all')}
                 className={statusFilter === 'all' ? 'sf-tab sf-tab-active' : 'sf-tab'}
               >
@@ -278,8 +284,7 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
               </button>
               <button
                 type="button"
-                role="tab"
-                aria-selected={statusFilter === 'active'}
+                aria-pressed={statusFilter === 'active'}
                 onClick={() => applyFilter('active')}
                 className={statusFilter === 'active' ? 'sf-tab sf-tab-active' : 'sf-tab'}
               >
@@ -288,8 +293,7 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
               </button>
               <button
                 type="button"
-                role="tab"
-                aria-selected={statusFilter === 'suspended'}
+                aria-pressed={statusFilter === 'suspended'}
                 onClick={() => applyFilter('suspended')}
                 className={statusFilter === 'suspended' ? 'sf-tab sf-tab-active' : 'sf-tab'}
               >
@@ -299,12 +303,15 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
             </div>
 
             <div className="sf-search-wrap">
+              {/* The server rejects longer terms with 422; capping the field
+                  keeps the list request valid while typing. */}
               <Input
                 type="search"
                 value={query}
                 onChange={(event) => applyQuery(event.target.value)}
                 placeholder={messages.tenants.searchPlaceholder}
                 aria-label={messages.tenants.searchLabel}
+                maxLength={80}
               />
             </div>
           </div>
@@ -328,11 +335,21 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
                 <table className="sf-table">
                   <thead>
                     <tr>
-                      <th className="label">{messages.tenants.colTenant}</th>
-                      <th className="label">{messages.tenants.colId}</th>
-                      <th className="label">{messages.tenants.colStatus}</th>
-                      <th className="label">{messages.tenants.colCreated}</th>
-                      <th className="label sf-table-actions">{messages.tenants.colAction}</th>
+                      <th scope="col" className="label">
+                        {messages.tenants.colTenant}
+                      </th>
+                      <th scope="col" className="label">
+                        {messages.tenants.colId}
+                      </th>
+                      <th scope="col" className="label">
+                        {messages.tenants.colStatus}
+                      </th>
+                      <th scope="col" className="label">
+                        {messages.tenants.colCreated}
+                      </th>
+                      <th scope="col" className="label sf-table-actions">
+                        {messages.tenants.colAction}
+                      </th>
                     </tr>
                   </thead>
                   <tbody>

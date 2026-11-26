@@ -68,6 +68,8 @@ export interface BuildOptions {
   now?: () => Date;
   /** Test hook: silence the logger regardless of config. */
   logger?: boolean;
+  /** Test hook: capture the log lines instead of writing them to stdout. */
+  logStream?: { write(line: string): void };
 }
 
 /**
@@ -80,7 +82,31 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
 
   const app = Fastify({
     logger:
-      options.logger === false || config.logLevel === 'silent' ? false : { level: config.logLevel },
+      options.logger === false || config.logLevel === 'silent'
+        ? false
+        : {
+            level: config.logLevel,
+            ...(options.logStream ? { stream: options.logStream } : {}),
+            serializers: {
+              // `req.url` carries the whole query string, and that is where the
+              // sensitive values live: `?q=` is an operator's search term and a
+              // magic link travels as `?token=`. The path, the method and the
+              // status are everything an incident needs, so the query goes.
+              req: (request) => {
+                // Fastify hands its own request object to the serializer, so
+                // `ip` is the proxy-aware address the rate limit keys on, not
+                // the socket address of the last hop.
+                const { ip } = request as { ip?: string };
+                return {
+                  method: request.method,
+                  url: pathOf(request.url),
+                  host: request.headers.host,
+                  remoteAddress: ip ?? request.socket?.remoteAddress,
+                  remotePort: request.socket?.remotePort,
+                };
+              },
+            },
+          },
     bodyLimit: config.bodyLimit,
     // Only the hops we declare are trusted. `true` would trust the whole chain
     // and let a client set its own `request.ip` via `X-Forwarded-For`, which is
@@ -451,8 +477,18 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 /** `/api` and everything below it belongs to the API, never to the SPA. */
 function isApiPath(url: string): boolean {
-  const path = url.split('?')[0] ?? '';
+  const path = pathOf(url);
   return path === '/api' || path.startsWith('/api/');
+}
+
+/**
+ * The path of a request URL without its query string.
+ *
+ * Used for routing decisions and for log records alike: no query means no
+ * search term and no magic-link token leaves the process in a log line.
+ */
+function pathOf(url: string | undefined): string {
+  return (url ?? '').split('?')[0] ?? '';
 }
 
 /** Nav entries from manifests, filtered for the role, in display order. */

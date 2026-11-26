@@ -1,7 +1,10 @@
 import {
+  cloneElement,
   forwardRef,
+  isValidElement,
   type ButtonHTMLAttributes,
   type InputHTMLAttributes,
+  type ReactElement,
   type ReactNode,
   useRef,
 } from 'react';
@@ -78,18 +81,42 @@ export interface FieldProps {
   children: ReactNode;
 }
 
+/**
+ * Gives the control its `aria-describedby`, built from the ids `Field` renders
+ * below. Only text that exists is referenced: a dangling id would make a screen
+ * reader announce nothing at all.
+ */
+function linkDescription(children: ReactNode, describedBy: string): ReactNode {
+  if (describedBy === '' || !isValidElement(children)) return children;
+  const child = children as ReactElement<{ 'aria-describedby'?: string }>;
+  const existing = child.props['aria-describedby'];
+  return cloneElement(child, {
+    'aria-describedby': existing ? `${existing} ${describedBy}` : describedBy,
+  });
+}
+
 export function Field({ label, hint, error, htmlFor, children }: FieldProps) {
+  // The ids derive from the control id, so hint and error always belong to the
+  // input the label points at. Without `htmlFor` there is nothing to describe.
+  const hintId = htmlFor && hint ? `${htmlFor}-hint` : null;
+  const errorId = htmlFor && error ? `${htmlFor}-error` : null;
+  const describedBy = [hintId, errorId].filter(Boolean).join(' ');
+
   return (
     <div className="sf-field">
       <div className="sf-field-label">
         <label className="label" htmlFor={htmlFor}>
           {label}
         </label>
-        {hint ? <span className="sf-field-hint">{hint}</span> : null}
+        {hint ? (
+          <span id={hintId ?? undefined} className="sf-field-hint">
+            {hint}
+          </span>
+        ) : null}
       </div>
-      {children}
+      {linkDescription(children, describedBy)}
       {error ? (
-        <div className="sf-field-error" role="alert">
+        <div id={errorId ?? undefined} className="sf-field-error" role="alert">
           {error}
         </div>
       ) : null}
