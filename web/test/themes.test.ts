@@ -63,6 +63,13 @@ describe('theme colour helpers', () => {
     const alreadyPassing = color.ensureContrast('#12161a', '#f2efe7', 7);
     assert.equal(alreadyPassing, '#12161a');
   });
+
+  it('chooses the endpoint with higher contrast for mid-grey backgrounds', () => {
+    // Relative luminance of #888888 is ~0.25 (contrast towards black is ~6.0:1 while towards white is ~3.5:1)
+    const contrasted = color.ensureContrast('#888888', '#888888', 5);
+    assert.ok(color.contrastRatio(contrasted, '#888888') >= 5);
+    assert.ok(color.relativeLuminance(contrasted) < color.relativeLuminance('#888888'));
+  });
 });
 
 describe('theme catalog', () => {
@@ -150,9 +157,16 @@ describe('custom theme derivation', () => {
     assert.deepEqual(themes.customThemeProblems({ ...SAMPLE, paper: '#101010' }), [
       'paper_too_dark',
     ]);
+    assert.deepEqual(themes.customThemeProblems({ ...SAMPLE, paper: '#bcbcbc' }), [
+      'paper_too_dark',
+    ]);
+    assert.deepEqual(themes.customThemeProblems({ ...SAMPLE, paper: '#bebebe' }), [
+      'paper_too_dark',
+    ]);
     assert.deepEqual(themes.customThemeProblems({ ...SAMPLE, name: '   ' }), ['name']);
     assert.deepEqual(themes.customThemeProblems({ ...SAMPLE, accent: 'red' }), ['accent']);
     assert.throws(() => themes.buildCustomTheme({ ...SAMPLE, paper: '#101010' }));
+    assert.throws(() => themes.buildCustomTheme({ ...SAMPLE, paper: '#bcbcbc' }));
   });
 
   it('caps the theme name at forty characters', () => {
@@ -195,6 +209,9 @@ describe('theme file', () => {
       [JSON.stringify({ name: '', accent: '#123456', paper: '#ffffff' }), 'invalid_name'],
       [JSON.stringify({ name: 'X', accent: '#fff;--x:1', paper: '#ffffff' }), 'invalid_color'],
       [JSON.stringify({ name: 'X', accent: '#123456', paper: '#101010' }), 'paper_too_dark'],
+      [JSON.stringify({ name: 'X', accent: '#123456', paper: '#bcbcbc' }), 'paper_too_dark'],
+      [JSON.stringify({ name: 'X', accent: '#123456' }), 'invalid_shape'],
+      [JSON.stringify({ name: 'X', paper: '#ffffff' }), 'invalid_shape'],
     ];
     for (const [input, expected] of cases) {
       const parsed = themes.parseThemeFile(input);
@@ -297,6 +314,24 @@ describe('theme storage and application', () => {
     assert.equal(browser.storage.has('sf.theme.custom'), false);
     assert.equal(theme.storedCustomTheme(), null);
     assert.equal(theme.storedTheme().id, 'instrument');
+  });
+
+  it('clears the custom theme without resetting an active built-in theme', () => {
+    const custom = themes.buildCustomTheme(SAMPLE);
+    theme.applyTheme(custom, 'light');
+
+    const nordlicht = themes.findTheme('nordlicht');
+    assert.ok(nordlicht);
+    theme.applyTheme(nordlicht, 'light');
+
+    assert.equal(theme.storedTheme().id, 'nordlicht');
+    assert.ok(theme.storedCustomTheme());
+
+    theme.clearCustomTheme();
+
+    assert.equal(browser.storage.has('sf.theme.custom'), false);
+    assert.equal(theme.storedCustomTheme(), null);
+    assert.equal(theme.storedTheme().id, 'nordlicht');
   });
 
   it('survives a storage that throws', () => {

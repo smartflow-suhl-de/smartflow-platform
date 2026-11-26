@@ -120,5 +120,7 @@ export function applyTheme(theme: ThemeDefinition, mode: Mode): void {
 /** Forgets the browser's custom theme and falls back to the default. */
 export function clearCustomTheme(): void {
   removeItem(CUSTOM_KEY);
-  writeItem(THEME_KEY, DEFAULT_THEME_ID);
+  if (readItem(THEME_KEY) === CUSTOM_THEME_ID) {
+    writeItem(THEME_KEY, DEFAULT_THEME_ID);
+  }
 }

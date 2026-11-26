@@ -8,7 +8,7 @@ import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } f
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
-import { BUILTIN_THEMES, defaultTheme, type ThemeDefinition } from './lib/themes';
+import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
 import { HelpPage } from './pages/Help';
 import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
@@ -71,7 +71,7 @@ export function App() {
   const handleRemoveCustomTheme = useCallback(() => {
     clearCustomTheme();
     setCustomTheme(null);
-    setTheme(defaultTheme());
+    setTheme((current) => (current.id === CUSTOM_THEME_ID ? defaultTheme() : current));
   }, []);
 
   const handleLocaleChange = useCallback((next: Locale) => {

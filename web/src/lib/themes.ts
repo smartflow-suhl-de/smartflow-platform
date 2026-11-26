@@ -328,7 +328,7 @@ export interface CustomThemeInput {
 }
 
 export const NAME_MAX_LENGTH = 40;
-export const PAPER_MIN_LUMINANCE = 0.5;
+export const PAPER_MIN_LUMINANCE = 0.55;
 
 export function isValidThemeName(name: string): boolean {
   const trimmed = name.trim();
@@ -496,7 +496,8 @@ export function parseThemeFile(text: string): ParseThemeResult {
   const compactKeys = new Set(['schemaVersion', 'name', 'accent', 'paper']);
   const fullKeys = new Set(['schemaVersion', 'name', 'light', 'dark']);
   const keys = Object.keys(record);
-  const isCompact = keys.every((key) => compactKeys.has(key)) && 'accent' in record;
+  const isCompact =
+    keys.every((key) => compactKeys.has(key)) && 'accent' in record && 'paper' in record;
   const isFull = keys.every((key) => fullKeys.has(key)) && 'light' in record && 'dark' in record;
   if (isCompact === isFull) return { ok: false, error: 'invalid_shape' };
 

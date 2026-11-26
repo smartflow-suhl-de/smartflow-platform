@@ -95,7 +95,8 @@ export function ensureContrast(color: string, background: string, target: number
   const start = normalizeHex(color);
   if (contrastRatio(start, background) >= target) return start;
 
-  const towards = relativeLuminance(background) < 0.5 ? WHITE : BLACK;
+  const towards =
+    contrastRatio(WHITE, background) >= contrastRatio(BLACK, background) ? WHITE : BLACK;
   let low = 0;
   let high = 1;
   let best = towards;
