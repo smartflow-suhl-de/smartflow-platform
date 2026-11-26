@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+dist
+web/dist
+data
+.git
+.github
+*.md
+.env
+.env.*
+!/.env.example
+.impeccable
+api/test
+npm-debug.log*
+*.sqlite*
