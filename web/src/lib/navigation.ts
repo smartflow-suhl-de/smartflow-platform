@@ -1,4 +1,5 @@
 import type { Messages } from './i18n';
+import { normalizePath } from './router';
 import type { NavEntry, Role } from './types';
 
 export interface ResolvedNavItem {
@@ -109,8 +110,11 @@ export function utilityNavigation(items: ResolvedNavItem[]): ResolvedNavItem[] {
 }
 
 export function resolveAliasRedirect(pathname: string, items: ResolvedNavItem[]): string | null {
+  // A trailing or doubled slash must not defeat the alias match: `/mandanten/`
+  // is the same address as `/mandanten`.
+  const requested = normalizePath(pathname);
   for (const item of items) {
-    if (item.aliases.includes(pathname)) {
+    if (item.aliases.some((alias) => normalizePath(alias) === requested)) {
       return item.path;
     }
   }

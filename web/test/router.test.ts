@@ -3,7 +3,7 @@ import { beforeEach, describe, it } from 'node:test';
 import type { ReactElement } from 'react';
 import { browser, setLocation } from './helpers/browser.ts';
 
-const { AppLink, navigate } = await import('../src/lib/router.ts');
+const { AppLink, navigate, normalizePath } = await import('../src/lib/router.ts');
 
 describe('router.navigate', () => {
   beforeEach(() => {
@@ -153,6 +153,30 @@ describe('isPlainLeftClick', () => {
     ]) {
       assert.equal(isPlainLeftClick({ ...plain, ...patch }), false, JSON.stringify(patch));
     }
+  });
+});
+
+describe('normalizePath', () => {
+  it('drops a trailing slash', () => {
+    assert.equal(normalizePath('/tenants/'), '/tenants');
+    assert.equal(normalizePath('/tenants//'), '/tenants');
+  });
+
+  it('collapses repeated slashes inside the path', () => {
+    assert.equal(normalizePath('/a//b'), '/a/b');
+    assert.equal(normalizePath('/a///b//c'), '/a/b/c');
+  });
+
+  it('keeps the root and the bare slash', () => {
+    assert.equal(normalizePath('/'), '/');
+    assert.equal(normalizePath('///'), '/');
+    assert.equal(normalizePath(''), '/');
+  });
+
+  it('leaves an already canonical path untouched', () => {
+    assert.equal(normalizePath('/tenants'), '/tenants');
+    assert.equal(normalizePath('/login/confirm'), '/login/confirm');
+    assert.equal(normalizePath('/Tenants'), '/Tenants');
   });
 });
 

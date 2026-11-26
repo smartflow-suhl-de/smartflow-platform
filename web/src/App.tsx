@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { Button } from './components/ui';
-import { api, isAbortError, setUnauthorizedHandler } from './lib/api';
+import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './lib/api';
 import { sessionProbeOutcome } from './lib/auth-flow';
 import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
-import { navigate, useRoute } from './lib/router';
+import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { HelpPage } from './pages/Help';
 import { LoginPage } from './pages/Login';
@@ -24,7 +24,10 @@ type SessionState =
   | { kind: 'signed_in'; auth: AuthMe };
 
 export function App() {
-  const { pathname, search } = useRoute();
+  const { pathname: rawPathname, search } = useRoute();
+  // Route matching never sees a trailing or doubled slash, so `/tenants/`
+  // resolves to the tenants view instead of the NotFound page.
+  const pathname = normalizePath(rawPathname);
   const [session, setSession] = useState<SessionState>({ kind: 'loading' });
   const [probeVersion, setProbeVersion] = useState(0);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -34,6 +37,7 @@ export function App() {
   const [locale, setLocale] = useState<Locale>(() => storedLocale());
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState(false);
+  const [healthProbe, setHealthProbe] = useState(0);
   const [apiNav, setApiNav] = useState<NavEntry[]>([]);
   const [stats, setStats] = useState<TenantStats | null>(null);
   const [statsVersion, setStatsVersion] = useState(0);
@@ -59,7 +63,13 @@ export function App() {
       setStats(null);
       setApiNav([]);
     });
-    return () => setUnauthorizedHandler(null);
+    // Every request reports whether the platform answered, so a failing data
+    // route stops the shell from claiming "system nominal".
+    setOutageHandler((outage) => setHealthError(outage));
+    return () => {
+      setUnauthorizedHandler(null);
+      setOutageHandler(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -102,7 +112,7 @@ export function App() {
       .catch(() => undefined);
 
     return () => controller.abort();
-  }, [session.kind]);
+  }, [session.kind, healthProbe]);
 
   const role = session.kind === 'signed_in' ? session.auth.user.role : null;
 
@@ -157,6 +167,10 @@ export function App() {
     setSession({ kind: 'loading' });
     setProbeVersion((v) => v + 1);
   }, []);
+
+  // Re-runs the health probe. A recovered data route clears `healthError` on its
+  // own; this covers a stale indicator nobody else touches.
+  const retryHealth = useCallback(() => setHealthProbe((v) => v + 1), []);
 
   const handleLogout = useCallback(() => {
     setLoggingOut(true);
@@ -276,6 +290,7 @@ export function App() {
       loggingOut={loggingOut}
       logoutError={logoutError}
       onModeChange={handleModeChange}
+      onRetryHealth={retryHealth}
       onLogout={handleLogout}
     >
       {content}

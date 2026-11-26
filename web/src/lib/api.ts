@@ -41,6 +41,23 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedHandler = handler;
 }
 
+/**
+ * Reports whether the platform itself is answering.
+ *
+ * `true` when a request got no answer or a 5xx, `false` as soon as any response
+ * with a non-5xx status arrives. The shell uses it to stop claiming "system
+ * nominal" while a data route is failing.
+ */
+let outageHandler: ((outage: boolean) => void) | null = null;
+
+export function setOutageHandler(handler: ((outage: boolean) => void) | null): void {
+  outageHandler = handler;
+}
+
+function reportOutage(outage: boolean): void {
+  outageHandler?.(outage);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -269,8 +286,15 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
     });
     text = await response.text();
   } catch (error) {
-    throw translateFetchError(error);
+    const failure = translateFetchError(error);
+    // A caller abort says nothing about the platform's health.
+    if (!isAbortError(failure)) reportOutage(true);
+    throw failure;
   }
+
+  // Any answer below 500 means the platform is up, whatever it says about the
+  // request itself.
+  reportOutage(response.status >= 500);
 
   let payload: unknown = null;
   let parsed = true;

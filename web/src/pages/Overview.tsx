@@ -169,10 +169,18 @@ export function OverviewPage({
             <table className="sf-table">
               <thead>
                 <tr>
-                  <th className="label">{messages.tenants.colTenant}</th>
-                  <th className="label">{messages.tenants.colId}</th>
-                  <th className="label">{messages.tenants.colStatus}</th>
-                  <th className="label">{messages.tenants.colCreated}</th>
+                  <th scope="col" className="label">
+                    {messages.tenants.colTenant}
+                  </th>
+                  <th scope="col" className="label">
+                    {messages.tenants.colId}
+                  </th>
+                  <th scope="col" className="label">
+                    {messages.tenants.colStatus}
+                  </th>
+                  <th scope="col" className="label">
+                    {messages.tenants.colCreated}
+                  </th>
                 </tr>
               </thead>
               <tbody>

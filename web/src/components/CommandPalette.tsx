@@ -2,29 +2,31 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Messages } from '../lib/i18n';
 import type { ResolvedNavItem } from '../lib/navigation';
 import { navigate } from '../lib/router';
-import { PlusIcon, SearchIcon, navIconByName } from './icons';
+import { SearchIcon, navIconByName } from './icons';
 import { useFocusTrap } from './useFocusTrap';
-
-export type PaletteMode = 'search' | 'create';
 
 export interface CommandPaletteProps {
   open: boolean;
-  mode: PaletteMode;
   items: ResolvedNavItem[];
   messages: Messages;
   onClose: () => void;
 }
 
-export function CommandPalette({ open, mode, items, messages, onClose }: CommandPaletteProps) {
+/**
+ * Jump-to-view palette. It carries exactly one mode: searching the navigation.
+ * A "create" mode used to exist without a caller — the quick-create button
+ * navigates to `/tenants?create=1` instead, which focuses the form directly.
+ */
+export function CommandPalette({ open, items, messages, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // `onClose` is an inline arrow in the shell, so it changes identity on every
-  // shell render. Keeping it in a ref lets the reset effect depend on
-  // `[open, mode]` only — otherwise typing (which re-renders the page behind)
-  // would clear the query on every keystroke.
+  // shell render. Keeping it in a ref lets the reset effect depend on `open`
+  // only — otherwise typing (which re-renders the page behind) would clear the
+  // query on every keystroke.
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -34,7 +36,7 @@ export function CommandPalette({ open, mode, items, messages, onClose }: Command
     if (!open) return;
     setQuery('');
     setCursor(0);
-  }, [open, mode]);
+  }, [open]);
 
   useFocusTrap(dialogRef, open, {
     onEscape: () => onCloseRef.current(),
@@ -42,26 +44,24 @@ export function CommandPalette({ open, mode, items, messages, onClose }: Command
   });
 
   const filtered = useMemo(() => {
-    const pool = mode === 'create' ? items.filter((item) => item.createLabel !== null) : items;
     const needle = query.trim().toLowerCase();
-    if (!needle) return pool;
-    return pool.filter((item) => {
-      const label = mode === 'create' && item.createLabel ? item.createLabel : item.label;
+    if (!needle) return items;
+    return items.filter((item) => {
       const groupLabel = messages.navGroups[item.group];
-      return `${label} ${groupLabel} ${item.path}`.toLowerCase().includes(needle);
+      return `${item.label} ${groupLabel} ${item.path}`.toLowerCase().includes(needle);
     });
-  }, [items, mode, query, messages.navGroups]);
+  }, [items, query, messages.navGroups]);
 
   useEffect(() => {
     setCursor(0);
-  }, [query, mode]);
+  }, [query]);
 
   if (!open) return null;
 
   function selectItem(item: ResolvedNavItem | undefined): void {
     if (!item) return;
     onClose();
-    navigate(mode === 'create' ? `${item.path}?create=1` : item.path);
+    navigate(item.path);
   }
 
   function handleInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
@@ -77,12 +77,7 @@ export function CommandPalette({ open, mode, items, messages, onClose }: Command
     }
   }
 
-  const title =
-    mode === 'create' ? messages.shell.paletteTitleCreate : messages.shell.paletteTitleSearch;
-  const placeholder =
-    mode === 'create'
-      ? messages.shell.palettePlaceholderCreate
-      : messages.shell.palettePlaceholderSearch;
+  const title = messages.shell.paletteTitleSearch;
 
   return (
     <>
@@ -96,13 +91,13 @@ export function CommandPalette({ open, mode, items, messages, onClose }: Command
         className="sf-palette"
       >
         <div className="sf-palette-head">
-          {mode === 'create' ? <PlusIcon size={15} /> : <SearchIcon size={15} />}
+          <SearchIcon size={15} />
           <input
             ref={inputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
+            placeholder={messages.shell.palettePlaceholderSearch}
             aria-label={title}
             className="sf-palette-input"
           />
@@ -115,7 +110,6 @@ export function CommandPalette({ open, mode, items, messages, onClose }: Command
           ) : (
             filtered.map((item, index) => {
               const active = index === cursor;
-              const label = mode === 'create' && item.createLabel ? item.createLabel : item.label;
               return (
                 <button
                   key={item.id}
@@ -125,7 +119,7 @@ export function CommandPalette({ open, mode, items, messages, onClose }: Command
                   className={active ? 'sf-palette-row sf-palette-row-active' : 'sf-palette-row'}
                 >
                   {navIconByName(item.icon, 15)}
-                  <span>{label}</span>
+                  <span>{item.label}</span>
                   <span className="sf-palette-group">{messages.navGroups[item.group]}</span>
                 </button>
               );

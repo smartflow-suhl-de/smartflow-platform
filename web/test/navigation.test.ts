@@ -110,11 +110,13 @@ describe('buildNavigation', () => {
     );
   });
 
-  it('badges the tenants entry with the suspended count', () => {
+  it('badges the tenants entry with the suspended count and its tone', () => {
     const items = buildNavigation('operator', [], messages, 3);
     const tenants = items.find((item) => item.path === '/tenants');
 
     assert.deepEqual(tenants?.badge, { value: 3, tone: 'bad' });
+    // The shell renders the tone as a CSS class, so it must stay a plain token.
+    assert.equal(tenants?.badge?.tone, 'bad');
   });
 
   it('adds no badge without suspended tenants', () => {
@@ -213,6 +215,12 @@ describe('resolveAliasRedirect', () => {
       messages,
     );
     assert.equal(resolveAliasRedirect('/rechnungen', items), '/invoices');
+  });
+
+  it('resolves an alias with a trailing or doubled slash', () => {
+    const items = buildNavigation('operator', [], messages);
+    assert.equal(resolveAliasRedirect('/mandanten/', items), '/tenants');
+    assert.equal(resolveAliasRedirect('/mandanten//', items), '/tenants');
   });
 
   it('returns null for a path without an alias', () => {

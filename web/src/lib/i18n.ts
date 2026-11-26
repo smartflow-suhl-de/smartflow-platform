@@ -55,6 +55,7 @@ export interface Messages {
     retry: string;
     unknownError: string;
     noTenant: string;
+    platformUnavailable: string;
   };
   roles: Record<Role, string>;
   navGroups: {
@@ -72,6 +73,7 @@ export interface Messages {
   shell: {
     navAria: string;
     mainNavAria: string;
+    skipToContent: string;
     openMenu: string;
     closeMenu: string;
     searchPlaceholder: string;
@@ -88,9 +90,7 @@ export interface Messages {
     opsTenantsLine: (active: number, total: number) => string;
     logout: string;
     paletteTitleSearch: string;
-    paletteTitleCreate: string;
     palettePlaceholderSearch: string;
-    palettePlaceholderCreate: string;
     paletteEmpty: string;
   };
   login: {
@@ -148,6 +148,7 @@ export interface Messages {
     slugPlaceholder: string;
     createSubmit: string;
     creating: string;
+    formInvalid: string;
     createdSuccess: (name: string) => string;
     suspendedSuccess: (name: string) => string;
     resumedSuccess: (name: string) => string;
@@ -227,6 +228,7 @@ const DE: Messages = {
     retry: 'Erneut versuchen',
     unknownError: 'Die Anfrage konnte nicht verarbeitet werden.',
     noTenant: 'Plattformebene',
+    platformUnavailable: 'Die Plattform antwortet nicht. Bitte später erneut versuchen.',
   },
   roles: {
     operator: 'Operator',
@@ -248,6 +250,7 @@ const DE: Messages = {
   shell: {
     navAria: 'Navigation',
     mainNavAria: 'Hauptnavigation',
+    skipToContent: 'Zum Inhalt springen',
     openMenu: 'Navigation öffnen',
     closeMenu: 'Navigation schließen',
     searchPlaceholder: 'Suchen, springen, anlegen …',
@@ -265,9 +268,7 @@ const DE: Messages = {
       `${active} / ${total} ${total === 1 ? 'Mandant' : 'Mandanten'} aktiv`,
     logout: 'Abmelden',
     paletteTitleSearch: 'Suchen und springen',
-    paletteTitleCreate: 'Aktion wählen',
     palettePlaceholderSearch: 'Bereich oder Aktion suchen …',
-    palettePlaceholderCreate: 'Was soll angelegt werden? …',
     paletteEmpty: 'Kein passender Eintrag gefunden.',
   },
   login: {
@@ -334,6 +335,7 @@ const DE: Messages = {
     slugPlaceholder: 'nordwind-logistik',
     createSubmit: 'Mandant anlegen',
     creating: 'Wird angelegt …',
+    formInvalid: 'Bitte prüfen Sie die Eingaben im Formular.',
     createdSuccess: (name) => `${name} wurde angelegt und provisioniert.`,
     suspendedSuccess: (name) => `${name} wurde gesperrt.`,
     resumedSuccess: (name) => `${name} wurde reaktiviert.`,
@@ -426,6 +428,7 @@ const EN: Messages = {
     retry: 'Try again',
     unknownError: 'The request could not be completed.',
     noTenant: 'Platform scope',
+    platformUnavailable: 'The platform is not responding. Please try again later.',
   },
   roles: {
     operator: 'Operator',
@@ -447,6 +450,7 @@ const EN: Messages = {
   shell: {
     navAria: 'Navigation',
     mainNavAria: 'Main navigation',
+    skipToContent: 'Skip to content',
     openMenu: 'Open navigation',
     closeMenu: 'Close navigation',
     searchPlaceholder: 'Search, jump, create …',
@@ -464,9 +468,7 @@ const EN: Messages = {
       `${active} / ${total} ${total === 1 ? 'tenant' : 'tenants'} active`,
     logout: 'Sign out',
     paletteTitleSearch: 'Search and jump',
-    paletteTitleCreate: 'Choose action',
     palettePlaceholderSearch: 'Search views or actions …',
-    palettePlaceholderCreate: 'What would you like to create? …',
     paletteEmpty: 'No matching entries found.',
   },
   login: {
@@ -528,6 +530,7 @@ const EN: Messages = {
     slugPlaceholder: 'northwind-logistics',
     createSubmit: 'Create tenant',
     creating: 'Creating …',
+    formInvalid: 'Please check the form input.',
     createdSuccess: (name) => `${name} was created and provisioned.`,
     suspendedSuccess: (name) => `${name} has been suspended.`,
     resumedSuccess: (name) => `${name} has been resumed.`,
@@ -610,10 +613,24 @@ export function getMessages(locale: Locale): Messages {
   return locale === 'en' ? EN : DE;
 }
 
+/**
+ * True for the codes the API client invents when a response carries no usable
+ * error body: `http_<status>`. A 5xx (or the status-0 placeholder) means the
+ * platform itself failed, not the request, so its raw `message` ("HTTP 502") is
+ * operator noise rather than an explanation.
+ */
+function isPlatformOutageCode(code: string): boolean {
+  return code === 'http_0' || /^http_5\d\d$/.test(code);
+}
+
 export function formatApiError(error: unknown, locale: Locale): string {
   const m = getMessages(locale);
   if (!(error instanceof ApiError)) {
     return error instanceof Error && error.message ? error.message : m.common.unknownError;
+  }
+
+  if (isPlatformOutageCode(error.code)) {
+    return m.common.platformUnavailable;
   }
 
   if (locale === 'de') {
