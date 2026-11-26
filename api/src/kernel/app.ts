@@ -27,7 +27,6 @@ import { migrate, openDatabase, tenantDatabaseFile, type Db, type Migration } fr
 import { AppError, notFound, unauthorized } from './errors.ts';
 import { EventBus } from './event-bus.ts';
 import { newId } from './ids.ts';
-import { NodemailerMailer, NoopMailer, type Mailer } from './mailer.ts';
 import { generatedPlugins } from './plugin-registry.generated.ts';
 import { platformMigrations } from './platform-migrations.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
@@ -50,8 +49,6 @@ export interface BuiltApp {
   auth: AuthService;
   /** Manifests in registration order — the nav route renders from these. */
   plugins: PluginManifest[];
-  /** The transport the login route uses; `NoopMailer` when none is configured. */
-  mailer: Mailer;
   /**
    * Verified tenant database. Kernel-side jobs need the same boundary the
    * plugins get: unknown tenant → 404, suspended tenant → 403.
@@ -67,17 +64,12 @@ export interface BuiltApp {
 
 export interface BuildOptions {
   config: Config;
-  /** Test hook: replace the wall clock (magic link and session expiry). */
+  /** Test hook: replace the wall clock (session expiry). */
   now?: () => Date;
   /** Test hook: silence the logger regardless of config. */
   logger?: boolean;
   /** Test hook: capture the log lines instead of writing them to stdout. */
   logStream?: { write(line: string): void };
-  /**
-   * Test hook: the mail transport. Without it the app picks its own from
-   * `SF_SMTP_*`, which in tests means `NoopMailer` — no socket is ever opened.
-   */
-  mailer?: Mailer;
 }
 
 /**
@@ -96,9 +88,9 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
             level: config.logLevel,
             ...(options.logStream ? { stream: options.logStream } : {}),
             serializers: {
-              // `req.url` carries the whole query string, and that is where the
-              // sensitive values live: `?q=` is an operator's search term and a
-              // magic link travels as `?token=`. The path, the method and the
+              // `req.url` carries the whole query string, and that is where
+              // sensitive values live: `?q=` is an operator's search term, and
+              // older clients carried tokens there. The path, the method and the
               // status are everything an incident needs, so the query goes.
               req: (request) => {
                 // Fastify hands its own request object to the serializer, so
@@ -118,7 +110,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     bodyLimit: config.bodyLimit,
     // Only the hops we declare are trusted. `true` would trust the whole chain
     // and let a client set its own `request.ip` via `X-Forwarded-For`, which is
-    // exactly what the magic-link rate limit keys on.
+    // exactly what the sign-in rate limit keys on.
     trustProxy:
       config.trustProxy > 0 ? (_address: string, hop: number) => hop < config.trustProxy : false,
     genReqId: () => newId('req'),
@@ -131,15 +123,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     app.log.error({ err: error, event }, 'event listener failed');
   });
   const auth = new AuthService(db, config, now, (name, payload) => eventBus.emit(name, payload));
-  auth.seedOperator();
   auth.pruneSessions();
-
-  // The transport is chosen once at startup. A process without `SF_SMTP_HOST`
-  // keeps a no-op mailer: it answers honestly that nothing was sent instead of
-  // pretending a mailbox was filled.
-  const mailer =
-    options.mailer ??
-    (config.smtp.host === null ? new NoopMailer() : new NodemailerMailer(config.smtp, now));
 
   await app.register(cookie);
   await app.register(swagger, {
@@ -155,7 +139,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
       // names. Operations still carry them, they simply appear ungrouped.
       tags: [
         { name: 'platform', description: 'Health and generated documents' },
-        { name: 'auth', description: 'Magic-link sign-in and session' },
+        { name: 'auth', description: 'First-run setup, password sign-in and session' },
         { name: 'nav', description: 'Navigation for the signed-in role' },
       ],
     },
@@ -376,9 +360,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
       registerAuthRoutes(scope, {
         auth,
         config,
-        db,
         now,
-        mailer,
         resolveTenant: (tenantId) => tenantDirectory?.resolve(tenantId) ?? null,
       });
       registerNavRoutes(scope, { plugins });
@@ -438,19 +420,12 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   }
 
   app.addHook('onClose', async () => {
-    // The route does not await a send, so one may still be on the wire here.
-    // Waiting for it (bounded) beats closing the transporter underneath it.
-    await mailer.close({
-      onStillOpen: (count) => {
-        app.log.warn({ count }, 'shutdown closed the mail transport with sends still open');
-      },
-    });
     for (const database of tenantCache.values()) database.close();
     tenantCache.clear();
     db.close();
   });
 
-  return { app, config, db, auth, plugins, mailer, tenantDb, internalToken };
+  return { app, config, db, auth, plugins, tenantDb, internalToken };
 }
 
 /** The built SPA shell, or `null` when `webDir` carries no `index.html`. */
@@ -508,7 +483,7 @@ function isApiPath(url: string): boolean {
  * The path of a request URL without its query string.
  *
  * Used for routing decisions and for log records alike: no query means no
- * search term and no magic-link token leaves the process in a log line.
+ * search term and no token leaves the process in a log line.
  */
 function pathOf(url: string | undefined): string {
   return (url ?? '').split('?')[0] ?? '';

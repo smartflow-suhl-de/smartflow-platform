@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { Button } from './components/ui';
+import { ToastProvider } from './components/Toast';
 import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './lib/api';
 import { sessionProbeOutcome } from './lib/auth-flow';
 import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
@@ -143,7 +144,7 @@ export function App() {
 
   useEffect(() => {
     if (session.kind !== 'signed_in') return;
-    if (pathname === '/login' || pathname === '/login/confirm') {
+    if (pathname === '/login') {
       navigate('/', { replace: true });
       return;
     }
@@ -221,8 +222,6 @@ export function App() {
   if (session.kind === 'signed_out') {
     return (
       <LoginPage
-        pathname={pathname}
-        search={search}
         mode={mode}
         locale={locale}
         messages={messages}
@@ -278,22 +277,24 @@ export function App() {
   }
 
   return (
-    <AppShell
-      user={auth.user}
-      pathname={pathname}
-      navItems={navItems}
-      health={health}
-      healthError={healthError}
-      stats={stats}
-      mode={mode}
-      messages={messages}
-      loggingOut={loggingOut}
-      logoutError={logoutError}
-      onModeChange={handleModeChange}
-      onRetryHealth={retryHealth}
-      onLogout={handleLogout}
-    >
-      {content}
-    </AppShell>
+    <ToastProvider>
+      <AppShell
+        user={auth.user}
+        pathname={pathname}
+        navItems={navItems}
+        health={health}
+        healthError={healthError}
+        stats={stats}
+        mode={mode}
+        messages={messages}
+        loggingOut={loggingOut}
+        logoutError={logoutError}
+        onModeChange={handleModeChange}
+        onRetryHealth={retryHealth}
+        onLogout={handleLogout}
+      >
+        {content}
+      </AppShell>
+    </ToastProvider>
   );
 }

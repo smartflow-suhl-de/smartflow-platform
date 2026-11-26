@@ -1,114 +1,38 @@
 import assert from 'node:assert/strict';
-import { beforeEach, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 
-interface Call {
-  url: string;
-  init: RequestInit;
-}
-
-let calls: Call[] = [];
-const pendingResolvers: Array<() => void> = [];
-
-function releaseAll(): void {
-  while (pendingResolvers.length > 0) {
-    pendingResolvers.pop()?.();
-  }
-}
-
-globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
-  calls.push({ url: String(input), init });
-  await new Promise<void>((resolve) => {
-    pendingResolvers.push(resolve);
-  });
-  return new Response(
-    JSON.stringify({
-      user: { id: 'u1', email: 'a@b.c', name: 'A', role: 'operator' },
-      tenant: null,
-    }),
-    { status: 200, headers: { 'content-type': 'application/json' } },
-  );
-}) as typeof fetch;
-
-const {
-  confirmMagicLinkOnce,
-  magicLinkNotice,
-  pendingConfirmationCount,
-  sessionProbeOutcome,
-  toAppHref,
-  tokenFromSearch,
-} = await import('../src/lib/auth-flow.ts');
+const { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH, passwordProblem, sessionProbeOutcome } =
+  await import('../src/lib/auth-flow.ts');
 const { ApiError } = await import('../src/lib/api.ts');
 
-describe('confirmMagicLinkOnce', () => {
-  beforeEach(() => {
-    calls = [];
-    pendingResolvers.length = 0;
+describe('passwordProblem', () => {
+  it('keeps the documented bounds in step with the API', () => {
+    assert.equal(PASSWORD_MIN_LENGTH, 12);
+    assert.equal(PASSWORD_MAX_LENGTH, 256);
   });
 
-  it('spends a token only once when called twice in the same tick', async () => {
-    const first = confirmMagicLinkOnce('token-aaaaaaaaaa');
-    const second = confirmMagicLinkOnce('token-aaaaaaaaaa');
-
-    assert.equal(first, second, 'the second call must reuse the first promise');
-
-    releaseAll();
-    await first;
-    assert.equal(calls.length, 1);
+  it('accepts a password of exactly the minimum length', () => {
+    assert.equal(passwordProblem('a'.repeat(PASSWORD_MIN_LENGTH)), null);
   });
 
-  it('runs separate tokens independently', async () => {
-    const first = confirmMagicLinkOnce('token-aaaaaaaaaa');
-    const second = confirmMagicLinkOnce('token-bbbbbbbbbb');
-
-    assert.notEqual(first, second);
-
-    releaseAll();
-    await Promise.all([first, second]);
-    assert.equal(calls.length, 2);
+  it('rejects one character below the minimum', () => {
+    assert.equal(passwordProblem('a'.repeat(PASSWORD_MIN_LENGTH - 1)), 'too_short');
   });
 
-  it('forgets a token after the request settles so a retry still works', async () => {
-    const first = confirmMagicLinkOnce('token-aaaaaaaaaa');
-    assert.equal(pendingConfirmationCount(), 1);
-
-    releaseAll();
-    await first;
-    assert.equal(pendingConfirmationCount(), 0);
-
-    const retry = confirmMagicLinkOnce('token-aaaaaaaaaa');
-    releaseAll();
-    await retry;
-    assert.equal(calls.length, 2);
+  it('accepts a password of exactly the maximum length', () => {
+    assert.equal(passwordProblem('a'.repeat(PASSWORD_MAX_LENGTH)), null);
   });
 
-  it('posts the token to the confirm endpoint', async () => {
-    const pending = confirmMagicLinkOnce('token-aaaaaaaaaa');
-    releaseAll();
-    await pending;
-
-    assert.equal(calls[0]?.url, '/api/v1/auth/confirm');
-    assert.equal(calls[0]?.init.method, 'POST');
-    assert.equal(calls[0]?.init.body, JSON.stringify({ token: 'token-aaaaaaaaaa' }));
-  });
-});
-
-describe('tokenFromSearch', () => {
-  it('reads the token from the query string', () => {
-    assert.equal(tokenFromSearch('?token=abc'), 'abc');
+  it('rejects one character above the maximum', () => {
+    assert.equal(passwordProblem('a'.repeat(PASSWORD_MAX_LENGTH + 1)), 'too_long');
   });
 
-  it('returns null without a token', () => {
-    assert.equal(tokenFromSearch(''), null);
-    assert.equal(tokenFromSearch('?other=1'), null);
+  it('rejects a password made only of spaces even when it is long enough', () => {
+    assert.equal(passwordProblem(' '.repeat(20)), 'blank');
   });
 
-  it('rejects a blank token', () => {
-    assert.equal(tokenFromSearch('?token='), null);
-    assert.equal(tokenFromSearch('?token=%20%20'), null);
-  });
-
-  it('decodes an encoded token', () => {
-    assert.equal(tokenFromSearch('?token=a%2Bb'), 'a+b');
+  it('accepts spaces inside a password that also has other characters', () => {
+    assert.equal(passwordProblem('correct horse battery staple'), null);
   });
 });
 
@@ -138,56 +62,5 @@ describe('sessionProbeOutcome', () => {
     for (const error of [new TypeError('fetch failed'), 'boom', undefined, null]) {
       assert.notEqual(sessionProbeOutcome(error), 'signed_out', String(error));
     }
-  });
-});
-
-describe('magicLinkNotice', () => {
-  it('reports a sent mail as sent', () => {
-    assert.deepEqual(magicLinkNotice({ sent: true }), { kind: 'sent' });
-  });
-
-  it('reports a missing transport instead of asking for the inbox', () => {
-    // The bug: the page promised "check your inbox" while the API had already
-    // answered `sent:false`, so the mail never existed.
-    assert.deepEqual(magicLinkNotice({ sent: false }), { kind: 'no_transport' });
-  });
-
-  it('prefers the dev link over both, because it is a delivery', () => {
-    assert.deepEqual(magicLinkNotice({ sent: true, link: '/login/confirm?token=abc' }), {
-      kind: 'dev_link',
-      link: '/login/confirm?token=abc',
-    });
-    assert.deepEqual(magicLinkNotice({ sent: false, link: '/login/confirm?token=abc' }), {
-      kind: 'dev_link',
-      link: '/login/confirm?token=abc',
-    });
-  });
-});
-describe('toAppHref', () => {
-  const origin = 'http://127.0.0.1:5273';
-
-  it('reduces an absolute link to path and query', () => {
-    assert.equal(
-      toAppHref(`${origin}/login/confirm?token=abc`, origin),
-      '/login/confirm?token=abc',
-    );
-  });
-
-  it('keeps a relative link as it is', () => {
-    assert.equal(toAppHref('/login/confirm?token=abc', origin), '/login/confirm?token=abc');
-  });
-
-  it('falls back to the login route for an unparsable link instead of throwing', () => {
-    assert.equal(toAppHref('http://[::bad', origin), '/login');
-  });
-
-  it('refuses a link with a foreign scheme', () => {
-    assert.equal(toAppHref('javascript:alert(1)', origin), '/login');
-    assert.equal(toAppHref('data:text/html,<script>x</script>', origin), '/login');
-    assert.equal(toAppHref('x:javascript:alert(1)', origin), '/login');
-  });
-
-  it('refuses a link to another origin', () => {
-    assert.equal(toAppHref('https://evil.example/login/confirm?token=abc', origin), '/login');
   });
 });

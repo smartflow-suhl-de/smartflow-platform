@@ -57,8 +57,8 @@ test('the OpenAPI document is generated from the routes', async (t) => {
   assert.match(doc.openapi, /^3\.1\./);
   for (const path of [
     '/api/v1/health',
-    '/api/v1/auth/magic-link',
-    '/api/v1/auth/confirm',
+    '/api/v1/auth/setup',
+    '/api/v1/auth/login',
     '/api/v1/auth/me',
     '/api/v1/nav',
     '/api/v1/tenants',

@@ -1,15 +1,36 @@
 import type { Role } from '../shared/contract.ts';
 import type { PlatformEvents } from '../shared/events.ts';
 import type { Config } from './config.ts';
-import { hashToken, safeEqual } from './crypto.ts';
+import { hashToken } from './crypto.ts';
 import type { Db } from './db.ts';
 import { newId, token } from './ids.ts';
+import { hashPassword, verifyAgainstDummy, verifyPassword } from './password.ts';
 
-/** The auth service reports sign-ins and sign-outs; the kernel owns the log. */
-export type AuthEvents = <K extends 'auth.signed_in' | 'auth.signed_out'>(
+/** The auth service reports sign-ins, sign-outs and the first-run setup; the kernel owns the log. */
+export type AuthEvents = <K extends 'auth.setup_completed' | 'auth.signed_in' | 'auth.signed_out'>(
   name: K,
   payload: PlatformEvents[K],
 ) => void;
+
+/** A sign-in result: the account and the plaintext session token for the cookie. */
+export interface AuthResult {
+  user: SessionUser;
+  sessionToken: string;
+}
+
+/**
+ * A predictable failure with a stable meaning for the route layer. The route
+ * maps it to an HTTP error; the service never decides the status itself.
+ */
+export class AuthError extends Error {
+  readonly code: 'setup_complete' | 'invalid_credentials' | 'email_taken';
+
+  constructor(code: 'setup_complete' | 'invalid_credentials' | 'email_taken') {
+    super(code);
+    this.name = 'AuthError';
+    this.code = code;
+  }
+}
 
 export interface SessionUser {
   id: string;
@@ -27,6 +48,10 @@ interface UserRow {
   tenant_id: string | null;
 }
 
+interface UserWithPasswordRow extends UserRow {
+  password_hash: string | null;
+}
+
 interface SessionRow {
   id: string;
   user_id: string;
@@ -34,8 +59,24 @@ interface SessionRow {
   token_hash: string;
 }
 
+export interface SetupInput {
+  email: string;
+  name: string;
+  password: string;
+}
+
 function toUser(row: UserRow): SessionUser {
   return { id: row.id, email: row.email, name: row.name, role: row.role, tenantId: row.tenant_id };
+}
+
+/** A duplicate key on `users.email` is the only constraint a setup can hit. */
+function isEmailTaken(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code: unknown }).code === 'SQLITE_CONSTRAINT_UNIQUE'
+  );
 }
 
 export class AuthService {
@@ -56,92 +97,127 @@ export class AuthService {
     this.#emit = emit;
   }
 
-  /** The operator account is a platform fact, not a signup flow. */
-  seedOperator(): SessionUser {
-    const existing = this.#db
-      .prepare('select id, email, name, role, tenant_id from users where email = ?')
-      .get(this.#config.operator.email) as UserRow | undefined;
-    if (existing) return toUser(existing);
-
-    const row: UserRow = {
-      id: newId('usr'),
-      email: this.#config.operator.email,
-      name: this.#config.operator.name,
-      role: 'operator',
-      tenant_id: null,
-    };
-    this.#db
-      .prepare(
-        'insert into users (id, email, name, role, tenant_id, created_at) values (?, ?, ?, ?, ?, ?)',
-      )
-      .run(row.id, row.email, row.name, row.role, row.tenant_id, this.#now().toISOString());
-    return toUser(row);
+  /**
+   * First-run setup is done exactly when no account can sign in yet. An
+   * installation from the magic-link era has a passwordless operator row, so
+   * counting rows would report "done" while nobody can get in; the password
+   * column is the honest test.
+   */
+  setupRequired(): boolean {
+    const row = this.#db
+      .prepare('select 1 as present from users where password_hash is not null limit 1')
+      .get();
+    return row === undefined;
   }
 
   /**
-   * Creates a one-time link for the address, whether or not a user exists.
-   * The caller answers identically in both cases (no account enumeration).
+   * Creates the first operator and opens its session. There is no public
+   * signup: the route only calls this while `setupRequired()` is true, and the
+   * check is repeated after the (awaited) hash so two parallel setups cannot
+   * both create an account.
    */
-  createMagicLink(email: string): { link: string; expiresAt: string } {
-    const normalized = email.trim().toLowerCase();
-    const plain = token(32);
-    const createdAt = this.#now();
-    const expiresAt = new Date(createdAt.getTime() + this.#config.magicLinkTtlSeconds * 1000);
+  async setup(input: SetupInput, userAgent?: string): Promise<AuthResult> {
+    if (!this.setupRequired()) throw new AuthError('setup_complete');
 
-    this.#db
-      .prepare(
-        'insert into magic_links (id, email, token_hash, created_at, expires_at) values (?, ?, ?, ?, ?)',
-      )
-      .run(
-        newId('mlk'),
-        normalized,
-        hashToken(plain),
-        createdAt.toISOString(),
-        expiresAt.toISOString(),
-      );
+    const passwordHash = await hashPassword(input.password);
 
-    const url = new URL('/login/confirm', this.#config.publicUrl);
-    url.searchParams.set('token', plain);
-    return { link: url.toString(), expiresAt: expiresAt.toISOString() };
+    if (!this.setupRequired()) throw new AuthError('setup_complete');
+
+    const user = this.#claimOrCreateOperator(input, passwordHash);
+    const sessionToken = this.createSession(user.id, userAgent);
+    this.#emit('auth.setup_completed', { userId: user.id });
+    this.#emit('auth.signed_in', { userId: user.id, role: user.role });
+    return { user, sessionToken };
   }
 
-  /** Consumes the link and opens a session. Unknown, used or expired links fail alike. */
-  consumeMagicLink(plain: string, userAgent?: string): { user: SessionUser; sessionToken: string } {
-    const hash = hashToken(plain);
-    const link = this.#db
-      .prepare(
-        'select id, email, token_hash, expires_at, used_at from magic_links where token_hash = ?',
-      )
-      .get(hash) as
-      | {
-          id: string;
-          email: string;
-          token_hash: string;
-          expires_at: string;
-          used_at: string | null;
-        }
-      | undefined;
-
-    if (!link || !safeEqual(link.token_hash, hash) || link.used_at !== null) {
-      throw new Error('invalid_link');
+  /**
+   * The legacy operator seed left a row without a password. The first setup
+   * takes that row over instead of leaving an unreachable account behind or
+   * creating a second operator with a different address.
+   */
+  #claimOrCreateOperator(input: SetupInput, passwordHash: string): SessionUser {
+    this.#db.exec('begin immediate');
+    try {
+      const user = this.#claimOrCreateOperatorTx(input, passwordHash);
+      this.#db.exec('commit');
+      return user;
+    } catch (error) {
+      this.#db.exec('rollback');
+      throw error;
     }
-    if (new Date(link.expires_at).getTime() <= this.#now().getTime()) {
-      throw new Error('invalid_link');
+  }
+
+  #claimOrCreateOperatorTx(input: SetupInput, passwordHash: string): SessionUser {
+    if (!this.setupRequired()) throw new AuthError('setup_complete');
+    const legacy = this.#db
+      .prepare("select id, email from users where role = 'operator' and password_hash is null")
+      .all() as { id: string; email: string }[];
+
+    if (legacy.length === 1) {
+      const row = legacy[0] as { id: string; email: string };
+      try {
+        this.#db
+          .prepare('update users set email = ?, name = ?, password_hash = ? where id = ?')
+          .run(input.email, input.name, passwordHash, row.id);
+        // Sessions that predate the password belong to whoever held the seed row.
+        this.#db.prepare('delete from sessions where user_id = ?').run(row.id);
+      } catch (error) {
+        if (isEmailTaken(error)) throw new AuthError('email_taken');
+        throw error;
+      }
+      return { id: row.id, email: input.email, name: input.name, role: 'operator', tenantId: null };
     }
 
-    const user = this.#db
-      .prepare('select id, email, name, role, tenant_id from users where email = ?')
-      .get(link.email) as UserRow | undefined;
+    const user: SessionUser = {
+      id: newId('usr'),
+      email: input.email,
+      name: input.name,
+      role: 'operator',
+      tenantId: null,
+    };
+    try {
+      this.#db
+        .prepare(
+          'insert into users (id, email, name, role, tenant_id, password_hash, created_at) values (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(
+          user.id,
+          user.email,
+          user.name,
+          user.role,
+          user.tenantId,
+          passwordHash,
+          this.#now().toISOString(),
+        );
+    } catch (error) {
+      if (isEmailTaken(error)) throw new AuthError('email_taken');
+      throw error;
+    }
+    return user;
+  }
 
-    this.#db
-      .prepare('update magic_links set used_at = ? where id = ?')
-      .run(this.#now().toISOString(), link.id);
+  /**
+   * Verifies a password and opens a session. An unknown address and a wrong
+   * password answer identically and take the same time: the check runs against
+   * a dummy hash when there is no account.
+   */
+  async login(email: string, password: string, userAgent?: string): Promise<AuthResult> {
+    const normalized = email.trim().toLowerCase();
+    const row = this.#db
+      .prepare('select id, email, name, role, tenant_id, password_hash from users where email = ?')
+      .get(normalized) as UserWithPasswordRow | undefined;
 
-    if (!user) throw new Error('invalid_link');
+    if (!row || row.password_hash === null) {
+      await verifyAgainstDummy(password);
+      throw new AuthError('invalid_credentials');
+    }
 
-    const session = this.createSession(user.id, userAgent);
-    this.#emit('auth.signed_in', { userId: user.id, role: user.role });
-    return { user: toUser(user), sessionToken: session };
+    const matches = await verifyPassword(password, row.password_hash);
+    if (!matches) throw new AuthError('invalid_credentials');
+
+    const sessionToken = this.createSession(row.id, userAgent);
+    this.#emit('auth.signed_in', { userId: row.id, role: row.role });
+    return { user: toUser(row), sessionToken };
   }
 
   createSession(userId: string, userAgent?: string): string {
@@ -199,8 +275,5 @@ export class AuthService {
 
   pruneSessions(): void {
     this.#db.prepare('delete from sessions where expires_at <= ?').run(this.#now().toISOString());
-    this.#db
-      .prepare('delete from magic_links where expires_at <= ?')
-      .run(this.#now().toISOString());
   }
 }

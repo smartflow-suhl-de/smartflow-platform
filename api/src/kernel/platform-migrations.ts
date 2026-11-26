@@ -49,4 +49,18 @@ export const platformMigrations = [
       `);
     },
   },
+  {
+    version: 2,
+    /**
+     * Password sign-in replaced the magic link. The column is nullable so an
+     * installation that still carries a passwordless operator can be claimed
+     * by the first setup; every new account is created with a hash.
+     *
+     * `magic_links` stays as it is: migration 1 is immutable, and dropping a
+     * table deletes rows we do not own. The table is no longer written or read.
+     */
+    up(db: Db): void {
+      db.exec('alter table users add column password_hash text');
+    },
+  },
 ];

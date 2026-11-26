@@ -140,13 +140,13 @@ describe('date formatting', () => {
 
 describe('formatApiError', () => {
   it('translates known codes to German', () => {
-    const error = new ApiError(401, 'invalid_link', 'invalid');
-    assert.equal(formatApiError(error, 'de'), 'Der Anmeldelink ist ungültig oder abgelaufen.');
+    const error = new ApiError(401, 'invalid_credentials', 'wrong');
+    assert.equal(formatApiError(error, 'de'), 'E-Mail oder Passwort ist falsch.');
   });
 
   it('translates the same codes to English', () => {
-    const error = new ApiError(401, 'invalid_link', 'The sign-in link is invalid or has expired.');
-    assert.equal(formatApiError(error, 'en'), 'This sign-in link is invalid or expired.');
+    const error = new ApiError(401, 'invalid_credentials', 'Email or password is wrong.');
+    assert.equal(formatApiError(error, 'en'), 'Email or password is incorrect.');
   });
 
   it('translates every known code in both locales instead of echoing the server', () => {
@@ -154,7 +154,9 @@ describe('formatApiError', () => {
       'network_error',
       'unauthorized',
       'forbidden',
-      'invalid_link',
+      'invalid_credentials',
+      'setup_complete',
+      'busy',
       'rate_limited',
       'slug_taken',
       'tenant_not_found',
@@ -174,6 +176,9 @@ describe('formatApiError', () => {
     const english = [
       formatApiError(new ApiError(401, 'unauthorized', 'x'), 'en'),
       formatApiError(new ApiError(403, 'forbidden', 'x'), 'en'),
+      formatApiError(new ApiError(401, 'invalid_credentials', 'x'), 'en'),
+      formatApiError(new ApiError(409, 'setup_complete', 'x'), 'en'),
+      formatApiError(new ApiError(503, 'busy', 'x'), 'en'),
       formatApiError(new ApiError(429, 'rate_limited', 'x'), 'en'),
       formatApiError(new ApiError(409, 'slug_taken', 'x'), 'en'),
       formatApiError(new ApiError(404, 'tenant_not_found', 'x'), 'en'),
@@ -217,19 +222,38 @@ describe('formatApiError', () => {
   });
 });
 
-describe('login transport notice', () => {
-  it('has a separate text for a missing transport in both locales', () => {
+describe('login texts', () => {
+  it('describes password sign-in without link wording in both locales', () => {
+    for (const locale of ['de', 'en'] as const) {
+      const login = getMessages(locale).login;
+      for (const text of [login.subtitle, login.setupSubtitle, login.passwordHint]) {
+        assert.doesNotMatch(text, /anmeldelink|sign-in link|inbox/i, `${locale}: ${text}`);
+      }
+    }
+  });
+
+  it('keeps setup and sign-in actions distinct in both locales', () => {
     const de = getMessages('de').login;
     const en = getMessages('en').login;
 
-    assert.ok(de.noTransportNotice.trim().length > 0);
-    assert.ok(en.noTransportNotice.trim().length > 0);
-    assert.notEqual(de.noTransportNotice, en.noTransportNotice);
-    // The two must not be interchangeable: claiming an inbox is exactly the
-    // failure this text exists to prevent.
-    assert.notEqual(de.noTransportNotice, de.sentNotice);
-    assert.notEqual(en.noTransportNotice, en.sentNotice);
-    assert.doesNotMatch(en.noTransportNotice, /inbox/i);
+    assert.notEqual(de.submit, de.setupSubmit);
+    assert.notEqual(en.submit, en.setupSubmit);
+    assert.match(de.passwordHint, /12/);
+    assert.match(en.passwordHint, /12/);
+  });
+
+  it('localises the password rules with the documented bounds', () => {
+    for (const locale of ['de', 'en'] as const) {
+      const login = getMessages(locale).login;
+      assert.match(login.passwordTooShort(12), /12/);
+      assert.match(login.passwordTooLong(256), /256/);
+      assert.ok(login.passwordMismatch.trim().length > 0);
+      assert.ok(login.passwordBlank.trim().length > 0);
+    }
+    assert.notEqual(
+      getMessages('de').login.passwordMismatch,
+      getMessages('en').login.passwordMismatch,
+    );
   });
 });
 
@@ -272,5 +296,16 @@ describe('formatFieldError', () => {
   it('maps email and name fields to German', () => {
     assert.match(formatFieldError('email', 'bad', 'de') ?? '', /E-Mail-Adresse/);
     assert.match(formatFieldError('name', 'bad', 'de') ?? '', /Namen/);
+  });
+
+  it('maps a password length error to German and passes English through', () => {
+    assert.equal(
+      formatFieldError('password', 'Use at least 12 characters.', 'de'),
+      'Bitte mindestens 12 Zeichen eingeben.',
+    );
+    assert.equal(
+      formatFieldError('password', 'Please enter your password.', 'en'),
+      'Please enter your password.',
+    );
   });
 });

@@ -12,6 +12,7 @@ import {
   KpiTile,
   PageHeader,
 } from '../components/ui';
+import { useToast } from '../components/useToast';
 import { ApiError, api, isAbortError } from '../lib/api';
 import {
   formatApiError,
@@ -47,12 +48,12 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
   const [list, setList] = useState<TenantListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [busyTenantId, setBusyTenantId] = useState<string | null>(null);
   const [pendingSuspend, setPendingSuspend] = useState<Tenant | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const showToast = useToast();
   const currentCursor = cursorStack[cursorStack.length - 1] ?? null;
 
   useEffect(() => {
@@ -110,7 +111,6 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
     event.preventDefault();
     setFieldErrors({});
     setError(null);
-    setFeedback(null);
     setCreating(true);
 
     try {
@@ -118,7 +118,7 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
       setName('');
       setSlug('');
       setCursorStack([]);
-      setFeedback(messages.tenants.createdSuccess(created.name));
+      showToast(messages.tenants.createdSuccess(created.name));
       refreshAll();
     } catch (err) {
       if (err instanceof ApiError && Object.keys(err.fields).length > 0) {
@@ -143,12 +143,11 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
     const target = pendingSuspend;
     setBusyTenantId(target.id);
     setError(null);
-    setFeedback(null);
 
     try {
       const updated = await api.suspendTenant(target.id);
       setPendingSuspend(null);
-      setFeedback(messages.tenants.suspendedSuccess(updated.name));
+      showToast(messages.tenants.suspendedSuccess(updated.name));
       refreshAll();
     } catch (err) {
       setPendingSuspend(null);
@@ -161,11 +160,10 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
   async function handleResume(tenant: Tenant): Promise<void> {
     setBusyTenantId(tenant.id);
     setError(null);
-    setFeedback(null);
 
     try {
       const updated = await api.resumeTenant(tenant.id);
-      setFeedback(messages.tenants.resumedSuccess(updated.name));
+      showToast(messages.tenants.resumedSuccess(updated.name));
       refreshAll();
     } catch (err) {
       setError(formatApiError(err, locale));
@@ -206,12 +204,6 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
       </div>
 
       <div className="sf-stack">
-        {feedback ? (
-          <div className="sf-alert sf-alert-good" role="status">
-            <span>{feedback}</span>
-          </div>
-        ) : null}
-
         {error ? (
           <div className="sf-alert sf-alert-bad" role="alert">
             <span>{error}</span>

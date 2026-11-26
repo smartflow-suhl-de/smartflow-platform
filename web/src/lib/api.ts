@@ -1,12 +1,14 @@
 import type {
   AuthMe,
   HealthResponse,
-  MagicLinkResponse,
+  LoginInput,
   NavEntry,
   NavResponse,
   Role,
   SessionTenant,
   SessionUser,
+  SetupInput,
+  SetupStatus,
   Tenant,
   TenantListResponse,
   TenantStats,
@@ -16,7 +18,7 @@ import type {
 const API_PREFIX = '/api/v1';
 
 /**
- * Upper bound for a single request. Without it a hanging `/auth/confirm` would
+ * Upper bound for a single request. Without it a hanging `/auth/login` would
  * leave the login spinner running forever.
  */
 export const REQUEST_TIMEOUT_MS = 15_000;
@@ -124,16 +126,11 @@ function parseAuthMe(raw: unknown): AuthMe {
   };
 }
 
-function parseMagicLink(raw: unknown): MagicLinkResponse {
-  if (!isRecord(raw) || typeof raw.sent !== 'boolean') {
-    throw new ApiError(500, 'invalid_response', 'Invalid magic link payload');
+function parseSetupStatus(raw: unknown): SetupStatus {
+  if (!isRecord(raw) || typeof raw.required !== 'boolean') {
+    throw new ApiError(500, 'invalid_response', 'Invalid setup status payload');
   }
-  return {
-    sent: raw.sent,
-    expiresAt: asString(raw.expiresAt, 'expiresAt'),
-    ...(typeof raw.link === 'string' ? { link: raw.link } : {}),
-    ...(typeof raw.autoLogin === 'boolean' ? { autoLogin: raw.autoLogin } : {}),
-  };
+  return { required: raw.required };
 }
 
 function parseHealth(raw: unknown): HealthResponse {
@@ -331,21 +328,31 @@ export const api = {
     return parseAuthMe(await requestJson('/auth/me', { notifyUnauthorized: false, signal }));
   },
 
-  async requestMagicLink(email: string): Promise<MagicLinkResponse> {
-    return parseMagicLink(
-      await requestJson('/auth/magic-link', {
+  /**
+   * Public: the login page asks this before rendering a form. A failed probe is
+   * not a 401 and must never touch the session state, so the handler stays off.
+   */
+  async setupStatus(signal?: AbortSignal): Promise<SetupStatus> {
+    return parseSetupStatus(
+      await requestJson('/auth/setup', { notifyUnauthorized: false, signal }),
+    );
+  },
+
+  async setup(input: SetupInput): Promise<AuthMe> {
+    return parseAuthMe(
+      await requestJson('/auth/setup', {
         method: 'POST',
-        body: { email },
+        body: input,
         notifyUnauthorized: false,
       }),
     );
   },
 
-  async confirmMagicLink(token: string): Promise<AuthMe> {
+  async login(input: LoginInput): Promise<AuthMe> {
     return parseAuthMe(
-      await requestJson('/auth/confirm', {
+      await requestJson('/auth/login', {
         method: 'POST',
-        body: { token },
+        body: input,
         notifyUnauthorized: false,
       }),
     );
