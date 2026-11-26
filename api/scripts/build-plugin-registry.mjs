@@ -1,0 +1,166 @@
+#!/usr/bin/env node
+// Generates api/src/kernel/plugin-registry.generated.ts from plugin manifests.
+// Fails when a manifest is invalid, when a page component is missing or when
+// two plugins claim the same id or nav path.
+import { existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const root = resolve(import.meta.dirname, '..');
+const pluginsDir = join(root, 'src', 'plugins');
+const outFile = join(root, 'src', 'kernel', 'plugin-registry.generated.ts');
+
+const problems = [];
+const fail = (message) => problems.push(message);
+
+function listPlugins() {
+  if (!existsSync(pluginsDir)) return [];
+  return readdirSync(pluginsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+}
+
+async function loadManifest(id) {
+  const file = join(pluginsDir, id, 'manifest.ts');
+  if (!existsSync(file)) {
+    fail(`plugin "${id}" has no manifest.ts`);
+    return null;
+  }
+  const mod = await import(pathToFileURL(file).href);
+  const manifest = mod.manifest ?? mod.default?.manifest;
+  if (!manifest) {
+    fail(`plugin "${id}": manifest.ts must export "manifest"`);
+    return null;
+  }
+  return manifest;
+}
+
+function validate(manifest, folder) {
+  const where = `plugin "${folder}"`;
+  if (manifest.id !== folder) fail(`${where}: manifest.id must equal the folder name`);
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(manifest.id ?? '')) fail(`${where}: invalid id`);
+  if (typeof manifest.label !== 'string' || !manifest.label) fail(`${where}: label is required`);
+  if (typeof manifest.description !== 'string' || !manifest.description) {
+    fail(`${where}: description is required`);
+  }
+  if (manifest.scope !== 'platform' && manifest.scope !== 'tenant') {
+    fail(`${where}: scope must be "platform" or "tenant"`);
+  }
+  if (typeof manifest.apiVersion !== 'number') fail(`${where}: apiVersion is required`);
+  if (manifest.nav) {
+    const nav = manifest.nav;
+    if (typeof nav.label !== 'string' || !nav.label) fail(`${where}: nav.label is required`);
+    if (!nav.path?.startsWith('/')) fail(`${where}: nav.path must start with "/"`);
+    if (nav.group !== 'work' && nav.group !== 'management') {
+      fail(`${where}: nav.group must be "work" or "management"`);
+    }
+  }
+  if (!existsSync(join(pluginsDir, folder, 'server.ts'))) {
+    fail(`${where}: server.ts is missing`);
+  }
+}
+
+const manifests = [];
+for (const id of listPlugins()) {
+  const manifest = await loadManifest(id);
+  if (manifest) {
+    validate(manifest, id);
+    manifests.push(manifest);
+  }
+}
+
+const seen = new Set();
+for (const manifest of manifests) {
+  if (seen.has(manifest.id)) fail(`duplicate plugin id "${manifest.id}"`);
+  seen.add(manifest.id);
+}
+
+const navPaths = new Map();
+for (const manifest of manifests) {
+  if (!manifest.nav) continue;
+  const existing = navPaths.get(manifest.nav.path);
+  if (existing)
+    fail(`duplicate nav path "${manifest.nav.path}" in "${existing}" and "${manifest.id}"`);
+  navPaths.set(manifest.nav.path, manifest.id);
+}
+
+/**
+ * `dependsOn` is a declaration, so it has to be enforced somewhere: an unknown
+ * dependency is a mistake, a cycle can never load, and the dependent plugin must
+ * be registered after the one it depends on. The order is computed here instead
+ * of relying on alphabetical folder names.
+ */
+const byId = new Map(manifests.map((manifest) => [manifest.id, manifest]));
+for (const manifest of manifests) {
+  for (const dependency of manifest.dependsOn ?? []) {
+    if (!byId.has(dependency)) {
+      fail(`plugin "${manifest.id}" depends on "${dependency}", which does not exist`);
+    }
+    if (dependency === manifest.id) {
+      fail(`plugin "${manifest.id}" depends on itself`);
+    }
+  }
+}
+
+function orderPlugins(list) {
+  const ordered = [];
+  const state = new Map(); // id -> 'visiting' | 'done'
+
+  const visit = (manifest, trail) => {
+    if (state.get(manifest.id) === 'done') return;
+    if (state.get(manifest.id) === 'visiting') {
+      fail(`dependency cycle: ${[...trail, manifest.id].join(' → ')}`);
+      return;
+    }
+    state.set(manifest.id, 'visiting');
+    for (const dependency of manifest.dependsOn ?? []) {
+      const target = byId.get(dependency);
+      if (target) visit(target, [...trail, manifest.id]);
+    }
+    state.set(manifest.id, 'done');
+    ordered.push(manifest);
+  };
+
+  for (const manifest of list) visit(manifest, []);
+  return ordered;
+}
+
+const ordered = orderPlugins(manifests);
+
+if (problems.length > 0) {
+  console.error('plugin registry: cannot generate\n' + problems.map((p) => `  - ${p}`).join('\n'));
+  process.exit(1);
+}
+
+const lines = ordered
+  .map(
+    (m) =>
+      `  {\n    manifest: ${JSON.stringify(m, null, 2).split('\n').join('\n    ')} as PluginManifest,\n` +
+      `    load: () => import('../plugins/${m.id}/server.ts'),\n  },`,
+  )
+  .join('\n');
+
+const source = `// GENERATED by scripts/build-plugin-registry.mjs — do not edit, do not commit.
+import type { PluginManifest } from '../shared/contract.ts';
+import type { PluginContext } from './context.ts';
+
+export interface GeneratedPluginModule {
+  default: { manifest: PluginManifest; register: (ctx: PluginContext) => void | Promise<void> };
+}
+
+export interface GeneratedPluginEntry {
+  manifest: PluginManifest;
+  load: () => Promise<GeneratedPluginModule>;
+}
+
+export const generatedPlugins: GeneratedPluginEntry[] = [
+${lines}
+];
+`;
+
+mkdirSync(join(root, 'src', 'kernel'), { recursive: true });
+writeFileSync(outFile, source, 'utf8');
+console.log(
+  `plugin registry: ${ordered.length} plugin(s) → api/src/kernel/plugin-registry.generated.ts`,
+);

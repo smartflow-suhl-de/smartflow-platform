@@ -1,0 +1,33 @@
+{
+  "name": "@smartflow/platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "workspaces": [
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @smartflow/api",
+    "dev:web": "npm run dev --workspace @smartflow/web",
+    "build": "npm run typecheck --workspace @smartflow/api && npm run build --workspace @smartflow/web",
+    "start": "npm run start --workspace @smartflow/api",
+    "test": "npm test --workspace @smartflow/api",
+    "typecheck": "npm run typecheck --workspace @smartflow/api && npm run typecheck --workspace @smartflow/web",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2",
+    "typescript-eslint": "^8.46.4"
+  }
+}
