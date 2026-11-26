@@ -17,6 +17,11 @@ services:
       context: ./deploy/tailscale
     image: smartflow-platform-tailscale:local
     restart: unless-stopped
+    # Userspace-Netzwerk braucht weder Capabilities noch Rechteausweitung.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       app:
         condition: service_healthy

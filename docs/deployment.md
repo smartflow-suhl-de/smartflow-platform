@@ -76,9 +76,14 @@ curl https://smartflow-platform.<tailnet>.ts.net/api/v1/health
 - **Optional (`.env`):** `SF_TS_NODE_NAME` (Standard `smartflow-platform`), `SF_TS_AUTHKEY`
   (nur beim ersten Start eines neuen Knotens), `SF_TS_STATE_VOLUME` (Standard `smartflow-ts-state`).
   Ist der Knoten-Zustand im Volume schon autorisiert, ist kein Auth-Key nötig.
-- **Tailnet-intern, kein Produktivzugang:** kein Funnel (`AllowFunnel` ist `false`), keine
-  veröffentlichten Ports, kein DNS-Eintrag außerhalb des Tailnets. `SF_DOMAIN` und
+- **Tailnet-intern, kein Produktivzugang:** kein Funnel (`AllowFunnel` ist `false`), der
+  Dienst `tailscale` veröffentlicht keine Host-Ports, kein DNS-Eintrag außerhalb des Tailnets. `SF_DOMAIN` und
   `SF_PUBLIC_URL` bleiben unberührt; produktiv bleibt Caddy der Zugang.
+- **Zugangsgrenze ist die Tailnet-ACL, nicht der Container:** ohne restriktive ACL erreicht
+  jedes Gerät im Tailnet Port 443, auch eine noch offene Ersteinrichtung
+  (`POST /api/v1/auth/setup`). ACL einschränken und Setup vorher abschließen.
+- Der Startbefehl startet alle Dienste aus `compose.yaml` mit; die Aussage „keine
+  Ports“ gilt nur für `tailscale`, nicht für andere Dienste mit veröffentlichten Ports.
 - Nur `SF_TS_*` aus `.env` gelten; globale `TS_*`-Variablen des Hosts werden nicht gelesen.
 - Ohne das Overlay (`-f compose.yaml` allein) ändert sich nichts.
 
