@@ -1,0 +1,17 @@
+{
+  "buildPath": "code",
+  "detector": {
+    "ignoreRules": [
+      "cream-palette"
+    ],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cream-palette",
+        "value": "rgb(242, 239, 231)",
+        "files": [],
+        "reason": "paper #f2efe7 ist der bestehende Marken-Token des Leitstands aus smartflow-platform-old, keine AI-Default-Fläche — Design bleibt unverändert"
+      }
+    ]
+  }
+}
