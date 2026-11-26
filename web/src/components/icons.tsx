@@ -161,6 +161,15 @@ export function CompassIcon(props: IconProps) {
   );
 }
 
+export function SparklesIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6z" />
+      <path d="M18.5 15l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z" />
+    </Svg>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Svg {...props}>
@@ -191,6 +200,8 @@ export function navIconByName(name: string, size = 15) {
       return <ActivityIcon size={size} />;
     case 'settings':
       return <SettingsIcon size={size} />;
+    case 'sparkles':
+      return <SparklesIcon size={size} />;
     case 'circle-help':
       return <CircleHelpIcon size={size} />;
     case 'compass':
