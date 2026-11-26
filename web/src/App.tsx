@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from './components/AppShell';
 import { Button } from './components/ui';
+import { PublicLayout, PublicUnavailable } from './components/PublicLayout';
 import { ToastProvider } from './components/Toast';
 import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './lib/api';
 import { sessionProbeOutcome } from './lib/auth-flow';
 import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
+import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
 import { HelpPage } from './pages/Help';
@@ -24,8 +26,30 @@ type SessionState =
   | { kind: 'unavailable' }
   | { kind: 'signed_in'; auth: AuthMe };
 
+/**
+ * Public paths render before any session work: no probe, no health call, no
+ * 401 handler. The signed-in app below only mounts for every other path.
+ */
 export function App() {
-  const { pathname: rawPathname, search } = useRoute();
+  const { pathname, search } = useRoute();
+  const path = normalizePath(pathname);
+  const match = matchPublicRoute(path);
+  if (!match && !isPublicNamespace(path)) return <SessionApp pathname={pathname} search={search} />;
+
+  const locale = storedLocale();
+  return (
+    <PublicLayout
+      locale={locale}
+      focusKey={path}
+      unavailable={!match?.route}
+      title={match?.route?.title?.(match.params)}
+    >
+      {match?.route ? match.route.render(match.params) : <PublicUnavailable locale={locale} />}
+    </PublicLayout>
+  );
+}
+
+function SessionApp({ pathname: rawPathname, search }: { pathname: string; search: string }) {
   // Route matching never sees a trailing or doubled slash, so `/tenants/`
   // resolves to the tenants view instead of the NotFound page.
   const pathname = normalizePath(rawPathname);
