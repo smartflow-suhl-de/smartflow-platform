@@ -9,6 +9,13 @@ export interface MagicLinkMail {
   locale: 'de' | 'en';
 }
 
+export interface MailerCloseOptions {
+  /** Bound for the wait, so a dead relay cannot hang shutdown. */
+  timeoutMs?: number;
+  /** How many sends were still on the wire when the wait ended. */
+  onStillOpen?: (count: number) => void;
+}
+
 /**
  * The seam between the auth route and the outside world. Tests implement it
  * with an in-memory stub, so `npm test` never opens a socket.
@@ -17,6 +24,31 @@ export interface Mailer {
   /** False when no transport is configured: the API then says it sent nothing. */
   readonly isConfigured: boolean;
   sendMagicLink(mail: MagicLinkMail): Promise<void>;
+  /**
+   * Releases the transport. A send started by a request may still be on the
+   * wire, so the result is awaited on shutdown instead of cut off there.
+   */
+  close(options?: MailerCloseOptions): void | Promise<void>;
+}
+
+/** How long shutdown waits for a send that is still on the wire. */
+const CLOSE_TIMEOUT_MS = 5_000;
+
+/**
+ * Resolves once every promise settled, or when `timeoutMs` passed. Never
+ * rejects: a send that failed must not make shutdown fail.
+ */
+async function settledWithin(promises: Promise<void>[], timeoutMs: number): Promise<void> {
+  if (promises.length === 0) return;
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([Promise.allSettled(promises), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 interface RenderedMail {
@@ -86,6 +118,8 @@ export class NodemailerMailer implements Mailer {
   readonly #options: SMTPTransportOptions;
   readonly #now: () => Date;
   #transporter: Transporter | null = null;
+  /** Sends handed to the transport that have not settled yet. */
+  readonly #inflight = new Set<Promise<void>>();
 
   constructor(smtp: SmtpConfig, now: () => Date = () => new Date()) {
     if (smtp.host === null) throw new Error('NodemailerMailer needs SF_SMTP_HOST.');
@@ -95,6 +129,11 @@ export class NodemailerMailer implements Mailer {
       host: smtp.host,
       port: smtp.port,
       secure: smtp.secure,
+      // Without implicit TLS the session must still be upgraded before the
+      // credentials and the message are sent. `requireTLS` makes nodemailer
+      // refuse a plaintext relay instead of continuing unencrypted when an
+      // active attacker strips STARTTLS from the greeting.
+      ...(smtp.secure ? {} : { requireTLS: true }),
       ...(smtp.user !== null && smtp.pass !== null
         ? { auth: { user: smtp.user, pass: smtp.pass } }
         : {}),
@@ -109,16 +148,33 @@ export class NodemailerMailer implements Mailer {
 
   async sendMagicLink(mail: MagicLinkMail): Promise<void> {
     const { subject, text } = renderMagicLinkMail(mail, this.#now());
-    await this.#transport().sendMail({
-      from: this.#from,
-      to: mail.to,
-      subject,
-      text,
-      ...(this.#replyTo !== null ? { replyTo: this.#replyTo } : {}),
+    // Tracked separately from the awaited call so shutdown can see a send that
+    // the request path deliberately does not wait for.
+    await this.#track(
+      this.#transport()
+        .sendMail({
+          from: this.#from,
+          to: mail.to,
+          subject,
+          text,
+          ...(this.#replyTo !== null ? { replyTo: this.#replyTo } : {}),
+        })
+        .then(() => undefined),
+    );
+  }
+
+  /** Removes the send from the in-flight set as part of its own settlement. */
+  #track(send: Promise<void>): Promise<void> {
+    this.#inflight.add(send);
+    return send.finally(() => {
+      this.#inflight.delete(send);
     });
   }
 
-  close(): void {
+  async close(options: MailerCloseOptions = {}): Promise<void> {
+    await settledWithin([...this.#inflight], options.timeoutMs ?? CLOSE_TIMEOUT_MS);
+    const stillOpen = this.#inflight.size;
+    if (stillOpen > 0) options.onStillOpen?.(stillOpen);
     this.#transporter?.close();
     this.#transporter = null;
   }
@@ -130,6 +186,10 @@ export class NoopMailer implements Mailer {
 
   async sendMagicLink(_mail: MagicLinkMail): Promise<void> {
     // Unreachable by design: the route checks `isConfigured` before calling.
+  }
+
+  close(): void {
+    // Nothing to release.
   }
 }
 

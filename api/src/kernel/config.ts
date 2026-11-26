@@ -117,12 +117,21 @@ function smtpPort(value: string | undefined): number {
 function smtpPassword(env: NodeJS.ProcessEnv): string | null {
   const path = optional(env.SF_SMTP_PASS_FILE);
   if (path !== null) {
+    let contents: string;
     try {
-      return readFileSync(path, 'utf8').trim();
+      contents = readFileSync(path, 'utf8').trim();
     } catch (error) {
       const code = (error as { code?: string }).code ?? 'unknown error';
       throw new Error(`SF_SMTP_PASS_FILE could not be read (${path}): ${code}.`);
     }
+    // An empty file must not pass as "a password is set": the process would
+    // start, authenticate with an empty string and fail only on the first
+    // sign-in — the same silent failure the missing-file guard prevents. The
+    // contents stay out of the message.
+    if (contents === '') {
+      throw new Error(`SF_SMTP_PASS_FILE is empty (${path}).`);
+    }
+    return contents;
   }
   return optional(env.SF_SMTP_PASS);
 }

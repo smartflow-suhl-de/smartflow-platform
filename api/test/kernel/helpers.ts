@@ -14,6 +14,8 @@ import type { MagicLinkMail, Mailer } from '../../src/kernel/mailer.ts';
 export class RecordingMailer implements Mailer {
   readonly isConfigured: boolean;
   readonly sent: MagicLinkMail[] = [];
+  /** Proves the shutdown path releases the transport through the interface. */
+  closed = false;
   #failure: Error | null = null;
 
   constructor(options: { configured?: boolean } = {}) {
@@ -28,6 +30,10 @@ export class RecordingMailer implements Mailer {
   async sendMagicLink(mail: MagicLinkMail): Promise<void> {
     if (this.#failure !== null) throw this.#failure;
     this.sent.push(mail);
+  }
+
+  close(): void {
+    this.closed = true;
   }
 }
 

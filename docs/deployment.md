@@ -71,23 +71,28 @@ SF_SMTP_REPLY_TO=                  # optional
 - **Port 587, nicht 25.** Port 587 ist Submission mit STARTTLS und bei praktisch jedem
   Anbieter offen. Port 25 ist bei Cloud-Anbietern (Hetzner, AWS, GCP, Azure, viele VPS)
   ausgehend gesperrt; ein Versand darüber scheitert ohne verwertbare Fehlermeldung.
+- **STARTTLS ist Pflicht.** Ohne implizites TLS (`SF_SMTP_SECURE` nicht gesetzt) verlangt
+  der Versand eine TLS-Aushandlung; ein Relay, das kein STARTTLS anbietet, lässt den Versand
+  scheitern, statt Zugangsdaten und Anmeldelink im Klartext zu übertragen.
 - **Port 465** bedeutet implizites TLS und schaltet `secure` automatisch ein. `SF_SMTP_SECURE`
   überschreibt das, falls ein Relay es anders will.
 - **Zugangsdaten** entweder über `SF_SMTP_USER` + `SF_SMTP_PASS` oder über
   `SF_SMTP_PASS_FILE`. Eine Datei ist die bessere Wahl: sie steht nicht in `docker inspect`
   und nicht in der Prozessumgebung. Eine halbe Kombination (Benutzer ohne Passwort,
-  Passwort ohne Benutzer, unlesbare Datei) bricht den Start ab.
+  Passwort ohne Benutzer, unlesbare oder leere Datei) bricht den Start ab.
 - **Absender** muss eine Adresse sein, die das Relay akzeptiert; die meisten Anbieter
   verlangen die eigene Domain. Ein Anzeigename ist erlaubt:
   `"SmartFlow <noreply@example.com>"`.
 
 ### Versand prüfen
 
-Der schnellste Beleg ist ein lokaler Mailpit-Container. Er nimmt SMTP ohne TLS und ohne
-Zugangsdaten an und zeigt die Nachricht im Browser:
+Der schnellste Beleg ist ein lokaler Mailpit-Container. Er zeigt die Nachricht im Browser und
+braucht keine Zugangsdaten — seit der STARTTLS-Pflicht aber ein Zertifikat, sonst scheitert
+der Versand am fehlenden TLS:
 
 ```bash
-docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit \
+  --smtp-tls-cert /pfad/cert.pem --smtp-tls-key /pfad/key.pem
 # in .env für einen Testlauf:
 #   SF_SMTP_HOST=host.docker.internal   # oder die IP des Hosts im Docker-Netz
 #   SF_SMTP_PORT=1025
@@ -98,6 +103,9 @@ curl -X POST https://<SF_DOMAIN>/api/v1/auth/magic-link \
   -H 'content-type: application/json' -d '{"email":"<SF_OPERATOR_EMAIL>"}'
 # http://localhost:8025 öffnen: Betreff, Text und Link stehen dort.
 ```
+
+Ein selbstsigniertes Zertifikat muss der Anwendung zusätzlich als vertrauenswürdig gelten;
+sonst steht im Log ein TLS-Fehler statt einer Zustellung.
 
 Die Antwort ist immer `202` mit `{"sent":true,"expiresAt":"…"}` — unabhängig davon, ob die
 Adresse bekannt ist. Ohne Transport lautet sie `{"sent":false,…}`, und die Anmeldeseite

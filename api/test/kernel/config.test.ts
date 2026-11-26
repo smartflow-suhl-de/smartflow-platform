@@ -214,6 +214,33 @@ test('an unreadable password file names the path and stops the start', () => {
   );
 });
 
+test('an empty password file is a startup error and never becomes an empty password', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'sf-smtp-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  for (const [name, contents] of [
+    ['empty', ''],
+    ['whitespace', '  \n\t\n'],
+  ] as const) {
+    const file = join(dir, `smtp-pass-${name}`);
+    writeFileSync(file, contents);
+
+    // Without the guard the trimmed value is `''`: either the startup check
+    // reads it as "no password" or an empty one reaches the relay and fails
+    // only on the first sign-in, long after anyone watched the boot logs.
+    assert.throws(
+      () =>
+        loadConfig({
+          SF_SMTP_HOST: 'mail.example.test',
+          SF_SMTP_USER: 'smartflow',
+          SF_SMTP_PASS_FILE: file,
+        }),
+      new RegExp(`SF_SMTP_PASS_FILE is empty \\(${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`),
+      name,
+    );
+  }
+});
+
 test('a partially configured transport stops the start instead of dropping mail', () => {
   const broken: Array<[Record<string, string>, RegExp]> = [
     [{ SF_SMTP_PORT: '587' }, /SF_SMTP_HOST is not/],

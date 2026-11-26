@@ -32,6 +32,9 @@ services:
       # Fehler schon beim Compose-Aufruf sichtbar, nicht erst im Log.
       SF_SMTP_HOST: ${SF_SMTP_HOST:?SF_SMTP_HOST fehlt in .env}
       SF_SMTP_PORT: ${SF_SMTP_PORT:-587}
+      # Explizite Overrides aus `.env` müssen hier durchgereicht werden, sonst
+      # wirkt ein gesetzter Wert nur in der Dokumentation.
+      SF_SMTP_SECURE: ${SF_SMTP_SECURE:-}
       SF_SMTP_USER: ${SF_SMTP_USER:-}
       SF_SMTP_PASS: ${SF_SMTP_PASS:-}
       # optional: Datei im Container, z. B. aus einem Secret gemountet.

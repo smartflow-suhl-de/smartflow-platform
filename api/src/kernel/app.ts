@@ -438,7 +438,13 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   }
 
   app.addHook('onClose', async () => {
-    if (mailer instanceof NodemailerMailer) mailer.close();
+    // The route does not await a send, so one may still be on the wire here.
+    // Waiting for it (bounded) beats closing the transporter underneath it.
+    await mailer.close({
+      onStillOpen: (count) => {
+        app.log.warn({ count }, 'shutdown closed the mail transport with sends still open');
+      },
+    });
     for (const database of tenantCache.values()) database.close();
     tenantCache.clear();
     db.close();
