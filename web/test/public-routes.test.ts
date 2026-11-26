@@ -4,8 +4,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { browser, setLocation } from './helpers/browser.ts';
 
-const { isPublicNamespace, isPublicPath, matchPublicRoute, publicRoutes } =
-  await import('../src/lib/public-routes.ts');
+const {
+  isPublicNamespace,
+  isPublicPath,
+  matchPublicRoute,
+  publicRoutes,
+  registerDiscoveryPublicRoute,
+} = await import('../src/lib/public-routes.ts');
 const { App } = await import('../src/App.tsx');
 
 describe('public path detection', () => {
@@ -74,6 +79,8 @@ describe('App on public and app paths', () => {
   }
 
   it('shows the unavailable notice with noindex and a title for an unserved link', () => {
+    // The discovery page now serves /d/:token; check the unserved state without it.
+    publicRoutes.length = 0;
     const html = render(`/d/${'B'.repeat(43)}`);
     assert.match(html, /<meta name="robots" content="noindex, nofollow"\/>/);
     assert.match(html, /<title>Dieser Link ist nicht verfügbar · SmartFlow Plattform<\/title>/);
@@ -93,6 +100,19 @@ describe('App on public and app paths', () => {
     const html = render(`/d/${'C'.repeat(43)}/`);
     assert.match(html, /<title>Entdeckung · SmartFlow Plattform<\/title>/);
     assert.ok(html.includes(`<h1>Seite ${'C'.repeat(43)}</h1>`));
+  });
+
+  it('serves the discovery interview inside exactly one public frame', () => {
+    registerDiscoveryPublicRoute();
+    const html = render(`/d/${'D'.repeat(43)}`);
+    assert.match(html, /<meta name="robots" content="noindex, nofollow"\/>/);
+    assert.match(html, /<title>Automatisierungs-Check · SmartFlow Plattform<\/title>/);
+    assert.equal((html.match(/<main/g) ?? []).length, 1);
+    assert.match(html, /id="sf-main"/);
+    assert.doesNotMatch(html, /<p class="sf-brand-name"/);
+    assert.doesNotMatch(html, /<p class="sf-brand-eyebrow"/);
+    assert.match(html, /role="status"/);
+    assert.deepEqual(calls, []);
   });
 
   it('shows the notice for broken /d paths without any request', () => {

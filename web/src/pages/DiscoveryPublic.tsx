@@ -287,7 +287,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
 
   if (closed) {
     return (
-      <PublicShell m={m} locale={activeLocale}>
+      <PublicShell locale={activeLocale}>
         {closed.kind === 'completed' ? (
           <>
             <h1 className="sf-page-title">{m.discovery.completedTitle}</h1>
@@ -319,7 +319,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
 
   if (!state) {
     return (
-      <PublicShell m={m} locale={activeLocale}>
+      <PublicShell locale={activeLocale}>
         {error ? (
           <>
             <h1 className="sf-page-title">{m.discovery.errorTitle}</h1>
@@ -338,9 +338,8 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
   }
 
   return (
-    <PublicShell m={m} locale={activeLocale}>
+    <PublicShell locale={activeLocale}>
       <header className="sf-stack" style={{ gap: 8 }}>
-        <p className="sf-brand-eyebrow">{m.discovery.publicBrand}</p>
         <h1 className="sf-page-title">{m.discovery.publicTitle}</h1>
         <p className="sf-card-text">{m.discovery.publicIntro}</p>
         <p className="sf-card-meta">{state.customerName}</p>
@@ -479,30 +478,20 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
   );
 }
 
-function PublicShell({
-  m,
-  locale,
-  children,
-}: {
-  m: Messages;
-  locale: Locale;
-  children: ReactNode;
-}) {
+function PublicShell({ locale, children }: { locale: Locale; children: ReactNode }) {
+  // `PublicLayout` already supplies brand header, <main> landmark and noindex;
+  // this only adds the page's own language and spacing.
   return (
-    <main
+    <section
       lang={locale === 'en' ? 'en' : 'de'}
       style={{
-        maxWidth: 720,
-        margin: '0 auto',
-        padding: '32px 16px 64px',
         display: 'flex',
         flexDirection: 'column',
         gap: 20,
       }}
     >
-      <p className="sf-brand-name">{m.discovery.publicBrand}</p>
       {children}
-    </main>
+    </section>
   );
 }
 
