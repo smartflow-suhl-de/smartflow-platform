@@ -1,19 +1,16 @@
 # Deployment mit Docker
 
-Die Plattform läuft als ein Container hinter Caddy: die API liefert die SPA unter `/`
+Die Plattform läuft als ein Container, erreichbar über einen eigenen Tailnet-Knoten: die API liefert die SPA unter `/`
 selbst aus, deshalb gibt es nur einen Origin und kein CORS. Ein Host, ein Prozess —
 mehr dazu unter [Grenzen](#grenzen).
 
 ## Voraussetzungen
 
 - Docker mit Compose v2 (`docker compose version`)
-- Ein Host, auf dem Port `80` und `443` frei sind
-- Eine Domain, die auf den Host zeigt — für automatisches HTTPS. Das Caddyfile liegt
-  unter `deploy/caddy/Caddyfile` und wird in ein eigenes Image gebacken: eine Änderung
-  daran braucht `docker compose up -d --build caddy`. Ohne öffentliche
-  Domain: `tls internal` in `deploy/caddy/Caddyfile` aktivieren (siehe Kommentar dort); Caddy
-  stellt dann ein Zertifikat aus der eigenen CA aus, die Clients müssen deren
-  Wurzelzertifikat einmalig importieren.
+- Ein Tailnet (Tailscale-Konto) mit aktiviertem MagicDNS und HTTPS-Zertifikaten
+  (Admin-Konsole → DNS → _Enable HTTPS_). Die Tailnet-Domain (`<name>.ts.net`) steht dort.
+- Ausgehender Internetzugang des Hosts (Tailscale-Koordination); eingehend sind **keine**
+  Ports nötig, der Stack veröffentlicht keine.
 
 ## Erststart
 
@@ -21,19 +18,47 @@ mehr dazu unter [Grenzen](#grenzen).
 git clone <repository> smartflow-platform
 cd smartflow-platform
 cp .env.production.example .env
-$EDITOR .env                      # SF_DOMAIN und SF_OPERATOR_EMAIL (ACME-Kontakt) setzen
+$EDITOR .env                      # SF_TAILNET_DOMAIN setzen; beim ersten Start SF_TS_AUTHKEY
 docker compose up -d --build
-docker compose ps                 # STATUS muss "healthy" enthalten
+docker compose ps                 # app muss "healthy" sein, tailscale "running"
 ```
 
-`SF_DOMAIN` und `SF_OPERATOR_EMAIL` sind Pflicht: fehlen sie, bricht Compose ab, bevor
-ein Container startet. `SF_PUBLIC_URL` wird in `compose.yaml` aus `SF_DOMAIN`
-zusammengesetzt und deshalb nicht in `.env` gesetzt — die beiden Werte können so nicht
-auseinanderlaufen.
+`SF_TAILNET_DOMAIN` ist Pflicht: fehlt der Wert, bricht Compose ab, bevor ein Container
+startet. `SF_PUBLIC_URL` wird in `compose.yaml` aus `SF_TS_NODE_NAME` (Standard
+`smartflow-platform`) und `SF_TAILNET_DOMAIN` zusammengesetzt und deshalb nicht in `.env`
+gesetzt — Knotenadresse und Anwendungs-Origin können so nicht auseinanderlaufen.
+
+### Knoten-Anmeldung
+
+Beim ersten Start meldet sich der Knoten im Tailnet an:
+
+- **Mit Auth-Key:** in der Admin-Konsole einen **einmaligen, kurzlebigen** Key erzeugen und
+  als `SF_TS_AUTHKEY` in `.env` setzen. Nach der ersten Anmeldung den Wert wieder aus `.env`
+  entfernen; der Knoten-Zustand liegt im Volume `smartflow-ts-state`.
+- **Ohne Auth-Key:** `docker compose logs tailscale` zeigt eine Anmelde-URL; im Browser
+  öffnen und den Knoten freigeben.
+- Ein bereits autorisiertes Volume (`SF_TS_STATE_VOLUME`, Standard `smartflow-ts-state`)
+  braucht keinen Key.
+
+Danach ist die Plattform unter `https://<SF_TS_NODE_NAME>.<SF_TAILNET_DOMAIN>/` erreichbar.
+TLS terminiert Tailscale mit einem echten Zertifikat; Clients importieren nichts.
+
+### Erreichbarkeit und Sicherheit
+
+- **Nur im Tailnet.** Ohne Caddy und ohne veröffentlichte Ports gibt es **keinen**
+  öffentlichen Zugang. Ein späterer öffentlicher Betrieb bräuchte entweder einen
+  Reverse Proxy (z. B. Caddy) zurück oder Tailscale Funnel — beides ist bewusst nicht
+  Teil dieses Stands. `AllowFunnel` ist in `deploy/tailscale/serve.json` `false`.
+- **Zugangsgrenze ist die Tailnet-ACL, nicht der Container:** ohne restriktive ACL erreicht
+  jedes Gerät im Tailnet Port 443, auch eine noch offene Ersteinrichtung
+  (`POST /api/v1/auth/setup`). ACL einschränken und Setup vorher abschließen.
+- Nur `SF_*` aus `.env` gelten; globale `TS_*`-Variablen des Hosts werden nicht gelesen.
+- Das Tailscale-Image ist auf Version und Digest gepinnt (`deploy/tailscale/Dockerfile`);
+  ein Update ist eine bewusste Änderung.
 
 ### Ersteinrichtung
 
-Nach dem ersten Start hat die Plattform **kein Konto**. `https://<SF_DOMAIN>` öffnen, dann
+Nach dem ersten Start hat die Plattform **kein Konto**. `https://<SF_TS_NODE_NAME>.<SF_TAILNET_DOMAIN>` öffnen, dann
 fragt die Anmeldeseite nach E-Mail, Name und Passwort (mindestens 12 Zeichen) und legt den
 ersten Operator an. Danach meldet man sich mit E-Mail und Passwort an; einen Mailversand
 gibt es nicht mehr.
@@ -50,43 +75,6 @@ auffallen und nicht erst, wenn sich niemand anmelden kann.
 Daten liegen im benannten Volume `smartflow_data` (Pfad: `docker volume inspect
 smartflow_data`), nicht im Image. Ein `docker compose down` ohne `-v` behält sie.
 
-### Ohne öffentliche Domain ausprobieren
-
-```bash
-printf 'SF_DOMAIN=localhost\nSF_OPERATOR_EMAIL=ops@example.com\n' > .env
-# in deploy/caddy/Caddyfile zusätzlich "tls internal" in den Site-Block schreiben
-docker compose up -d --build       # baut auch das Caddy-Image neu
-curl -k https://localhost/api/v1/health
-```
-
-Selbstsignierte Zertifikate lassen `curl` ohne `-k` scheitern; das ist erwartet und kein
-Fehler der Anwendung.
-
-## Testzugang über Tailscale
-
-Optionales Overlay `compose.tailscale.yaml`: ein eigener Tailnet-Knoten als Dienst, der
-die App per HTTPS (Tailscale-Zertifikat) unter `https://<SF_TS_NODE_NAME>.<tailnet>.ts.net/`
-erreichbar macht.
-
-```bash
-docker compose -f compose.yaml -f compose.tailscale.yaml up -d
-curl https://smartflow-platform.<tailnet>.ts.net/api/v1/health
-```
-
-- **Optional (`.env`):** `SF_TS_NODE_NAME` (Standard `smartflow-platform`), `SF_TS_AUTHKEY`
-  (nur beim ersten Start eines neuen Knotens), `SF_TS_STATE_VOLUME` (Standard `smartflow-ts-state`).
-  Ist der Knoten-Zustand im Volume schon autorisiert, ist kein Auth-Key nötig.
-- **Tailnet-intern, kein Produktivzugang:** kein Funnel (`AllowFunnel` ist `false`), der
-  Dienst `tailscale` veröffentlicht keine Host-Ports, kein DNS-Eintrag außerhalb des Tailnets. `SF_DOMAIN` und
-  `SF_PUBLIC_URL` bleiben unberührt; produktiv bleibt Caddy der Zugang.
-- **Zugangsgrenze ist die Tailnet-ACL, nicht der Container:** ohne restriktive ACL erreicht
-  jedes Gerät im Tailnet Port 443, auch eine noch offene Ersteinrichtung
-  (`POST /api/v1/auth/setup`). ACL einschränken und Setup vorher abschließen.
-- Der Startbefehl startet alle Dienste aus `compose.yaml` mit; die Aussage „keine
-  Ports“ gilt nur für `tailscale`, nicht für andere Dienste mit veröffentlichten Ports.
-- Nur `SF_TS_*` aus `.env` gelten; globale `TS_*`-Variablen des Hosts werden nicht gelesen.
-- Ohne das Overlay (`-f compose.yaml` allein) ändert sich nichts.
-
 ## Update
 
 ```bash
@@ -95,7 +83,7 @@ docker compose up -d --build
 docker compose ps                 # wieder auf "healthy" warten
 ```
 
-`app` und `caddy` werden nur neu erstellt, wenn sich ihr Image oder ihre Konfiguration
+`app` und `tailscale` werden nur neu erstellt, wenn sich ihr Image oder ihre Konfiguration
 ändert. Die Volumes bleiben unangetastet; Datenbankmigrationen laufen beim Start.
 
 > **Upgrade vom Magic-Link-Stand:** Ein vorhandener Operator ohne Passwort wird beim
@@ -153,14 +141,14 @@ Sitzungen liegen als Hashes in der Tabelle `sessions` in `platform.sqlite`; nach
 Restore mit aktuellem Stand sind bestehende Anmeldungen also weiter gültig. Ein eigenes
 Schlüsseldatei (`secrets.key`) legt der aktuelle Stand noch nicht an — die
 Verschlüsselungshelfer in `api/src/kernel/secrets.ts` werden bisher von keiner Route
-genutzt. Die Zertifikate liegen getrennt im
-Volume `caddy_data`; ein Verlust kostet nur eine Neuausstellung.
+genutzt. Die Knoten-Identität liegt getrennt im
+Volume `smartflow-ts-state`; ein Verlust kostet nur eine Neuanmeldung des Knotens.
 
 ## Logs
 
 ```bash
 docker compose logs -f app         # API, ein JSON-Objekt je Zeile
-docker compose logs -f caddy       # TLS und Proxy
+docker compose logs -f tailscale   # Knoten-Anmeldung und Serve
 docker compose logs --tail=200 app
 ```
 
@@ -169,7 +157,7 @@ docker compose logs --tail=200 app
 ## Health
 
 ```bash
-curl -s https://<SF_DOMAIN>/api/v1/health    # {"status":"ok","version":"…","port":8790}
+curl -s https://<SF_TS_NODE_NAME>.<SF_TAILNET_DOMAIN>/api/v1/health    # nur im Tailnet; {"status":"ok","version":"…","port":8790}
 docker compose ps                               # Healthcheck-Status
 docker inspect --format '{{json .State.Health}}' $(docker compose ps -q app)
 ```
@@ -194,6 +182,6 @@ Healthcheck soll erst danach greifen.
   Registry-Workflow (Push, Tag-Strategie, Rollback per Tag) ist nicht eingerichtet.
 - **Kein Rollback-Kommando.** Ein Update zurückzudrehen heißt: alten Stand auschecken,
   `docker compose up -d --build`. Migrationen laufen nur vorwärts.
-- **TLS-Endpunkt ist Caddy.** `SF_TRUST_PROXY=1` gilt nur in dieser Topologie. Wird die
+- **TLS-Endpunkt ist Tailscale Serve.** `SF_TRUST_PROXY=1` gilt nur in dieser Topologie. Wird die
   Anwendung direkt veröffentlicht, muss der Wert weg — sonst vertraut sie
   `X-Forwarded-*`-Headern, die jeder Client selbst setzen kann.

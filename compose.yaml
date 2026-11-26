@@ -2,12 +2,17 @@
 # also genau einen schreibenden Prozess. Mehr Replicas sind kein Skalierungspfad,
 # sondern Datenverlust — deshalb bewusst ein einziger `app`-Dienst.
 #
-# Caddy terminiert TLS und ist der einzige Dienst mit veröffentlichten Ports.
-# `app` ist nur im Compose-Netz erreichbar.
+# Erreichbar ist der Stack nur über einen eigenen Tailnet-Knoten (`tailscale`).
+# Der Stack veröffentlicht keine Host-Ports; `app` ist nur im Compose-Netz und
+# über den Tailnet-Knoten erreichbar. Kein Funnel, kein öffentlicher Zugang.
 #
-# Pflichtwerte kommen aus `.env` (Compose liest sie automatisch). Vorlage:
-# `.env.production.example`. Fehlt ein Pflichtwert, bricht schon die
-# Konfiguration ab, statt einen Container mit leerem Hostnamen zu starten.
+# Pflichtwert `SF_TAILNET_DOMAIN` kommt aus `.env` (Compose liest sie automatisch).
+# Vorlage: `.env.production.example`. Fehlt der Wert, bricht schon die
+# Konfiguration ab, statt einen Container mit unbrauchbarer Origin zu starten.
+#
+# Nur `SF_*` aus `.env` verwenden, nie `TS_*` aus der Host-Umgebung lesen: dort
+# können `TS_HOSTNAME`/`TS_AUTHKEY` global gesetzt sein und würden den Knoten
+# umbenennen.
 
 name: smartflow
 
@@ -18,18 +23,17 @@ services:
     image: smartflow-platform:local
     restart: unless-stopped
     environment:
-      # Aus SF_DOMAIN zusammengesetzt, damit Site-Adresse und Anwendungs-Origin
-      # nicht auseinanderlaufen können.
-      # `SF_DOMAIN` ist der reine Hostname (ohne Schema). Mit einem
-      # vorangestellten `https://` entsteht "https://https://…" und die
-      # Anwendung startet mit einer unbrauchbaren Origin.
-      SF_PUBLIC_URL: https://${SF_DOMAIN:?SF_DOMAIN fehlt in .env}
-      # Kein Konto-Seed: den ersten Operator legt die Ersteinrichtung im Browser
-      # an. `SF_OPERATOR_EMAIL` wird nur noch von Caddy als ACME-Kontakt gelesen.
+      # Aus Knotenname und Tailnet-Domain zusammengesetzt, damit die Adresse des
+      # Knotens und die Anwendungs-Origin nicht auseinanderlaufen können.
+      # `SF_TAILNET_DOMAIN` ist der reine Hostname-Rest (ohne Schema und Punkt
+      # davor), z. B. `example-tailnet.ts.net`.
+      SF_PUBLIC_URL: https://${SF_TS_NODE_NAME:-smartflow-platform}.${SF_TAILNET_DOMAIN:?SF_TAILNET_DOMAIN fehlt in .env}
+      # Kein Konto-Seed: den ersten Operator legt die Ersteinrichtung im Browser an.
       SF_LOG_LEVEL: ${SF_LOG_LEVEL:-info}
-      # Nur hier korrekt, weil Caddy als einziger Proxy davorsteht und
-      # X-Forwarded-* setzt. Ohne Caddy wäre das Vertrauen in den Header falsch;
-      # die Topologie gehört deshalb zu dieser Datei, nicht in ein Image-Default.
+      # Korrekt, weil Tailscale Serve als einziger Proxy davorsteht und
+      # X-Forwarded-For setzt. Ohne Proxy wäre das Vertrauen in den Header
+      # falsch; die Topologie gehört deshalb zu dieser Datei, nicht in ein
+      # Image-Default.
       SF_TRUST_PROXY: '1'
     volumes:
       - data:/data
@@ -37,33 +41,40 @@ services:
       - '8790'
     # Der Healthcheck stammt aus dem Image und trägt `depends_on` unten.
 
-  caddy:
-    # Gebaut statt bind-gemountet: ein Bind-Mount einer einzelnen Datei hängt am
-    # Host-Pfad und an den Mount-Fähigkeiten des Daemons und scheitert auf Hosts
-    # mit User-Namespaces. Preis dafür: ein Rebuild, wenn sich das Caddyfile ändert.
+  tailscale:
+    # Eigener Knoten als Dienst, bewusst nicht im Netzwerk-Namespace von `app`
+    # (`network_mode: service:app`): das geteilte Namespace ginge mit jedem
+    # Neustart von `app` verloren. Die App wird über den Dienstnamen erreicht.
+    # Serve-Konfiguration ist ins Image gebacken (siehe deploy/tailscale/Dockerfile).
     build:
-      context: ./deploy/caddy
-    image: smartflow-platform-caddy:local
+      context: ./deploy/tailscale
+    image: smartflow-platform-tailscale:local
     restart: unless-stopped
+    # Userspace-Netzwerk braucht weder Capabilities noch Rechteausweitung.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       app:
         condition: service_healthy
     environment:
-      SF_DOMAIN: ${SF_DOMAIN:?SF_DOMAIN fehlt in .env}
-      # Für die ACME-Registrierung bei Let's Encrypt; kein Login-Konto.
-      SF_OPERATOR_EMAIL: ${SF_OPERATOR_EMAIL:?SF_OPERATOR_EMAIL fehlt in .env}
-    ports:
-      - '80:80'
-      - '443:443'
-      - '443:443/udp'
+      TS_USERSPACE: 'true'
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_HOSTNAME: ${SF_TS_NODE_NAME:-smartflow-platform}
+      TS_SERVE_CONFIG: /config/serve.json
+      # Einmaliger, kurzlebiger Key für die erste Anmeldung; leer, wenn der
+      # Knoten-Zustand im Volume schon autorisiert ist.
+      TS_AUTHKEY: ${SF_TS_AUTHKEY:-}
+      TS_EXTRA_ARGS: --accept-dns=false --accept-routes=false
     volumes:
-      - caddy_data:/data
-      - caddy_config:/config
+      - tailscale_state:/var/lib/tailscale
 
 volumes:
   # Plattform-Datenbank, je Mandant eine Datenbank und der Schlüssel für die
   # Sitzungen — der einzige Teil, der gesichert werden muss.
   data:
-  # Zertifikate und ACME-Zustand; ein Verlust kostet nur eine Neuausstellung.
-  caddy_data:
-  caddy_config:
+  # Knoten-Identität im Tailnet; ein Verlust kostet nur eine Neuanmeldung.
+  tailscale_state:
+    # Fester Name: ein bereits autorisierter Knoten-Zustand wird wiederverwendet.
+    name: ${SF_TS_STATE_VOLUME:-smartflow-ts-state}
