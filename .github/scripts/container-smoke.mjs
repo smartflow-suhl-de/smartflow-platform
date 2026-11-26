@@ -13,12 +13,6 @@ const email = process.env.SMOKE_EMAIL ?? 'smoke@example.test';
 // A production image refuses to start without an https origin, so the smoke
 // test supplies the minimum a real deployment would.
 const publicUrl = process.env.SMOKE_PUBLIC_URL ?? 'https://smoke.example.test';
-// A production process also refuses to boot without a mail transport, because
-// nobody could sign in without one. The smoke test therefore names a host, and
-// deliberately one that never answers: the contract under test is "the process
-// starts and serves HTTP", not "a relay is reachable". The magic-link probe
-// still answers 202 because the send runs after the response.
-const smtpHost = process.env.SMOKE_SMTP_HOST ?? '127.0.0.1';
 const timeoutMs = Number(process.env.SMOKE_TIMEOUT_MS ?? 60_000);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -60,6 +54,17 @@ function request(path, init = '') {
   }
 }
 
+/** Like `request`, but keeps the response headers: the session cookie proves itself. */
+function requestWithHeaders(path, init = '') {
+  const snippet = `fetch('http://127.0.0.1:${port}${path}'${init}).then(async (r) => { const b = await r.text(); console.log(JSON.stringify({ status: r.status, body: b, setCookie: r.headers.get('set-cookie') })); }).catch((e) => { console.log(JSON.stringify({ status: 0, error: e.message })); })`;
+  const raw = inContainer(snippet);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { status: 0, error: raw };
+  }
+}
+
 docker(['rm', '--force', name]);
 
 const started = docker([
@@ -68,15 +73,7 @@ const started = docker([
   '--name',
   name,
   '--env',
-  `SF_OPERATOR_EMAIL=${email}`,
-  // The production guard refuses to boot without an https origin, a secure
-  // cookie and a mail transport: without a relay nobody could receive the only
-  // credential the platform accepts. A real deployment takes all three from
-  // `.env`, so the smoke test supplies them too instead of relaxing the guard.
-  '--env',
   `SF_PUBLIC_URL=${publicUrl}`,
-  '--env',
-  `SF_SMTP_HOST=${smtpHost}`,
   image,
 ]);
 if (started.status !== 0) {
@@ -110,12 +107,44 @@ check(
 const anonymous = request('/api/v1/auth/me');
 check(anonymous.status === 401, 'an anonymous session probe answers 401');
 
-const magic = request(
-  '/api/v1/auth/magic-link',
-  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}' }) }`,
+const setupState = request('/api/v1/auth/setup');
+check(setupState.status === 200, 'setup state answers 200');
+check(setupState.body.includes('"required":true'), 'a fresh image reports that setup is required');
+
+const setupPassword = 'smoke-test-passphrase';
+const setup = request(
+  '/api/v1/auth/setup',
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}', name: 'Operator', password: '${setupPassword}' }) }`,
 );
-check(magic.status === 202, 'the magic-link route answers 202');
-check(!magic.body.includes('"link"'), 'a production image never returns the sign-in link');
+check(setup.status === 201, 'the setup route creates the first operator');
+check(setup.body.includes('"role":"operator"'), 'setup signs the operator in');
+check(!setup.body.includes(setupPassword), 'setup never echoes the password');
+
+const secondSetup = request(
+  '/api/v1/auth/setup',
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'other@example.test', name: 'Other', password: '${setupPassword}' }) }`,
+);
+check(secondSetup.status === 409, 'a second setup is refused');
+check(secondSetup.body.includes('setup_complete'), 'the refusal uses the shared error shape');
+
+const wrongLogin = request(
+  '/api/v1/auth/login',
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}', password: 'wrong-passphrase-1' }) }`,
+);
+check(wrongLogin.status === 401, 'a wrong password is refused');
+check(wrongLogin.body.includes('invalid_credentials'), 'the refusal names the stable error code');
+
+const login = requestWithHeaders(
+  '/api/v1/auth/login',
+  `, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: '${email}', password: '${setupPassword}' }) }`,
+);
+check(login.status === 200, 'the right password signs in');
+check(login.body.includes('"email"'), 'login answers with the signed-in user');
+const cookie = login.setCookie ?? '';
+check(/^sf_session=/.test(cookie), 'login sets the session cookie');
+check(/HttpOnly/i.test(cookie), 'the session cookie is HttpOnly');
+check(/Secure/i.test(cookie), 'the production cookie is Secure');
+check(!login.body.includes(setupPassword), 'login never echoes the password');
 
 const unknown = request('/api/v1/nope');
 check(unknown.status === 404, 'an unknown API route answers 404');

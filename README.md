@@ -48,7 +48,7 @@ Alle Befehle laufen an der Repo-Wurzel.
 | `npm run dev:web`      | Vite-Dev-Server auf `127.0.0.1:5273`, `/api` wird auf `:8790` geproxyt |
 | `npm run build`        | API-Typecheck + Web-Produktionsbuild nach `web/dist/`                  |
 | `npm start`            | API ohne Watch-Modus starten                                           |
-| `npm test`             | Alle Tests: 48 Kernel-/Plugin-Tests plus 136 Web-Tests                 |
+| `npm test`             | Alle Tests: Kernel-/Plugin-Tests und Web-Tests                         |
 | `npm run test:api`     | Nur die Kernel-/Plugin-Tests (`api/test/kernel/`)                      |
 | `npm run test:web`     | Nur die Web-Tests (`web/test/`)                                        |
 | `npm run typecheck`    | `tsc --noEmit` für API und Web                                         |
@@ -66,36 +66,23 @@ Die API liest ausschließlich `SF_*`-Variablen mit entwicklungsfreundlichen Defa
 `.env` an der Repo-Wurzel wird automatisch geladen (`--env-file-if-exists`); Vorlage ist
 `.env.example`:
 
-| Variable                   | Default                      | Bedeutung                                                                                                                                               |
-| -------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SF_HOST`                  | `127.0.0.1`                  | Bind-Adresse der API                                                                                                                                    |
-| `SF_PORT`                  | `8790`                       | Port der API                                                                                                                                            |
-| `SF_PUBLIC_URL`            | `http://127.0.0.1:5273`      | Öffentliche Origin. In `NODE_ENV=production` **Pflicht** und muss `https://` sein, sonst bricht der Start ab; `https://` schaltet Secure-Cookies scharf |
-| `SF_DATA_DIR`              | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`)     |
-| `SF_WEB_DIR`               | leer                         | Gebautes SPA, das die API unter `/` ausliefert. Leer = reine API; im Container `/app/web/dist`                                                          |
-| `SF_OPERATOR_EMAIL`        | `operator@smartflow.local`   | Erster Operator-Account                                                                                                                                 |
-| `SF_OPERATOR_NAME`         | `Operator`                   | Anzeigename des Operators                                                                                                                               |
-| `SF_DEV_MAGIC_LINK`        | `1` (außer Production)       | Magic-Link im Response zurückgeben statt zu mailen                                                                                                      |
-| `SF_DEV_AUTO_LOGIN`        | `0`                          | Login-Seite konsumiert den Link selbst; nur mit `SF_DEV_MAGIC_LINK` und ohne `https://`                                                                 |
-| `SF_SECURE_COOKIES`        | abhängig von `SF_PUBLIC_URL` | `Secure`-Flag am Session-Cookie; in `NODE_ENV=production` darf es nicht `0` sein, sonst bricht der Start ab                                             |
-| `SF_LOG_LEVEL`             | `info` (`silent` in Tests)   | Fastify-Log-Level                                                                                                                                       |
-| `SF_TRUST_PROXY`           | `0`                          | `X-Forwarded-*` vertrauen                                                                                                                               |
-| `SF_BODY_LIMIT`            | `1048576`                    | Max. Request-Body in Bytes                                                                                                                              |
-| `SF_RATE_LIMIT_ENABLED`    | `1`                          | Rate-Limit aktiv                                                                                                                                        |
-| `SF_RATE_LIMIT_MAGIC_LINK` | `10`                         | Magic-Link-Anfragen pro Fenster                                                                                                                         |
-| `SF_SMTP_HOST`             | leer                         | Relay-Host. In `NODE_ENV=production` **Pflicht**, sonst bricht der Start ab                                                                             |
-| `SF_SMTP_PORT`             | `587`                        | Submission-Port; `465` schaltet implizites TLS automatisch ein                                                                                          |
-| `SF_SMTP_SECURE`           | Port `465` ⇒ `1`             | Implizites TLS statt STARTTLS                                                                                                                           |
-| `SF_SMTP_USER`             | leer                         | SMTP-Benutzer; nur zusammen mit Passwort                                                                                                                |
-| `SF_SMTP_PASS`             | leer                         | SMTP-Passwort                                                                                                                                           |
-| `SF_SMTP_PASS_FILE`        | leer                         | Datei mit dem Passwort; hat Vorrang vor `SF_SMTP_PASS`                                                                                                  |
-| `SF_SMTP_FROM`             | `SF_OPERATOR_EMAIL`          | Absender der Anmeldemail; Anzeigename erlaubt                                                                                                           |
-| `SF_SMTP_REPLY_TO`         | leer                         | Optionale Antwortadresse                                                                                                                                |
+| Variable                | Default                      | Bedeutung                                                                                                                                               |
+| ----------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SF_HOST`               | `127.0.0.1`                  | Bind-Adresse der API                                                                                                                                    |
+| `SF_PORT`               | `8790`                       | Port der API                                                                                                                                            |
+| `SF_PUBLIC_URL`         | `http://127.0.0.1:5273`      | Öffentliche Origin. In `NODE_ENV=production` **Pflicht** und muss `https://` sein, sonst bricht der Start ab; `https://` schaltet Secure-Cookies scharf |
+| `SF_DATA_DIR`           | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`)     |
+| `SF_WEB_DIR`            | leer                         | Gebautes SPA, das die API unter `/` ausliefert. Leer = reine API; im Container `/app/web/dist`                                                          |
+| `SF_SECURE_COOKIES`     | abhängig von `SF_PUBLIC_URL` | `Secure`-Flag am Session-Cookie; in `NODE_ENV=production` darf es nicht `0` sein, sonst bricht der Start ab                                             |
+| `SF_LOG_LEVEL`          | `info` (`silent` in Tests)   | Fastify-Log-Level                                                                                                                                       |
+| `SF_TRUST_PROXY`        | `0`                          | `X-Forwarded-*` vertrauen                                                                                                                               |
+| `SF_BODY_LIMIT`         | `1048576`                    | Max. Request-Body in Bytes                                                                                                                              |
+| `SF_RATE_LIMIT_ENABLED` | `1`                          | Rate-Limit aktiv                                                                                                                                        |
+| `SF_RATE_LIMIT_LOGIN`   | `10`                         | Anmeldeversuche pro Minute und Absender; je Adresse das Dreifache pro 15 Minuten                                                                        |
 
-Der Magic-Link wird per SMTP verschickt, sobald `SF_SMTP_HOST` gesetzt ist. Ohne Transport
-antwortet `POST /api/v1/auth/magic-link` mit `{"sent":false,…}` und die Anmeldeseite sagt,
-dass nichts verschickt wurde; im Entwicklungsmodus gibt sie den Link stattdessen direkt
-zurück. Details und ein Mailpit-Test stehen in [`docs/deployment.md`](docs/deployment.md#mailversand-smtp).
+Es gibt keinen Mailversand mehr: die Ersteinrichtung legt den ersten Operator direkt im
+Browser an (E-Mail, Name, Passwort), danach meldet man sich mit E-Mail und Passwort an.
+Die Passwörter liegen als scrypt-Hash in der Datenbank.
 
 ## Verzeichnisstruktur
 
@@ -151,10 +138,13 @@ davor Caddy für TLS. Die vollständige Anleitung inklusive Backup, Update und G
 in [`docs/deployment.md`](docs/deployment.md).
 
 ```bash
-cp .env.production.example .env   # SF_DOMAIN und SF_OPERATOR_EMAIL setzen
+cp .env.production.example .env   # SF_DOMAIN und SF_OPERATOR_EMAIL (ACME-Kontakt) setzen
 docker compose up -d --build
 docker compose ps                 # auf "healthy" warten
 ```
+
+Danach die Seite öffnen und die Ersteinrichtung ausfüllen (E-Mail, Name, Passwort ab 12
+Zeichen). Ohne diesen Schritt gibt es kein Konto, und die Anmeldung antwortet mit 401.
 
 Das Image setzt `NODE_ENV=production`, `SF_HOST=0.0.0.0`, `SF_DATA_DIR=/data` und
 `SF_WEB_DIR=/app/web/dist`, läuft als `node`-User und erwartet ein beschreibbares Volume

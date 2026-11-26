@@ -49,8 +49,8 @@ test('the request log drops any query value, not only q', async (t) => {
   const ctx = await createTestApp({ SF_LOG_LEVEL: 'info' }, { logStream: log });
   t.after(() => ctx.close());
 
-  // A magic link travels in the query of a client route; the API answers that
-  // navigation with the SPA shell, so the token would reach a log line.
+  // Query values can carry credentials (an old bookmark, a token in a shared
+  // link); the log must keep the path and drop the rest.
   const response = await ctx.app.inject({
     method: 'GET',
     url: `/api/v1/health?token=${LINK_TOKEN}`,

@@ -1,12 +1,16 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FieldError, type AuthMe } from '../../shared/contract.ts';
 import { SESSION_COOKIE, authMeFor } from '../app.ts';
-import type { AuthService } from '../auth.ts';
-import { EMAIL_PATTERN, type Config } from '../config.ts';
-import { hashToken } from '../crypto.ts';
-import type { Db } from '../db.ts';
+import { AuthError, type AuthService } from '../auth.ts';
+import type { Config } from '../config.ts';
 import { AppError } from '../errors.ts';
-import { localeFromAcceptLanguage, type Mailer } from '../mailer.ts';
+import { PasswordBusyError } from '../password.ts';
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** A new password must be long enough to matter; length is the only rule. */
+const PASSWORD_MIN = 12;
+const PASSWORD_MAX = 256;
 
 const errorSchema = {
   type: 'object',
@@ -87,73 +91,90 @@ function createLimiter(limit: number, windowMs: number) {
 export interface AuthRouteOptions {
   auth: AuthService;
   config: Config;
-  db: Db;
   now: () => Date;
-  mailer: Mailer;
   resolveTenant: (tenantId: string) => { id: string; name: string; slug: string } | null;
 }
 
-/**
- * Dispatching is deliberately not awaited: the 202 must go out before the relay
- * answers, so a slow SMTP server never turns a sign-in request into a timeout.
- * The failure line carries a truncated hash of the recipient and nothing else —
- * no address, no link, no token, not even the relay's raw response, which often
- * quotes the rejected address back.
- */
-function deliverMagicLink(
-  mailer: Mailer,
-  request: FastifyRequest,
-  mail: { to: string; link: string; expiresAt: string; locale: 'de' | 'en' },
-): void {
-  void mailer.sendMagicLink(mail).catch((error: unknown) => {
-    const failure = error as { code?: string; responseCode?: number; command?: string };
-    request.log.error(
-      {
-        recipient: hashToken(mail.to).slice(0, 16),
-        code: failure.code ?? 'unknown',
-        responseCode: failure.responseCode,
-        command: failure.command,
-      },
-      'magic link mail could not be sent',
-    );
+function setSessionCookie(reply: FastifyReply, token: string, config: Config): void {
+  reply.setCookie(SESSION_COOKIE, token, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.secureCookies,
+    maxAge: config.sessionTtlSeconds,
   });
+}
+
+/** Maps the auth service's typed failures to the shared error shape. */
+function asHttpError(error: unknown): never {
+  if (error instanceof AuthError) {
+    if (error.code === 'setup_complete') {
+      throw new AppError('setup_complete', 'Setup is already complete.', 409);
+    }
+    if (error.code === 'email_taken') {
+      throw new FieldError({ email: 'This email address is already in use.' });
+    }
+    throw new AppError('invalid_credentials', 'Email or password is wrong.', 401);
+  }
+  if (error instanceof PasswordBusyError) {
+    throw new AppError('busy', 'The server is busy signing in. Please try again in a moment.', 503);
+  }
+  throw error;
 }
 
 export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptions): void {
   const { auth, config, now, resolveTenant } = options;
-  const allowMagicLink = createLimiter(config.rateLimit.magicLink, 60_000);
+  const allowLogin = createLimiter(config.rateLimit.login, 60_000);
+  // Setup has its own bucket: a first-run setup followed by a sign-in must not
+  // spend the sign-in budget of the same address.
+  const allowSetup = createLimiter(config.rateLimit.login, 60_000);
   // A second, independent bucket per address: the per-IP limit alone is either
   // spoofable behind a trusted proxy or a shared bucket for every client, and in
-  // both cases one address could be flooded.
-  const allowMagicLinkForEmail = createLimiter(config.rateLimit.magicLink * 3, 15 * 60_000);
+  // both cases one account could be flooded with guesses.
+  const allowLoginForEmail = createLimiter(config.rateLimit.login * 3, 15 * 60_000);
 
-  app.post<{ Body: { email?: string } }>(
-    '/auth/magic-link',
+  /**
+   * Public on purpose: the login page asks this before it renders a form, and
+   * the answer carries nothing but a boolean. It never names an account.
+   */
+  app.get(
+    '/auth/setup',
     {
       schema: {
-        summary: 'Send a one-time sign-in link',
+        summary: 'Whether first-run setup is still required',
+        tags: ['auth'],
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['required'],
+            properties: { required: { type: 'boolean' } },
+          },
+        },
+      },
+    },
+    async () => ({ required: auth.setupRequired() }),
+  );
+
+  app.post<{ Body: { email?: string; name?: string; password?: string } }>(
+    '/auth/setup',
+    {
+      schema: {
+        summary: 'Create the first operator account and sign it in',
         tags: ['auth'],
         body: {
           type: 'object',
           additionalProperties: false,
-          required: ['email'],
-          properties: { email: { type: 'string', minLength: 3, maxLength: 254 } },
+          required: ['email', 'name', 'password'],
+          properties: {
+            email: { type: 'string', minLength: 3, maxLength: 254 },
+            name: { type: 'string', minLength: 1, maxLength: 80 },
+            password: { type: 'string', minLength: 1, maxLength: PASSWORD_MAX },
+          },
         },
         response: {
-          202: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['sent', 'expiresAt'],
-            properties: {
-              sent: { type: 'boolean' },
-              expiresAt: { type: 'string' },
-              // Only present when SF_DEV_MAGIC_LINK is on and the origin is not https.
-              link: { type: 'string' },
-              // Set when SF_DEV_AUTO_LOGIN is on as well: the page may spend
-              // the link right away instead of asking for a click.
-              autoLogin: { type: 'boolean' },
-            },
-          },
+          201: authMeSchema,
+          409: errorSchema,
           422: errorSchema,
           429: errorSchema,
         },
@@ -161,13 +182,72 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
     },
     async (request, reply) => {
       const email = (request.body.email ?? '').trim().toLowerCase();
+      const name = (request.body.name ?? '').trim();
+      const password = request.body.password ?? '';
+
+      const fields: Record<string, string> = {};
       if (!EMAIL_PATTERN.test(email)) {
-        throw new FieldError({ email: 'Please enter a valid email address.' });
+        fields.email = 'Please enter a valid email address.';
       }
+      if (name.length === 0) {
+        fields.name = 'Please enter a name.';
+      }
+      if (password.length < PASSWORD_MIN || password.trim().length === 0) {
+        fields.password = `Use at least ${PASSWORD_MIN} characters.`;
+      }
+      if (Object.keys(fields).length > 0) throw new FieldError(fields);
+
+      if (config.rateLimit.enabled && !allowSetup(request.ip, now().getTime())) {
+        throw new AppError('rate_limited', 'Too many attempts. Please try again in a minute.', 429);
+      }
+
+      // A race between two setups is a 409, not a second operator: the service
+      // re-checks after the hash and throws the typed error.
+      const result = await auth
+        .setup({ email, name, password }, request.headers['user-agent'])
+        .catch(asHttpError);
+
+      setSessionCookie(reply, result.sessionToken, config);
+      reply.code(201);
+      return authMeFor(result.user, resolveTenant);
+    },
+  );
+
+  app.post<{ Body: { email?: string; password?: string } }>(
+    '/auth/login',
+    {
+      schema: {
+        summary: 'Sign in with email and password',
+        tags: ['auth'],
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['email', 'password'],
+          properties: {
+            email: { type: 'string', minLength: 3, maxLength: 254 },
+            password: { type: 'string', minLength: 1, maxLength: PASSWORD_MAX },
+          },
+        },
+        response: { 200: authMeSchema, 401: errorSchema, 422: errorSchema, 429: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const email = (request.body.email ?? '').trim().toLowerCase();
+      const password = request.body.password ?? '';
+
+      const fields: Record<string, string> = {};
+      if (!EMAIL_PATTERN.test(email)) {
+        fields.email = 'Please enter a valid email address.';
+      }
+      if (password.length === 0) {
+        fields.password = 'Please enter your password.';
+      }
+      if (Object.keys(fields).length > 0) throw new FieldError(fields);
+
       const nowMs = now().getTime();
       if (
         config.rateLimit.enabled &&
-        (!allowMagicLink(request.ip, nowMs) || !allowMagicLinkForEmail(email, nowMs))
+        (!allowLogin(request.ip, nowMs) || !allowLoginForEmail(email, nowMs))
       ) {
         throw new AppError(
           'rate_limited',
@@ -176,64 +256,12 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
         );
       }
 
-      const { link, expiresAt } = auth.createMagicLink(email);
-      const user = options.db.prepare('select id from users where email = ?').get(email) as
-        { id: string } | undefined;
+      // Unknown address and wrong password are one answer, byte for byte.
+      const result = await auth
+        .login(email, password, request.headers['user-agent'])
+        .catch(asHttpError);
 
-      // Only a known address gets mail, and only when a transport exists. The
-      // answer below is the same either way, so the endpoint stays useless for
-      // account enumeration.
-      if (user !== undefined && options.mailer.isConfigured) {
-        deliverMagicLink(options.mailer, request, {
-          to: email,
-          link,
-          expiresAt,
-          locale: localeFromAcceptLanguage(request.headers['accept-language']),
-        });
-      }
-
-      // Development only: the link is returned so the flow can be exercised
-      // without a mail transport. Never for an unknown address, never over https.
-      const expose = config.devMagicLink && user !== undefined;
-      reply.code(202);
-      if (!expose) return { sent: options.mailer.isConfigured, expiresAt };
-      return config.devAutoLogin
-        ? { sent: true, expiresAt, link, autoLogin: true }
-        : { sent: true, expiresAt, link };
-    },
-  );
-
-  app.post<{ Body: { token?: string } }>(
-    '/auth/confirm',
-    {
-      schema: {
-        summary: 'Exchange a magic-link token for a session cookie',
-        tags: ['auth'],
-        body: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['token'],
-          properties: { token: { type: 'string', minLength: 10, maxLength: 200 } },
-        },
-        response: { 200: authMeSchema, 401: errorSchema },
-      },
-    },
-    async (request, reply) => {
-      let result: ReturnType<AuthService['consumeMagicLink']>;
-      try {
-        result = auth.consumeMagicLink(request.body.token ?? '', request.headers['user-agent']);
-      } catch {
-        throw new AppError('invalid_link', 'The sign-in link is invalid or has expired.', 401);
-      }
-
-      reply.setCookie(SESSION_COOKIE, result.sessionToken, {
-        path: '/',
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: config.secureCookies,
-        maxAge: config.sessionTtlSeconds,
-      });
-
+      setSessionCookie(reply, result.sessionToken, config);
       return authMeFor(result.user, resolveTenant);
     },
   );

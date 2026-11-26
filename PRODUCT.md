@@ -21,16 +21,16 @@ Mandantenfähiger Plattform-Kernel mit strikter Datenisolation pro Mandant (`ten
 
 ## Operating Context
 
-- **Backend-API (`api/`):** Node.js (`>=22.18`), TypeScript, Fastify 5 unter `/api/v1` (OpenAPI unter `/api/openapi.json`), zentrale SQLite-DB (`platform.sqlite`) plus isolierte Tenant-SQLite-DBs, passwortloser Magic-Link-Login mit `sf_session`-Cookie und `x-internal-token` für In-Process-Plugin-Aufrufe.
+- **Backend-API (`api/`):** Node.js (`>=22.18`), TypeScript, Fastify 5 unter `/api/v1` (OpenAPI unter `/api/openapi.json`), zentrale SQLite-DB (`platform.sqlite`) plus isolierte Tenant-SQLite-DBs, Ersteinrichtung des ersten Operators und Passwort-Login (scrypt-Hash) mit `sf_session`-Cookie und `x-internal-token` für In-Process-Plugin-Aufrufe.
 - **Web-Frontend (`web/`):** React 19 + Vite 8 + TypeScript SPA (Dev-Server auf `127.0.0.1:5273` mit `/api`-Proxy auf `127.0.0.1:8790`).
 - **Deployment:** Container-Build über `Dockerfile` (Node 22 slim, Port `8790`).
 
 ## Capabilities and Constraints
 
-- **Vorhandene Funktionen:** Mandanten-Plugin (`tenants`: Liste mit Cursor-Pagination/Suche, Zähler-Statistiken, Erstellen inkl. Tenant-DB-Provisionierung, Detailabruf, idempotentes Sperren/Entsperren), Rollenmodell (`operator`, `tenant_admin`, `employee`), rollengefiltertes `/api/v1/nav`-Menü, Magic-Link-Auth (`/api/v1/auth/*`), Health-Endpunkt (`/api/v1/health`).
+- **Vorhandene Funktionen:** Mandanten-Plugin (`tenants`: Liste mit Cursor-Pagination/Suche, Zähler-Statistiken, Erstellen inkl. Tenant-DB-Provisionierung, Detailabruf, idempotentes Sperren/Entsperren), Rollenmodell (`operator`, `tenant_admin`, `employee`), rollengefiltertes `/api/v1/nav`-Menü, Ersteinrichtung und Passwort-Login (`/api/v1/auth/setup`, `/api/v1/auth/login`), Health-Endpunkt (`/api/v1/health`).
 - **Technische & sprachliche Leitplanken:** Mehrsprachige Oberfläche (`DE`/`EN`) vorsehen; API-Fehlercodes und -Fehlermeldungen im Backend sind aktuell englisch (`ErrorBody`, `FieldError`), während einzelne Kernel-Meldungen deutsch sind — UI-Texte sauber i18n-fähig halten.
 - **Strikte Mandantengrenze:** Zugriff auf `tenantDb(tenantId)` wird bei nicht existierenden (`404`) oder gesperrten (`403 tenant_suspended`) Mandanten zentral im Kernel blockiert.
-- **Noch offen:** Konkrete Fach-Plugins über `tenants` hinaus, Authentifizierungs-UI-Flows für Endnutzer im Frontend sowie produktive Mail-Zustellung für Magic-Links.
+- **Noch offen:** Konkrete Fach-Plugins über `tenants` hinaus, Passwort ändern/zurücksetzen, Authentifizierungs-UI-Flows für Endnutzer im Frontend.
 
 ## Brand Commitments
 
