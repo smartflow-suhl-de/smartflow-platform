@@ -1,14 +1,67 @@
+import {
+  CUSTOM_THEME_ID,
+  DEFAULT_THEME_ID,
+  TOKEN_KEYS,
+  defaultTheme,
+  findTheme,
+  parseThemeFile,
+  serializeTheme,
+  tokensFor,
+  type Mode,
+  type ThemeDefinition,
+  type ThemeTokens,
+} from './lib/themes';
+
+export type { Mode } from './lib/themes';
+
 const MODE_KEY = 'sf.mode';
+const THEME_KEY = 'sf.theme';
+const CUSTOM_KEY = 'sf.theme.custom';
 
-export type Mode = 'light' | 'dark';
+const TOKEN_VARS: Record<keyof ThemeTokens, string> = {
+  paper: '--color-paper',
+  paperRaised: '--color-paper-raised',
+  surface: '--color-surface',
+  ink: '--color-ink',
+  inkSoft: '--color-ink-soft',
+  inkMuted: '--color-ink-muted',
+  line: '--color-line',
+  lineStrong: '--color-line-strong',
+  cobalt: '--color-cobalt',
+  cobaltDeep: '--color-cobalt-deep',
+  signal: '--color-signal',
+  good: '--color-good',
+  warn: '--color-warn',
+  bad: '--color-bad',
+};
 
-export function storedMode(): Mode {
+function readItem(key: string): string | null {
   try {
-    const value = localStorage.getItem(MODE_KEY);
-    if (value === 'light' || value === 'dark') return value;
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeItem(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* privater Modus oder Speicher voll */
+  }
+}
+
+function removeItem(key: string): void {
+  try {
+    localStorage.removeItem(key);
   } catch {
     /* privater Modus */
   }
+}
+
+export function storedMode(): Mode {
+  const value = readItem(MODE_KEY);
+  if (value === 'light' || value === 'dark') return value;
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
@@ -20,9 +73,54 @@ export function applyMode(mode: Mode): void {
   const paper = getComputedStyle(root).getPropertyValue('--color-paper').trim();
   const meta = document.querySelector('meta[name="theme-color"]');
   if (paper && meta) meta.setAttribute('content', paper);
-  try {
-    localStorage.setItem(MODE_KEY, mode);
-  } catch {
-    /* privater Modus */
+  writeItem(MODE_KEY, mode);
+}
+
+/** The custom theme stored in this browser, or `null` when it is unreadable. */
+export function storedCustomTheme(): ThemeDefinition | null {
+  const raw = readItem(CUSTOM_KEY);
+  if (!raw) return null;
+  const parsed = parseThemeFile(raw);
+  return parsed.ok ? parsed.theme : null;
+}
+
+/** Active theme: the stored custom theme, a built-in id, or the default. */
+export function storedTheme(): ThemeDefinition {
+  const id = readItem(THEME_KEY);
+  if (id === CUSTOM_THEME_ID) return storedCustomTheme() ?? defaultTheme();
+  if (id) {
+    const builtin = findTheme(id);
+    if (builtin) return builtin;
+  }
+  return defaultTheme();
+}
+
+/**
+ * Applies a theme for one mode. All tokens are written as CSS custom
+ * properties, so themes stay plain data and no rule needs its own selector.
+ */
+export function applyTheme(theme: ThemeDefinition, mode: Mode): void {
+  applyMode(mode);
+
+  const root = document.documentElement;
+  root.dataset.theme = theme.id;
+
+  const tokens = tokensFor(theme, mode);
+  for (const key of TOKEN_KEYS) {
+    root.style.setProperty(TOKEN_VARS[key], tokens[key]);
+  }
+
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', tokens.paper);
+
+  writeItem(THEME_KEY, theme.id);
+  if (theme.id === CUSTOM_THEME_ID) writeItem(CUSTOM_KEY, serializeTheme(theme).trim());
+}
+
+/** Forgets the browser's custom theme and falls back to the default. */
+export function clearCustomTheme(): void {
+  removeItem(CUSTOM_KEY);
+  if (readItem(THEME_KEY) === CUSTOM_THEME_ID) {
+    writeItem(THEME_KEY, DEFAULT_THEME_ID);
   }
 }

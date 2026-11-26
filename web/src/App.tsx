@@ -10,13 +10,21 @@ import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigati
 import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
 import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
+import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
 import { HelpPage } from './pages/Help';
 import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
 import { TenantsPage } from './pages/Tenants';
-import { applyMode, storedMode, type Mode } from './theme';
+import {
+  applyTheme,
+  clearCustomTheme,
+  storedCustomTheme,
+  storedMode,
+  storedTheme,
+  type Mode,
+} from './theme';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -59,6 +67,8 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>(() => storedMode());
+  const [theme, setTheme] = useState<ThemeDefinition>(() => storedTheme());
+  const [customTheme, setCustomTheme] = useState<ThemeDefinition | null>(() => storedCustomTheme());
   const [locale, setLocale] = useState<Locale>(() => storedLocale());
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState(false);
@@ -69,9 +79,23 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
 
   const messages = useMemo(() => getMessages(locale), [locale]);
 
+  useEffect(() => {
+    applyTheme(theme, mode);
+  }, [theme, mode]);
+
   const handleModeChange = useCallback((next: Mode) => {
     setMode(next);
-    applyMode(next);
+  }, []);
+
+  const handleThemeChange = useCallback((next: ThemeDefinition) => {
+    setTheme(next);
+    if (next.id === 'custom') setCustomTheme(next);
+  }, []);
+
+  const handleRemoveCustomTheme = useCallback(() => {
+    clearCustomTheme();
+    setCustomTheme(null);
+    setTheme((current) => (current.id === CUSTOM_THEME_ID ? defaultTheme() : current));
   }, []);
 
   const handleLocaleChange = useCallback((next: Locale) => {
@@ -290,8 +314,12 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         mode={mode}
         locale={locale}
         messages={messages}
+        themes={customTheme ? [...BUILTIN_THEMES, customTheme] : BUILTIN_THEMES}
+        activeThemeId={theme.id}
         onModeChange={handleModeChange}
         onLocaleChange={handleLocaleChange}
+        onThemeChange={handleThemeChange}
+        onRemoveCustomTheme={handleRemoveCustomTheme}
       />
     );
   } else if (pathname === '/help') {
