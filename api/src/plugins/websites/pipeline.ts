@@ -26,7 +26,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string }; Querystring: { limit?: string } }>(
     '/websites/:siteId/builds',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Build history of a website' },
     },
     async (request) => {
@@ -47,7 +47,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.post<{ Params: { siteId: string }; Body: { trigger?: string } }>(
     '/websites/:siteId/builds',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Queue an Astro build',
         body: {
@@ -82,7 +82,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string; buildId: string } }>(
     '/websites/:siteId/builds/:buildId',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'One build with its log' },
     },
     async (request) => {
@@ -97,7 +97,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.post<{ Params: { siteId: string; buildId: string } }>(
     '/websites/:siteId/builds/:buildId/cancel',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Cancel a queued or running build' },
     },
     async (request) => {
@@ -181,7 +181,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string } }>(
     '/websites/:siteId/jobs',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'AI drafts of a website' },
     },
     async (request) => {
@@ -212,7 +212,7 @@ export function registerPipeline(runtime: Runtime): void {
   }>(
     '/websites/:siteId/jobs',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Create an AI brief; a runner picks the queued job up',
         body: {
@@ -307,7 +307,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string; jobId: string } }>(
     '/websites/:siteId/jobs/:jobId',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'One AI job with its brief and plan' },
     },
     async (request) => {
@@ -324,7 +324,7 @@ export function registerPipeline(runtime: Runtime): void {
   runtime.app.post<{ Params: { siteId: string; jobId: string } }>(
     '/websites/:siteId/jobs/:jobId/cancel',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Cancel a queued or running AI job' },
     },
     async (request) => {

@@ -363,12 +363,16 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     );
   } else if (
     pathname === '/websites' &&
-    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+    (auth.user.role === 'tenant_admin' ||
+      auth.user.role === 'employee' ||
+      auth.user.role === 'operator')
   ) {
     content = <WebsitesPage search={search} locale={locale} messages={messages} />;
   } else if (
     pathname.startsWith('/websites/') &&
-    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+    (auth.user.role === 'tenant_admin' ||
+      auth.user.role === 'employee' ||
+      auth.user.role === 'operator')
   ) {
     content = (
       <WebsiteDetailPage

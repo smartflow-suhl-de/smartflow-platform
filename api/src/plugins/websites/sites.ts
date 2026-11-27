@@ -25,7 +25,7 @@ export function registerSites(runtime: Runtime): void {
   }>(
     '/websites',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'List websites with filters and keyset pagination',
         querystring: {
@@ -102,7 +102,7 @@ export function registerSites(runtime: Runtime): void {
   runtime.app.get(
     '/websites/summary',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Counts for the website dashboard' },
     },
     async (request) => {
@@ -144,7 +144,7 @@ export function registerSites(runtime: Runtime): void {
   }>(
     '/websites',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Create a website record',
         body: {
@@ -231,7 +231,7 @@ export function registerSites(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string } }>(
     '/websites/:siteId',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Website detail with client, build, release and approval state' },
     },
     async (request) => {
@@ -253,7 +253,7 @@ export function registerSites(runtime: Runtime): void {
   }>(
     '/websites/:siteId',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Update the editable fields of a website',
         body: {
@@ -322,7 +322,7 @@ export function registerSites(runtime: Runtime): void {
   runtime.app.delete<{ Params: { siteId: string } }>(
     '/websites/:siteId',
     {
-      preHandler: runtime.app.requireRole('tenant_admin'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'operator'),
       schema: { summary: 'Delete a website that was never published' },
     },
     async (request, reply) => {
@@ -344,7 +344,7 @@ export function registerSites(runtime: Runtime): void {
   runtime.app.get<{ Querystring: { q?: string } }>(
     '/websites/clients',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'List clients of the agency',
         querystring: {
@@ -372,7 +372,7 @@ export function registerSites(runtime: Runtime): void {
   }>(
     '/websites/clients',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Create a client of the agency',
         body: {
@@ -416,7 +416,7 @@ export function registerSites(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string } }>(
     '/websites/:siteId/pages',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Pages of a website' },
     },
     async (request) => {
@@ -429,7 +429,7 @@ export function registerSites(runtime: Runtime): void {
   runtime.app.post<{ Params: { siteId: string }; Body: { route?: string; title?: string } }>(
     '/websites/:siteId/pages',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Add a page by hand',
         body: {

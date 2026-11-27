@@ -230,6 +230,7 @@ test('the tenant-bound plugin stays hidden for an operator until a tenant is cho
   assert.equal(without.includes('websites'), false);
   await choose(ctx, cookie, id);
   assert.equal((await navPlugins(ctx, cookie)).includes('agent'), true);
+  assert.equal((await navPlugins(ctx, cookie)).includes('websites'), true);
 });
 
 test('logout clears the context and a new sign-in starts empty', async (t) => {
@@ -392,17 +393,22 @@ test('tenantId stays the fixed binding: switching never turns it into a tenant',
   assert.equal(admin?.activeTenantId, id);
 });
 
-test('an operator gets 403 on the tenant-bound websites API, with or without a tenant', async (t) => {
+test('an operator gets 403 on the tenant-bound websites API without a tenant, 200 with a tenant', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
   const cookie = await ctx.signIn();
   const id = await makeTenant(ctx, cookie, 'Alpha GmbH');
   const call = () =>
     ctx.app.inject({ method: 'GET', url: '/api/v1/websites', headers: { cookie } });
-  assert.equal((await call()).statusCode, 403, 'no tenant chosen');
+  const without = await call();
+  assert.equal(without.statusCode, 403, 'no tenant chosen');
+  assert.equal(
+    (without.json() as { error: { message: string } }).error.message,
+    'Select a tenant first.',
+  );
   await choose(ctx, cookie, id);
-  // Until the plugin reads activeTenantId and admits operators, a choice opens nothing.
-  assert.equal((await call()).statusCode, 403, 'plugin not converted yet: fail closed');
+  const withTenant = await call();
+  assert.equal(withTenant.statusCode, 200, 'tenant chosen');
 });
 
 test('a tenant_admin of another tenant never sees the chosen tenant', async (t) => {
