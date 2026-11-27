@@ -18,7 +18,14 @@ import type {
   TenantListResponse,
   TenantStats,
 } from './lib/types';
-import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
+import {
+  BUILTIN_THEMES,
+  CUSTOM_THEME_ID,
+  defaultTheme,
+  findTheme,
+  type ThemeDefinition,
+} from './lib/themes';
+import type { AppearancePair } from './lib/appearance';
 import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
 import { LlmProviderDetailPage, LlmProviderFormPage, LlmProvidersPage } from './pages/LlmProviders';
@@ -135,6 +142,18 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     setTheme(next);
     if (next.id === 'custom') setCustomTheme(next);
   }, []);
+
+  // One click in the footer switch moves theme and mode together, in the order
+  // of `appearanceCycle`. Both values go through the same setters the settings
+  // page uses, so the persisted state stays the single source of truth.
+  const handleAppearanceChange = useCallback(
+    (next: AppearancePair) => {
+      const nextTheme = next.themeId === CUSTOM_THEME_ID ? customTheme : findTheme(next.themeId);
+      if (nextTheme) setTheme(nextTheme);
+      setMode(next.mode);
+    },
+    [customTheme],
+  );
 
   const handleRemoveCustomTheme = useCallback(() => {
     clearCustomTheme();
@@ -526,6 +545,9 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         healthError={healthError}
         stats={stats}
         mode={mode}
+        theme={theme}
+        customTheme={customTheme}
+        locale={locale}
         messages={messages}
         loggingOut={loggingOut}
         logoutError={logoutError}
@@ -533,6 +555,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         onOpenTenantSwitcher={handleOpenSwitcher}
         onClearTenantContext={handleClearContext}
         onModeChange={handleModeChange}
+        onAppearanceChange={handleAppearanceChange}
         onRetryHealth={retryHealth}
         onLogout={handleLogout}
       >

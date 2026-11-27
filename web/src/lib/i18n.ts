@@ -101,6 +101,9 @@ export interface Messages {
     paletteTitleSearch: string;
     palettePlaceholderSearch: string;
     paletteEmpty: string;
+    appearanceSwitch: (current: string, next: string) => string;
+    appearanceLight: string;
+    appearanceDark: string;
   };
   login: {
     title: string;
@@ -764,6 +767,9 @@ const DE: Messages = {
     paletteTitleSearch: 'Suchen und springen',
     palettePlaceholderSearch: 'Bereich oder Aktion suchen …',
     paletteEmpty: 'Kein passender Eintrag gefunden.',
+    appearanceSwitch: (current, next) => `Darstellung: ${current} — wechseln zu ${next}`,
+    appearanceLight: 'hell',
+    appearanceDark: 'dunkel',
   },
   login: {
     title: 'Anmelden',
@@ -1503,6 +1509,9 @@ const EN: Messages = {
     paletteTitleSearch: 'Search and jump',
     palettePlaceholderSearch: 'Search views or actions …',
     paletteEmpty: 'No matching entries found.',
+    appearanceSwitch: (current, next) => `Appearance: ${current} — switch to ${next}`,
+    appearanceLight: 'light',
+    appearanceDark: 'dark',
   },
   login: {
     title: 'Sign in',

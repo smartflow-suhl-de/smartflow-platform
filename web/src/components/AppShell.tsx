@@ -3,9 +3,12 @@ import type { Messages } from '../lib/i18n';
 import { groupNavigation, utilityNavigation, type ResolvedNavItem } from '../lib/navigation';
 import { AppLink, navigate } from '../lib/router';
 import type { HealthResponse, SessionTenant, SessionUser, TenantStats } from '../lib/types';
-import type { Mode } from '../theme';
+import type { Locale } from '../lib/i18n';
+import type { Mode, ThemeDefinition } from '../lib/themes';
+import type { AppearancePair } from '../lib/appearance';
 import { BrandLogo } from './BrandLogo';
 import { CommandPalette } from './CommandPalette';
+import { AppearanceToggle } from './AppearanceToggle';
 import { TenantSwitcher } from './TenantSwitcher';
 import {
   BuildingIcon,
@@ -48,6 +51,9 @@ export interface AppShellProps {
   healthError: boolean;
   stats: TenantStats | null;
   mode: Mode;
+  theme: ThemeDefinition;
+  customTheme: ThemeDefinition | null;
+  locale: Locale;
   messages: Messages;
   loggingOut: boolean;
   logoutError: string | null;
@@ -55,6 +61,7 @@ export interface AppShellProps {
   onOpenTenantSwitcher?: () => void;
   onClearTenantContext?: () => void;
   onModeChange: (mode: Mode) => void;
+  onAppearanceChange: (next: AppearancePair) => void;
   onRetryHealth: () => void;
   onLogout: () => void;
   children: ReactNode;
@@ -68,6 +75,9 @@ export function AppShell({
   healthError,
   stats,
   mode,
+  theme,
+  customTheme,
+  locale,
   messages,
   loggingOut,
   logoutError,
@@ -75,6 +85,7 @@ export function AppShell({
   onOpenTenantSwitcher,
   onClearTenantContext,
   onModeChange,
+  onAppearanceChange,
   onRetryHealth,
   onLogout,
   children,
@@ -92,6 +103,28 @@ export function AppShell({
   const isOperator = user.role === 'operator';
   const groups = useMemo(() => groupNavigation(navItems), [navItems]);
   const utilityItems = useMemo(() => utilityNavigation(navItems), [navItems]);
+  // The appearance switch sits between settings and help, so the utility row
+  // is split at the help entry instead of appending to the end.
+  const helpIndex = utilityItems.findIndex((item) => item.path === '/help');
+  const splitAt = helpIndex >= 0 ? helpIndex : utilityItems.length;
+  const utilityItemsBefore = utilityItems.slice(0, splitAt);
+  const utilityItemsAfter = utilityItems.slice(splitAt);
+
+  function renderUtilityItem(item: ResolvedNavItem) {
+    const active = pathname === item.path || pathname.startsWith(`${item.path}/`);
+    return (
+      <AppLink
+        key={item.id}
+        to={item.path}
+        aria-label={item.label}
+        title={item.label}
+        aria-current={active ? 'page' : undefined}
+        className={active ? 'sf-foot-icon-btn sf-foot-icon-btn-active' : 'sf-foot-icon-btn'}
+      >
+        {navIconByName(item.icon, 15)}
+      </AppLink>
+    );
+  }
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -287,23 +320,15 @@ export function AppShell({
             {health?.version ? <span className="sf-foot-version">v{health.version}</span> : null}
           </div>
           <div className="sf-foot-actions">
-            {utilityItems.map((item) => {
-              const active = pathname === item.path || pathname.startsWith(`${item.path}/`);
-              return (
-                <AppLink
-                  key={item.id}
-                  to={item.path}
-                  aria-label={item.label}
-                  title={item.label}
-                  aria-current={active ? 'page' : undefined}
-                  className={
-                    active ? 'sf-foot-icon-btn sf-foot-icon-btn-active' : 'sf-foot-icon-btn'
-                  }
-                >
-                  {navIconByName(item.icon, 15)}
-                </AppLink>
-              );
-            })}
+            {utilityItemsBefore.map((item) => renderUtilityItem(item))}
+            <AppearanceToggle
+              current={{ themeId: theme.id, mode }}
+              customTheme={customTheme}
+              locale={locale}
+              messages={messages}
+              onChange={onAppearanceChange}
+            />
+            {utilityItemsAfter.map((item) => renderUtilityItem(item))}
             <button
               type="button"
               onClick={onLogout}
