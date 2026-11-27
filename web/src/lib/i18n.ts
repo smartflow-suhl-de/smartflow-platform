@@ -196,6 +196,29 @@ export interface Messages {
     confirmSuspendBody: string;
     confirmSuspendButton: string;
   };
+  tenantSwitcher: {
+    title: string;
+    description: string;
+    contextLabel: string;
+    noTenant: string;
+    chooseTenant: string;
+    switchTenant: string;
+    clearContext: string;
+    clearContextAria: string;
+    searchPlaceholder: string;
+    searchAria: string;
+    loadingTenants: string;
+    emptyList: string;
+    emptySearch: string;
+    colName: string;
+    colSlug: string;
+    selectAction: string;
+    activeBadge: string;
+    switchedSuccess: (name: string) => string;
+    clearedSuccess: string;
+    prevPage: string;
+    nextPage: string;
+  };
   llm: {
     title: string;
     description: string;
@@ -848,6 +871,29 @@ const DE: Messages = {
     confirmSuspendBody:
       'Der Zugriff auf die Mandantendatenbank wird im Kernel sofort mit 403 blockiert. Der Vorgang lässt sich jederzeit rückgängig machen.',
     confirmSuspendButton: 'Mandant sperren',
+  },
+  tenantSwitcher: {
+    title: 'Mandantenkontext wählen',
+    description: 'Wählen Sie einen aktiven Mandanten aus, um in dessen Kontext zu arbeiten.',
+    contextLabel: 'Mandantenkontext',
+    noTenant: 'Kein Mandant gewählt',
+    chooseTenant: 'Mandant wählen …',
+    switchTenant: 'Mandant wechseln …',
+    clearContext: 'Kontext aufheben',
+    clearContextAria: 'Mandantenkontext aufheben',
+    searchPlaceholder: 'Mandanten suchen …',
+    searchAria: 'Mandanten filtern',
+    loadingTenants: 'Mandanten werden geladen …',
+    emptyList: 'Keine aktiven Mandanten vorhanden.',
+    emptySearch: 'Keine Mandanten gefunden.',
+    colName: 'Firma',
+    colSlug: 'Slug',
+    selectAction: 'Auswählen',
+    activeBadge: 'Aktiv',
+    switchedSuccess: (name) => `Mandantenkontext aktiviert: ${name}`,
+    clearedSuccess: 'Mandantenkontext aufgehoben.',
+    prevPage: 'Zurück',
+    nextPage: 'Weiter',
   },
   llm: {
     title: 'KI-Anbieter',
@@ -1560,6 +1606,29 @@ const EN: Messages = {
       'Database access for this tenant will immediately return HTTP 403. You can resume the tenant at any time.',
     confirmSuspendButton: 'Suspend tenant',
   },
+  tenantSwitcher: {
+    title: 'Select tenant context',
+    description: 'Choose an active tenant to work within their context.',
+    contextLabel: 'Tenant context',
+    noTenant: 'No tenant selected',
+    chooseTenant: 'Select tenant …',
+    switchTenant: 'Switch tenant …',
+    clearContext: 'Clear context',
+    clearContextAria: 'Clear tenant context',
+    searchPlaceholder: 'Search tenants …',
+    searchAria: 'Filter tenants',
+    loadingTenants: 'Loading tenants …',
+    emptyList: 'No active tenants available.',
+    emptySearch: 'No tenants found.',
+    colName: 'Company',
+    colSlug: 'Slug',
+    selectAction: 'Select',
+    activeBadge: 'Active',
+    switchedSuccess: (name) => `Tenant context activated: ${name}`,
+    clearedSuccess: 'Tenant context cleared.',
+    prevPage: 'Previous',
+    nextPage: 'Next',
+  },
   llm: {
     title: 'AI providers',
     description:
@@ -2145,6 +2214,8 @@ export function formatApiError(error: unknown, locale: Locale): string {
         return 'Dieser Slug ist bereits vergeben.';
       case 'tenant_not_found':
         return 'Der Mandant wurde nicht gefunden.';
+      case 'tenant_suspended':
+        return 'Der Mandant ist gesperrt.';
       case 'validation_failed':
         return 'Bitte prüfen Sie die markierten Eingaben.';
       case 'llm_provider_error':
@@ -2207,6 +2278,8 @@ export function formatApiError(error: unknown, locale: Locale): string {
       return 'That slug is already taken.';
     case 'tenant_not_found':
       return 'This tenant was not found.';
+    case 'tenant_suspended':
+      return 'The tenant is suspended.';
     case 'validation_failed':
       return 'Please check the highlighted fields.';
     case 'llm_provider_error':

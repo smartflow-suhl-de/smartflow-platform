@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/kernel/app.ts';
+import type { AuthService } from '../../src/kernel/auth.ts';
 import { loadConfig, type Config } from '../../src/kernel/config.ts';
 import type { Db } from '../../src/kernel/db.ts';
 import { newId } from '../../src/kernel/ids.ts';
@@ -26,6 +27,8 @@ export interface TestApp {
   db: Db;
   /** Verified tenant database, with the same boundary the plugins get. */
   tenantDb(tenantId: string): Db;
+  /** The kernel's auth service, for tests that look at session state. */
+  auth: AuthService;
   /** The kernel's in-process caller token, for route tests. */
   internalToken: string;
   /** Signs an account in with the test password and returns the cookie header value. */
@@ -78,7 +81,7 @@ export async function createTestApp(
     ...overrides,
   });
 
-  const { app, db, tenantDb, internalToken } = await buildApp({
+  const { app, db, tenantDb, internalToken, auth } = await buildApp({
     config,
     logger: options.logStream !== undefined,
     ...(options.logStream ? { logStream: options.logStream } : {}),
@@ -90,6 +93,7 @@ export async function createTestApp(
     dataDir,
     db,
     tenantDb,
+    auth,
     internalToken,
     async signIn(email = TEST_EMAIL, role: Role = 'operator') {
       await ensurePassword(db, email, role);

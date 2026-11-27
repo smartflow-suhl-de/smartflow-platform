@@ -73,8 +73,8 @@ export function createRuntime(ctx: PluginContext): Runtime {
 
   function tenantIdOf(request: { user: SessionUser | null }): string {
     if (!request.user) throw unauthorized();
-    const tenantId = request.user.tenantId;
-    if (!tenantId) throw forbidden('This view belongs to a tenant.');
+    const tenantId = request.user.activeTenantId ?? request.user.tenantId;
+    if (!tenantId) throw forbidden('Select a tenant first.');
     return tenantId;
   }
 

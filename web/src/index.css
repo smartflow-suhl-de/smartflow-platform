@@ -2335,3 +2335,204 @@ input:-webkit-autofill:active {
   bottom: var(--spacing-lg);
   margin-top: var(--spacing-sm);
 }
+
+/* --- Tenant Switcher ---------------------------------------------------- */
+
+.sf-tenant-switcher {
+  margin: var(--spacing-sm) var(--spacing-sm) 0;
+  padding: var(--spacing-sm) 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+}
+
+.sf-tenant-switcher-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
+}
+
+.sf-tenant-switcher-label {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.sf-tenant-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-ink-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.sf-tenant-clear-btn:hover {
+  background: color-mix(in srgb, var(--color-ink) 8%, transparent);
+  color: var(--color-ink);
+}
+
+.sf-tenant-clear-btn:focus-visible {
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 1px;
+}
+
+.sf-tenant-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.sf-tenant-switcher-btn:hover {
+  border-color: var(--color-cobalt);
+  background: var(--color-surface);
+}
+
+.sf-tenant-switcher-btn:focus-visible {
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 1px;
+}
+
+.sf-tenant-switcher-empty {
+  color: var(--color-ink-muted);
+  border-style: dashed;
+}
+
+.sf-tenant-switcher-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.sf-tenant-switcher-slug {
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  flex: none;
+}
+
+.sf-tenant-switcher-action {
+  font-size: 11px;
+  color: var(--color-cobalt);
+  font-weight: 500;
+  flex: none;
+}
+
+/* Topbar Tenant Button */
+.sf-topbar-tenant {
+  display: flex;
+  align-items: center;
+  margin-right: auto;
+  margin-left: var(--spacing-sm);
+}
+
+.sf-topbar-tenant-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--spacing-sm);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink-soft);
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 200px;
+}
+
+.sf-topbar-tenant-btn:hover {
+  border-color: var(--color-cobalt);
+  color: var(--color-ink);
+}
+
+.sf-topbar-tenant-btn:focus-visible {
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 1px;
+}
+
+.sf-topbar-tenant-active {
+  border-color: color-mix(in srgb, var(--color-cobalt) 40%, var(--color-line));
+  color: var(--color-ink);
+  font-weight: 500;
+}
+
+.sf-topbar-tenant-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Switcher Modal */
+.sf-switcher-modal {
+  max-width: 540px;
+}
+
+.sf-modal-desc {
+  margin: var(--spacing-xs) 0 0;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+}
+
+.sf-switcher-search {
+  padding: var(--spacing-md) var(--spacing-lg) 0;
+}
+
+.sf-switcher-body {
+  padding: var(--spacing-md) var(--spacing-lg);
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.sf-tenant-row-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.sf-tr-selected {
+  background: color-mix(in srgb, var(--color-cobalt) 6%, transparent);
+}
+
+.sf-td-action {
+  text-align: right;
+  width: 90px;
+}
+
+.sf-switcher-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sf-switcher-pages {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.sf-switcher-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+}

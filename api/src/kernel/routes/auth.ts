@@ -31,10 +31,21 @@ const errorSchema = {
   },
 } as const;
 
+const tenantRefSchema = {
+  type: ['object', 'null'],
+  additionalProperties: false,
+  required: ['id', 'name', 'slug'],
+  properties: {
+    id: { type: 'string' },
+    name: { type: 'string' },
+    slug: { type: 'string' },
+  },
+} as const;
+
 const authMeSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['user', 'tenant'],
+  required: ['user', 'tenant', 'activeTenant'],
   properties: {
     user: {
       type: 'object',
@@ -47,16 +58,8 @@ const authMeSchema = {
         role: { type: 'string', enum: ['operator', 'tenant_admin', 'employee'] },
       },
     },
-    tenant: {
-      type: ['object', 'null'],
-      additionalProperties: false,
-      required: ['id', 'name', 'slug'],
-      properties: {
-        id: { type: 'string' },
-        name: { type: 'string' },
-        slug: { type: 'string' },
-      },
-    },
+    tenant: tenantRefSchema,
+    activeTenant: tenantRefSchema,
   },
 } as const;
 
@@ -143,7 +146,9 @@ export interface AuthRouteOptions {
   auth: AuthService;
   config: Config;
   now: () => Date;
-  resolveTenant: (tenantId: string) => { id: string; name: string; slug: string } | null;
+  resolveTenant: (
+    tenantId: string,
+  ) => { id: string; name: string; slug: string; status?: 'active' | 'suspended' } | null;
 }
 
 function setSessionCookie(reply: FastifyReply, token: string, config: Config): void {
@@ -345,6 +350,58 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
     async (request): Promise<AuthMe> => {
       if (!request.user) throw new AppError('unauthorized', 'Anmeldung erforderlich.', 401);
       return authMeFor(request.user, resolveTenant);
+    },
+  );
+
+  /**
+   * Operator only: choose the tenant this session works in, or `null` to leave
+   * it. The choice lives in the server-side session, never in a client header.
+   * Every failure answers before anything changes, so the session stays as it was.
+   */
+  app.post<{ Body: { tenantId?: string | null } }>(
+    '/auth/tenant',
+    {
+      preHandler: app.requireRole('operator'),
+      schema: {
+        summary: 'Choose the tenant this operator session works in',
+        tags: ['auth'],
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['tenantId'],
+          properties: { tenantId: { type: ['string', 'null'], minLength: 1, maxLength: 80 } },
+        },
+        response: {
+          200: authMeSchema,
+          401: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          422: errorSchema,
+        },
+      },
+    },
+    async (request) => {
+      const user = request.user;
+      if (!user) throw new AppError('unauthorized', 'Anmeldung erforderlich.', 401);
+      const target = request.body.tenantId ?? null;
+
+      if (target !== null) {
+        const tenant = resolveTenant(target);
+        if (!tenant) throw new AppError('tenant_not_found', 'Tenant not found.', 404);
+        if (tenant.status === 'suspended') {
+          throw new AppError('tenant_suspended', 'The tenant is suspended.', 403);
+        }
+      }
+
+      const token = request.cookies[SESSION_COOKIE];
+      const from = user.activeTenantId;
+      if (!auth.setActiveTenant(token, target)) {
+        throw new AppError('unauthorized', 'Anmeldung erforderlich.', 401);
+      }
+      if (from !== target) {
+        auth.recordTenantSwitch({ userId: user.id, fromTenantId: from, toTenantId: target });
+      }
+      return authMeFor({ ...user, activeTenantId: target }, resolveTenant);
     },
   );
 

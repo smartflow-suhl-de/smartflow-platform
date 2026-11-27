@@ -144,6 +144,10 @@ test('an operator without a tenant is refused, an employee may not publish or co
   const operator = await inject(session, await session.ctx.signIn(), 'GET', '/api/v1/websites');
   assert.equal(operator.statusCode, 403);
   assert.equal((operator.json() as { error: { code: string } }).error.code, 'forbidden');
+  assert.equal(
+    (operator.json() as { error: { message: string } }).error.message,
+    'Select a tenant first.',
+  );
 
   const forbidden: Array<['POST' | 'PUT' | 'PATCH', string, unknown]> = [
     ['POST', `/api/v1/websites/${site.id}/releases`, { build_id: 'bld_x' }],
@@ -891,4 +895,105 @@ test('rotating approval tokens from one IP still hit the IP bucket', async (t) =
     lastStatus = response.statusCode;
   }
   assert.equal(lastStatus, 429);
+});
+
+test('an operator with an active tenant can access and manage websites for that tenant', async (t) => {
+  const session = await setup(t);
+  const site = await createSite(session, session.admin);
+
+  const operatorCookie = await session.ctx.signIn();
+
+  // Without selection -> 403 Select a tenant first.
+  const before = await inject(session, operatorCookie, 'GET', '/api/v1/websites');
+  assert.equal(before.statusCode, 403);
+  assert.equal(
+    (before.json() as { error: { message: string } }).error.message,
+    'Select a tenant first.',
+  );
+
+  // Operator selects tenant
+  const chooseRes = await session.ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/tenant',
+    headers: { cookie: operatorCookie },
+    payload: { tenantId: session.tenantId },
+  });
+  assert.equal(chooseRes.statusCode, 200);
+
+  // Websites list shows the tenant's site
+  const list = await inject(session, operatorCookie, 'GET', '/api/v1/websites');
+  assert.equal(list.statusCode, 200);
+  assert.equal((list.json() as { total: number }).total, 1);
+
+  // Detail returns site
+  const detail = await inject(session, operatorCookie, 'GET', `/api/v1/websites/${site.id}`);
+  assert.equal(detail.statusCode, 200);
+  assert.equal((detail.json() as { id: string }).id, site.id);
+
+  // Summary returns statistics
+  const summary = await inject(session, operatorCookie, 'GET', '/api/v1/websites/summary');
+  assert.equal(summary.statusCode, 200);
+  assert.equal((summary.json() as { total: number }).total, 1);
+
+  // Operator can create a site for the active tenant
+  const created = await inject(session, operatorCookie, 'POST', '/api/v1/websites', {
+    name: 'Operator Site',
+  });
+  assert.equal(created.statusCode, 201);
+
+  // Operator can update settings for the active tenant
+  const settings = await inject(session, operatorCookie, 'PUT', '/api/v1/websites/settings', {
+    max_tokens_per_run: 30000,
+  });
+  assert.equal(settings.statusCode, 200);
+
+  // Clearing selection revokes access again
+  await session.ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/tenant',
+    headers: { cookie: operatorCookie },
+    payload: { tenantId: null },
+  });
+  const after = await inject(session, operatorCookie, 'GET', '/api/v1/websites');
+  assert.equal(after.statusCode, 403);
+  assert.equal(
+    (after.json() as { error: { message: string } }).error.message,
+    'Select a tenant first.',
+  );
+});
+
+test('a tenant_admin of another tenant never sees websites of the chosen tenant', async (t) => {
+  const session = await setup(t);
+  const siteA = await createSite(session, session.admin);
+
+  const other = await addTenant(session, 'Beta');
+  const siteB = await createSite(other, other.admin);
+
+  // Admin of Tenant B only sees siteB
+  const otherList = await inject(other, other.admin, 'GET', '/api/v1/websites');
+  assert.equal(otherList.statusCode, 200);
+  const otherItems = (otherList.json() as { items: { id: string }[] }).items;
+  assert.equal(otherItems.length, 1);
+  assert.equal(otherItems[0]!.id, siteB.id);
+
+  // Admin of Tenant A only sees siteA
+  const adminList = await inject(session, session.admin, 'GET', '/api/v1/websites');
+  assert.equal(adminList.statusCode, 200);
+  const adminItems = (adminList.json() as { items: { id: string }[] }).items;
+  assert.equal(adminItems.length, 1);
+  assert.equal(adminItems[0]!.id, siteA.id);
+
+  // Operator with Tenant B active sees siteB and not siteA
+  const operatorCookie = await session.ctx.signIn();
+  await session.ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/tenant',
+    headers: { cookie: operatorCookie },
+    payload: { tenantId: other.tenantId },
+  });
+  const opList = await inject(other, operatorCookie, 'GET', '/api/v1/websites');
+  assert.equal(opList.statusCode, 200);
+  const opItems = (opList.json() as { items: { id: string }[] }).items;
+  assert.equal(opItems.length, 1);
+  assert.equal(opItems[0]!.id, siteB.id);
 });

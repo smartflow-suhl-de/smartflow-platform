@@ -385,6 +385,7 @@ function parseAuthMe(raw: unknown): AuthMe {
   return {
     user: parseSessionUser(raw.user),
     tenant: parseSessionTenant(raw.tenant),
+    activeTenant: parseSessionTenant(raw.activeTenant),
   };
 }
 
@@ -932,6 +933,20 @@ export const api = {
 
   async logout(): Promise<void> {
     await requestJson('/auth/logout', { method: 'POST', notifyUnauthorized: false });
+  },
+
+  /**
+   * Operator only: choose the tenant this session works in, or `null` to leave
+   * it. The choice lives in the server-side session.
+   */
+  async setActiveTenant(tenantId: string | null, signal?: AbortSignal): Promise<AuthMe> {
+    return parseAuthMe(
+      await requestJson('/auth/tenant', {
+        method: 'POST',
+        body: { tenantId },
+        signal,
+      }),
+    );
   },
 
   async nav(signal?: AbortSignal): Promise<NavResponse> {

@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Messages } from '../lib/i18n';
 import { groupNavigation, utilityNavigation, type ResolvedNavItem } from '../lib/navigation';
 import { AppLink, navigate } from '../lib/router';
-import type { HealthResponse, SessionUser, TenantStats } from '../lib/types';
+import type { HealthResponse, SessionTenant, SessionUser, TenantStats } from '../lib/types';
 import type { Mode } from '../theme';
 import { BrandLogo } from './BrandLogo';
 import { CommandPalette } from './CommandPalette';
+import { TenantSwitcher } from './TenantSwitcher';
 import {
+  BuildingIcon,
   CloseIcon,
   LogOutIcon,
   MenuIcon,
@@ -49,6 +51,9 @@ export interface AppShellProps {
   messages: Messages;
   loggingOut: boolean;
   logoutError: string | null;
+  activeTenant?: SessionTenant | null;
+  onOpenTenantSwitcher?: () => void;
+  onClearTenantContext?: () => void;
   onModeChange: (mode: Mode) => void;
   onRetryHealth: () => void;
   onLogout: () => void;
@@ -66,6 +71,9 @@ export function AppShell({
   messages,
   loggingOut,
   logoutError,
+  activeTenant = null,
+  onOpenTenantSwitcher,
+  onClearTenantContext,
   onModeChange,
   onRetryHealth,
   onLogout,
@@ -222,6 +230,15 @@ export function AppShell({
           </div>
         ) : null}
 
+        {isOperator && onOpenTenantSwitcher && onClearTenantContext ? (
+          <TenantSwitcher
+            activeTenant={activeTenant}
+            messages={messages}
+            onOpenModal={onOpenTenantSwitcher}
+            onClearContext={onClearTenantContext}
+          />
+        ) : null}
+
         <nav aria-label={messages.shell.mainNavAria} className="sf-nav scroll-thin">
           {groups.map((group) => (
             <div key={group.group} className="sf-nav-group">
@@ -340,6 +357,35 @@ export function AppShell({
               <span className="sf-search-placeholder">{messages.shell.searchPlaceholder}</span>
               <span className="sf-kbd">⌘K</span>
             </button>
+
+            {isOperator && onOpenTenantSwitcher ? (
+              <div className="sf-topbar-tenant">
+                <button
+                  type="button"
+                  className={
+                    activeTenant
+                      ? 'sf-topbar-tenant-btn sf-topbar-tenant-active'
+                      : 'sf-topbar-tenant-btn'
+                  }
+                  onClick={onOpenTenantSwitcher}
+                  title={
+                    activeTenant
+                      ? `${messages.tenantSwitcher.contextLabel}: ${activeTenant.name} (${activeTenant.slug})`
+                      : messages.tenantSwitcher.noTenant
+                  }
+                  aria-label={
+                    activeTenant
+                      ? `${messages.tenantSwitcher.contextLabel}: ${activeTenant.name}`
+                      : messages.tenantSwitcher.chooseTenant
+                  }
+                >
+                  <BuildingIcon size={14} />
+                  <span className="sf-topbar-tenant-name">
+                    {activeTenant ? activeTenant.name : messages.tenantSwitcher.noTenant}
+                  </span>
+                </button>
+              </div>
+            ) : null}
 
             <div className="sf-topbar-right">
               <div className="sf-topbar-health">
