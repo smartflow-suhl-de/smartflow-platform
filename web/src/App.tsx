@@ -3,13 +3,21 @@ import { AppShell } from './components/AppShell';
 import { Button } from './components/ui';
 import { PublicLayout, PublicUnavailable } from './components/PublicLayout';
 import { ToastProvider } from './components/Toast';
+import { TenantSwitcherModal } from './components/TenantSwitcher';
+import { useToast } from './components/useToast';
 import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './lib/api';
 import { sessionProbeOutcome } from './lib/auth-flow';
 import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
 import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
-import type { AuthMe, HealthResponse, NavEntry, TenantStats } from './lib/types';
+import type {
+  AuthMe,
+  HealthResponse,
+  NavEntry,
+  TenantListResponse,
+  TenantStats,
+} from './lib/types';
 import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
 import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
@@ -63,7 +71,13 @@ export function App() {
   const { pathname, search } = useRoute();
   const path = normalizePath(pathname);
   const match = matchPublicRoute(path);
-  if (!match && !isPublicNamespace(path)) return <SessionApp pathname={pathname} search={search} />;
+  if (!match && !isPublicNamespace(path)) {
+    return (
+      <ToastProvider>
+        <SessionApp pathname={pathname} search={search} />
+      </ToastProvider>
+    );
+  }
 
   const locale = storedLocale();
   return (
@@ -98,6 +112,15 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   const [stats, setStats] = useState<TenantStats | null>(null);
   const [statsVersion, setStatsVersion] = useState(0);
 
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [switcherQuery, setSwitcherQuery] = useState('');
+  const [switcherCursorStack, setSwitcherCursorStack] = useState<string[]>([]);
+  const [switcherList, setSwitcherList] = useState<TenantListResponse | null>(null);
+  const [switcherLoading, setSwitcherLoading] = useState(false);
+  const [switcherError, setSwitcherError] = useState<string | null>(null);
+  const [busyTenantId, setBusyTenantId] = useState<string | null>(null);
+
+  const showToast = useToast();
   const messages = useMemo(() => getMessages(locale), [locale]);
 
   useEffect(() => {
@@ -238,6 +261,92 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     setProbeVersion((v) => v + 1);
   }, []);
 
+  const isOperator = role === 'operator';
+  const currentSwitcherCursor = switcherCursorStack[switcherCursorStack.length - 1] ?? null;
+
+  useEffect(() => {
+    if (!switcherOpen || !isOperator) return;
+    const controller = new AbortController();
+    setSwitcherLoading(true);
+    setSwitcherError(null);
+
+    api
+      .listTenants(
+        {
+          status: 'active',
+          q: switcherQuery,
+          limit: 10,
+          cursor: currentSwitcherCursor,
+        },
+        controller.signal,
+      )
+      .then((res) => {
+        setSwitcherList(res);
+        setSwitcherLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        setSwitcherError(formatApiError(err, locale));
+        setSwitcherLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [switcherOpen, isOperator, switcherQuery, currentSwitcherCursor, locale]);
+
+  const handleSelectTenant = useCallback(
+    async (tenantId: string | null) => {
+      setBusyTenantId(tenantId ?? '__clear__');
+      setSwitcherError(null);
+      try {
+        const updatedAuth = await api.setActiveTenant(tenantId);
+        setSession({ kind: 'signed_in', auth: updatedAuth });
+        setSwitcherOpen(false);
+        // Reload navigation so tenant-scoped plugins (like Websites) appear or disappear
+        api
+          .nav()
+          .then((result) => setApiNav(result.items))
+          .catch(() => undefined);
+
+        if (updatedAuth.activeTenant) {
+          showToast(messages.tenantSwitcher.switchedSuccess(updatedAuth.activeTenant.name));
+        } else {
+          showToast(messages.tenantSwitcher.clearedSuccess);
+        }
+      } catch (err) {
+        setSwitcherError(formatApiError(err, locale));
+      } finally {
+        setBusyTenantId(null);
+      }
+    },
+    [locale, messages, showToast],
+  );
+
+  const handleOpenSwitcher = useCallback(() => {
+    setSwitcherQuery('');
+    setSwitcherCursorStack([]);
+    setSwitcherError(null);
+    setSwitcherOpen(true);
+  }, []);
+
+  const handleClearContext = useCallback(() => {
+    handleSelectTenant(null);
+  }, [handleSelectTenant]);
+
+  const handleSwitcherNext = useCallback(() => {
+    if (switcherList?.nextCursor) {
+      setSwitcherCursorStack((prev) => [...prev, switcherList.nextCursor!]);
+    }
+  }, [switcherList]);
+
+  const handleSwitcherPrev = useCallback(() => {
+    setSwitcherCursorStack((prev) => prev.slice(0, -1));
+  }, []);
+
+  const handleSwitcherQueryChange = useCallback((next: string) => {
+    setSwitcherQuery(next);
+    setSwitcherCursorStack([]);
+  }, []);
+
   // Re-runs the health probe. Only a successful probe clears a latched
   // `healthError`; a recovered data route no longer does it on its own.
   const retryHealth = useCallback(() => setHealthProbe((v) => v + 1), []);
@@ -363,12 +472,16 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     );
   } else if (
     pathname === '/websites' &&
-    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+    (auth.user.role === 'tenant_admin' ||
+      auth.user.role === 'employee' ||
+      auth.user.role === 'operator')
   ) {
     content = <WebsitesPage search={search} locale={locale} messages={messages} />;
   } else if (
     pathname.startsWith('/websites/') &&
-    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+    (auth.user.role === 'tenant_admin' ||
+      auth.user.role === 'employee' ||
+      auth.user.role === 'operator')
   ) {
     content = (
       <WebsiteDetailPage
@@ -404,7 +517,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   }
 
   return (
-    <ToastProvider>
+    <>
       <AppShell
         user={auth.user}
         pathname={pathname}
@@ -416,12 +529,34 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         messages={messages}
         loggingOut={loggingOut}
         logoutError={logoutError}
+        activeTenant={auth.activeTenant}
+        onOpenTenantSwitcher={handleOpenSwitcher}
+        onClearTenantContext={handleClearContext}
         onModeChange={handleModeChange}
         onRetryHealth={retryHealth}
         onLogout={handleLogout}
       >
         {content}
       </AppShell>
-    </ToastProvider>
+      {isOperator ? (
+        <TenantSwitcherModal
+          open={switcherOpen}
+          activeTenant={auth.activeTenant}
+          tenants={switcherList?.items ?? []}
+          loading={switcherLoading}
+          error={switcherError}
+          query={switcherQuery}
+          hasNextPage={Boolean(switcherList?.nextCursor)}
+          hasPrevPage={switcherCursorStack.length > 0}
+          busyId={busyTenantId}
+          messages={messages}
+          onQueryChange={handleSwitcherQueryChange}
+          onSelect={handleSelectTenant}
+          onPrevPage={handleSwitcherPrev}
+          onNextPage={handleSwitcherNext}
+          onClose={() => setSwitcherOpen(false)}
+        />
+      ) : null}
+    </>
   );
 }
