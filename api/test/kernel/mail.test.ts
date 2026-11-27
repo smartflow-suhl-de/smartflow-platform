@@ -63,6 +63,35 @@ function captureLog(): { lines: string[]; write(line: string): void } {
   };
 }
 
+/**
+ * A complete `SmtpConfig`. `requireTls` and `allowPlaintext` follow the same rule
+ * as `loadSmtp` so a test never has to spell out the TLS policy it is not about.
+ */
+async function smtpConfig(overrides: {
+  host?: string | null;
+  port?: number;
+  secure?: boolean;
+  user?: string | null;
+  pass?: string | null;
+  from?: string;
+  replyTo?: string | null;
+  allowPlaintext?: boolean;
+}): Promise<import('../../src/kernel/config.ts').SmtpConfig> {
+  const secure = overrides.secure ?? false;
+  const allowPlaintext = overrides.allowPlaintext ?? false;
+  return {
+    host: overrides.host === undefined ? 'mail.example.test' : overrides.host,
+    port: overrides.port ?? 587,
+    secure,
+    requireTls: !secure && !allowPlaintext,
+    user: overrides.user ?? 'smartflow',
+    pass: overrides.pass ?? 'SI_SECRET_PASSWORD_7QK2M4ZT',
+    from: overrides.from ?? OPERATOR,
+    replyTo: overrides.replyTo ?? null,
+    allowPlaintext,
+  };
+}
+
 function magicLink(app: FastifyInstance, email: string, headers: Record<string, string> = {}) {
   return app.inject({
     method: 'POST',
@@ -136,6 +165,35 @@ test('the English text carries the same facts', async () => {
   assert.match(text, /single-use|once/);
   assert.match(text, /did not request/);
   assert.ok(text.includes(link));
+});
+
+test('the validity reads in the singular for exactly one minute', async () => {
+  const { renderMagicLinkMail } = await import('../../src/kernel/mailer.ts');
+  const now = new Date('2026-01-01T10:00:00.000Z');
+  // 40 seconds left: the link is still usable, so the text must say one minute
+  // rather than zero or "1 Minuten".
+  const expiresAt = new Date(now.getTime() + 40_000).toISOString();
+
+  for (const [locale, expected] of [
+    ['de', 'Der Link ist 1 Minute gültig'],
+    ['en', 'The link is valid for 1 minute '],
+  ] as const) {
+    const { text } = renderMagicLinkMail({ to: OPERATOR, link: 'x', expiresAt, locale }, now);
+    assert.ok(text.includes(expected), `${locale}: ${text}`);
+  }
+});
+
+test('a partly elapsed TTL never reads as less than the page promises', async () => {
+  const { renderMagicLinkMail } = await import('../../src/kernel/mailer.ts');
+  const now = new Date('2026-01-01T10:00:00.000Z');
+  // 14 minutes 30 seconds left: rounding down would say 14 while the login page
+  // promises 15 minutes.
+  const expiresAt = new Date(now.getTime() + 14.5 * 60_000).toISOString();
+
+  assert.match(
+    renderMagicLinkMail({ to: OPERATOR, link: 'x', expiresAt, locale: 'de' }, now).text,
+    /Der Link ist 15 Minuten gültig/,
+  );
 });
 
 test('an English Accept-Language gets the English mail', async (t) => {
@@ -213,6 +271,16 @@ test('a transport failure still answers 202 and logs neither token nor address',
   assert.equal(output.includes(OPERATOR), false, 'the plaintext address reached the log');
   assert.equal(output.includes('token='), false, 'the sign-in link reached the log');
   assert.equal(output.includes('relay refused'), false, 'the relay message reached the log');
+  // A bare SHA-256 of an address is reversible for a known domain, so the log
+  // must carry a keyed pseudonym instead — and that pseudonym must be stable.
+  const { pseudonymize } = await import('../../src/kernel/crypto.ts');
+  const { loadOrCreateKey } = await import('../../src/kernel/secrets.ts');
+  const expected = pseudonymize(OPERATOR, loadOrCreateKey(ctx.config.dataDir)).slice(0, 16);
+  assert.match(output, new RegExp(`"recipient":"${expected}"`));
+  assert.notEqual(
+    expected,
+    (await import('../../src/kernel/crypto.ts')).hashToken(OPERATOR).slice(0, 16),
+  );
 });
 
 test('the locale helper reads only the first supported tag', async () => {
@@ -240,13 +308,14 @@ test('the no-op mailer reports that it is not configured', async () => {
       locale: 'de',
     }),
   );
-  // The renderer rounds up, so a link that just expired still reads as 1 minute.
+  // The renderer rounds up, so a link that just expired still reads as 1 minute —
+  // and in the singular, not "1 Minuten".
   assert.match(
     renderMagicLinkMail(
       { to: OPERATOR, link: 'x', expiresAt: '2020-01-01T00:00:00.000Z', locale: 'de' },
       new Date('2026-01-01T00:00:00.000Z'),
     ).text,
-    /1 Minuten/,
+    /Der Link ist 1 Minute gültig/,
   );
 });
 
@@ -258,15 +327,7 @@ test('the SMTP mailer hands from, to, subject and text to nodemailer', async (t)
   const sender = ['versand', 'example.test'].join('@');
   const replyTo = ['antwort', 'example.test'].join('@');
   const mailer = new NodemailerMailer(
-    {
-      host: 'mail.example.test',
-      port: 587,
-      secure: false,
-      user: 'smartflow',
-      pass: 'test-pass',
-      from: sender,
-      replyTo,
-    },
+    await smtpConfig({ from: sender, replyTo, pass: 'test-pass' }),
     () => now,
   );
 
@@ -288,15 +349,7 @@ test('the SMTP mailer hands from, to, subject and text to nodemailer', async (t)
 test('the STARTTLS path demands an upgrade and implicit TLS does not', async (t) => {
   const transport = await stubNodemailer(t);
   const { NodemailerMailer } = await import('../../src/kernel/mailer.ts');
-  const smtp = {
-    host: 'mail.example.test',
-    port: 587,
-    secure: false,
-    user: 'smartflow',
-    pass: 'SI_SECRET_PASSWORD_2H6GVB4Q',
-    from: OPERATOR,
-    replyTo: null,
-  };
+  const smtp = await smtpConfig({ pass: 'SI_SECRET_PASSWORD_2H6GVB4Q' });
   const mail = {
     to: OPERATOR,
     link: 'https://app.example.test/login/confirm?token=x',
@@ -310,11 +363,31 @@ test('the STARTTLS path demands an upgrade and implicit TLS does not', async (t)
   assert.equal(transport.options.requireTLS, true);
   assert.equal(transport.options.secure, false);
 
-  await new NodemailerMailer({ ...smtp, port: 465, secure: true }).sendMagicLink(mail);
+  await new NodemailerMailer(await smtpConfig({ port: 465, secure: true })).sendMagicLink(mail);
   // Implicit TLS negotiates the session before the greeting, so `requireTLS`
   // (a STARTTLS demand) has no place there.
   assert.equal(transport.options.requireTLS, undefined);
   assert.equal(transport.options.secure, true);
+});
+
+test('the plaintext opt-in is the only way to skip the STARTTLS demand', async (t) => {
+  const transport = await stubNodemailer(t);
+  const { NodemailerMailer } = await import('../../src/kernel/mailer.ts');
+  const mail = {
+    to: OPERATOR,
+    link: 'https://app.example.test/login/confirm?token=x',
+    expiresAt: new Date().toISOString(),
+    locale: 'de' as const,
+  };
+
+  await new NodemailerMailer(
+    await smtpConfig({ allowPlaintext: true, user: null, pass: null }),
+  ).sendMagicLink(mail);
+
+  // A local sink without TLS (Mailpit) keeps working, but only because the
+  // operator asked for it explicitly — and the app warns at startup.
+  assert.equal(transport.options.requireTLS, undefined);
+  assert.equal(transport.options.secure, false);
 });
 
 test('close waits for a send that is still on the wire', async (t) => {
@@ -327,15 +400,7 @@ test('close waits for a send that is still on the wire', async (t) => {
       }),
   );
   const { NodemailerMailer } = await import('../../src/kernel/mailer.ts');
-  const mailer = new NodemailerMailer({
-    host: 'mail.example.test',
-    port: 587,
-    secure: false,
-    user: null,
-    pass: null,
-    from: OPERATOR,
-    replyTo: null,
-  });
+  const mailer = new NodemailerMailer(await smtpConfig({ user: null, pass: null }));
 
   // The route never awaits the send, so shutdown runs while it is open.
   const send = mailer.sendMagicLink({
@@ -368,15 +433,9 @@ test('close gives up on a stuck send and reports how many stayed open', async (t
   // A relay that never answers must not hold the shutdown forever.
   await stubNodemailer(t, () => new Promise(() => {}));
   const { NodemailerMailer } = await import('../../src/kernel/mailer.ts');
-  const mailer = new NodemailerMailer({
-    host: 'mail.example.test',
-    port: 587,
-    secure: true,
-    user: null,
-    pass: null,
-    from: OPERATOR,
-    replyTo: null,
-  });
+  const mailer = new NodemailerMailer(
+    await smtpConfig({ port: 465, secure: true, user: null, pass: null }),
+  );
 
   void mailer.sendMagicLink({
     to: OPERATOR,
@@ -407,18 +466,7 @@ test('closing the app releases the transport it was built with', async (t) => {
 
 test('the SMTP mailer refuses a config without a host', async () => {
   const { NodemailerMailer } = await import('../../src/kernel/mailer.ts');
+  const noHost = await smtpConfig({ host: null, user: null, pass: null });
 
-  assert.throws(
-    () =>
-      new NodemailerMailer({
-        host: null,
-        port: 587,
-        secure: false,
-        user: null,
-        pass: null,
-        from: OPERATOR,
-        replyTo: null,
-      }),
-    /SF_SMTP_HOST/,
-  );
+  assert.throws(() => new NodemailerMailer(noHost), /SF_SMTP_HOST/);
 });

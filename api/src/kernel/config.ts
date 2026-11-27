@@ -17,11 +17,24 @@ const IMPLICIT_TLS_PORT = 465;
 export interface SmtpConfig {
   host: string | null;
   port: number;
+  /** Implicit TLS from the first byte (port 465 and its relatives). */
   secure: boolean;
+  /**
+   * Whether the session must be upgraded via STARTTLS before credentials or
+   * the message are sent. Without this an attacker who strips `STARTTLS` from
+   * the EHLO reply gets `AUTH PLAIN` and the sign-in link in cleartext.
+   */
+  requireTls: boolean;
   user: string | null;
   pass: string | null;
   from: string;
   replyTo: string | null;
+  /**
+   * True when the operator explicitly allowed unencrypted SMTP through
+   * `SF_SMTP_ALLOW_PLAINTEXT`. Only ever set outside production, and the start
+   * warns about it so the hole is visible in the log.
+   */
+  allowPlaintext: boolean;
 }
 
 export interface Config {
@@ -142,10 +155,13 @@ function smtpPassword(env: NodeJS.ProcessEnv): string | null {
  * that never arrives looks exactly like a wrong address to the person waiting
  * for it.
  */
-function loadSmtp(env: NodeJS.ProcessEnv, operatorEmail: string): SmtpConfig {
+function loadSmtp(env: NodeJS.ProcessEnv, operatorEmail: string, production: boolean): SmtpConfig {
   const host = optional(env.SF_SMTP_HOST);
   const from = optional(env.SF_SMTP_FROM) ?? operatorEmail;
   const replyTo = optional(env.SF_SMTP_REPLY_TO);
+  // The only way to accept an unencrypted relay. Never silent, never in
+  // production, and echoed as a startup warning.
+  const allowPlaintext = bool(env.SF_SMTP_ALLOW_PLAINTEXT, false);
 
   // A display name is allowed ("SmartFlow <no-reply@example.test>"), but the
   // bare form must be a plain address: a typo here is a mail that silently
@@ -161,6 +177,12 @@ function loadSmtp(env: NodeJS.ProcessEnv, operatorEmail: string): SmtpConfig {
   guardAddress('SF_SMTP_FROM', from);
   if (replyTo !== null) guardAddress('SF_SMTP_REPLY_TO', replyTo);
 
+  if (production && allowPlaintext) {
+    throw new Error(
+      'SF_SMTP_ALLOW_PLAINTEXT is not allowed when NODE_ENV=production: the sign-in link would travel in cleartext.',
+    );
+  }
+
   if (host === null) {
     // Any transport-specific variable without a host means an incomplete
     // configuration. Checking only user/pass would let a forgotten host look
@@ -169,9 +191,12 @@ function loadSmtp(env: NodeJS.ProcessEnv, operatorEmail: string): SmtpConfig {
       [
         'SF_SMTP_PORT',
         'SF_SMTP_SECURE',
+        'SF_SMTP_ALLOW_PLAINTEXT',
         'SF_SMTP_USER',
         'SF_SMTP_PASS',
         'SF_SMTP_PASS_FILE',
+        'SF_SMTP_FROM',
+        'SF_SMTP_REPLY_TO',
       ] as const
     ).find((name) => optional(env[name]) !== null);
     if (stray !== undefined) {
@@ -181,10 +206,12 @@ function loadSmtp(env: NodeJS.ProcessEnv, operatorEmail: string): SmtpConfig {
       host: null,
       port: DEFAULT_SMTP_PORT,
       secure: false,
+      requireTls: false,
       user: null,
       pass: null,
       from,
       replyTo,
+      allowPlaintext,
     };
   }
 
@@ -202,16 +229,22 @@ function loadSmtp(env: NodeJS.ProcessEnv, operatorEmail: string): SmtpConfig {
     );
   }
 
+  const secure = bool(env.SF_SMTP_SECURE, port === IMPLICIT_TLS_PORT);
+
   return {
     host,
     port,
     // Explicit setting wins; 465 is implicit TLS by convention and sending
     // STARTTLS there would hand the credentials to a plaintext port.
-    secure: bool(env.SF_SMTP_SECURE, port === IMPLICIT_TLS_PORT),
+    secure,
+    // Implicit TLS already protects the session from the first byte; everything
+    // else must be upgraded, unless the operator opted into plaintext.
+    requireTls: !secure && !allowPlaintext,
     user,
     pass,
     from,
     replyTo,
+    allowPlaintext,
   };
 }
 
@@ -230,7 +263,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const loopbackHost =
     host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
   const operatorEmail = str(env.SF_OPERATOR_EMAIL, 'operator@example.com').trim().toLowerCase();
-  const smtp = loadSmtp(env, operatorEmail);
+  const smtp = loadSmtp(env, operatorEmail, nodeEnv === 'production');
   const secureCookies = bool(
     env.SF_SECURE_COOKIES,
     nodeEnv === 'production' || publicUrl.startsWith('https://'),

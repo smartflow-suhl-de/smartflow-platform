@@ -3,7 +3,7 @@ import { FieldError, type AuthMe } from '../../shared/contract.ts';
 import { SESSION_COOKIE, authMeFor } from '../app.ts';
 import type { AuthService } from '../auth.ts';
 import { EMAIL_PATTERN, type Config } from '../config.ts';
-import { hashToken } from '../crypto.ts';
+import { pseudonymize } from '../crypto.ts';
 import type { Db } from '../db.ts';
 import { AppError } from '../errors.ts';
 import { localeFromAcceptLanguage, type Mailer } from '../mailer.ts';
@@ -90,26 +90,34 @@ export interface AuthRouteOptions {
   db: Db;
   now: () => Date;
   mailer: Mailer;
+  /**
+   * Key for the recipient pseudonym in a failure log. The instance key from the
+   * data directory makes the value a keyed MAC instead of a reversible hash of a
+   * company address.
+   */
+  logKey: Buffer;
   resolveTenant: (tenantId: string) => { id: string; name: string; slug: string } | null;
 }
 
 /**
  * Dispatching is deliberately not awaited: the 202 must go out before the relay
  * answers, so a slow SMTP server never turns a sign-in request into a timeout.
- * The failure line carries a truncated hash of the recipient and nothing else —
- * no address, no link, no token, not even the relay's raw response, which often
- * quotes the rejected address back.
+ *
+ * The failure line carries a keyed pseudonym of the recipient and the SMTP
+ * status, nothing else — no address, no link, no token, not even the relay's raw
+ * response, which often quotes the rejected address back.
  */
 function deliverMagicLink(
   mailer: Mailer,
   request: FastifyRequest,
   mail: { to: string; link: string; expiresAt: string; locale: 'de' | 'en' },
+  recipientPseudonym: string,
 ): void {
   void mailer.sendMagicLink(mail).catch((error: unknown) => {
     const failure = error as { code?: string; responseCode?: number; command?: string };
     request.log.error(
       {
-        recipient: hashToken(mail.to).slice(0, 16),
+        recipient: recipientPseudonym,
         code: failure.code ?? 'unknown',
         responseCode: failure.responseCode,
         command: failure.command,
@@ -125,6 +133,11 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
   // A second, independent bucket per address: the per-IP limit alone is either
   // spoofable behind a trusted proxy or a shared bucket for every client, and in
   // both cases one address could be flooded.
+  //
+  // Accepted trade-off: because this bucket is keyed on the address, an attacker
+  // with rotating IPs can lock one target out for 15 minutes. Refusing that
+  // would mean letting the same attacker flood the target's inbox instead. The
+  // lockout is short and self-healing; it is not a correctness bug.
   const allowMagicLinkForEmail = createLimiter(config.rateLimit.magicLink * 3, 15 * 60_000);
 
   app.post<{ Body: { email?: string } }>(
@@ -184,12 +197,17 @@ export function registerAuthRoutes(app: FastifyInstance, options: AuthRouteOptio
       // answer below is the same either way, so the endpoint stays useless for
       // account enumeration.
       if (user !== undefined && options.mailer.isConfigured) {
-        deliverMagicLink(options.mailer, request, {
-          to: email,
-          link,
-          expiresAt,
-          locale: localeFromAcceptLanguage(request.headers['accept-language']),
-        });
+        deliverMagicLink(
+          options.mailer,
+          request,
+          {
+            to: email,
+            link,
+            expiresAt,
+            locale: localeFromAcceptLanguage(request.headers['accept-language']),
+          },
+          pseudonymize(email, options.logKey).slice(0, 16),
+        );
       }
 
       // Development only: the link is returned so the flow can be exercised

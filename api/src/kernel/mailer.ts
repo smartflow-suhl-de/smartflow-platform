@@ -56,11 +56,20 @@ interface RenderedMail {
   text: string;
 }
 
-/** Minutes until the link dies, as the reader sees it. Rounded up, never below 1. */
+/** Minutes until the link dies, as the reader sees it. */
 function minutesLeft(expiresAt: string, now: Date): number {
   const remaining = new Date(expiresAt).getTime() - now.getTime();
   if (!Number.isFinite(remaining)) return 1;
-  return Math.max(1, Math.round(remaining / 60_000));
+  // Rounded up: a link with 40 seconds left still has to read as one minute, and
+  // a mail that says "14 minutes" while the page promises 15 would understate
+  // the validity the recipient actually has.
+  return Math.max(1, Math.ceil(remaining / 60_000));
+}
+
+/** "1 Minute" / "3 Minuten", never "1 Minuten". */
+function minutesLabel(minutes: number, locale: 'de' | 'en'): string {
+  if (locale === 'en') return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  return `${minutes} ${minutes === 1 ? 'Minute' : 'Minuten'}`;
 }
 
 /**
@@ -68,7 +77,7 @@ function minutesLeft(expiresAt: string, now: Date): number {
  * testable without a socket and both locales stay in one place.
  */
 export function renderMagicLinkMail(mail: MagicLinkMail, now: Date): RenderedMail {
-  const minutes = minutesLeft(mail.expiresAt, now);
+  const minutes = minutesLabel(minutesLeft(mail.expiresAt, now), mail.locale);
 
   if (mail.locale === 'en') {
     return {
@@ -80,7 +89,7 @@ export function renderMagicLinkMail(mail: MagicLinkMail, now: Date): RenderedMai
         '',
         mail.link,
         '',
-        `The link is valid for ${minutes} minutes and can be used once.`,
+        `The link is valid for ${minutes} and can be used once.`,
         '',
         'If you did not request this link, you can ignore this email. Nothing happens until the link is opened.',
         '',
@@ -98,7 +107,7 @@ export function renderMagicLinkMail(mail: MagicLinkMail, now: Date): RenderedMai
       '',
       mail.link,
       '',
-      `Der Link ist ${minutes} Minuten gültig und kann einmal verwendet werden.`,
+      `Der Link ist ${minutes} gültig und kann einmal verwendet werden.`,
       '',
       'Falls Sie diesen Link nicht angefordert haben, können Sie diese E-Mail ignorieren. Ohne Klick auf den Link passiert nichts.',
       '',
@@ -108,8 +117,9 @@ export function renderMagicLinkMail(mail: MagicLinkMail, now: Date): RenderedMai
 }
 
 /**
- * Sends through SMTP. One connection pool per process, opened lazily by
- * nodemailer on the first message and closed with the app.
+ * Sends through SMTP. The transporter is created lazily on the first message
+ * and closed with the app; nodemailer opens one connection per message because
+ * pooling is not enabled.
  */
 export class NodemailerMailer implements Mailer {
   readonly isConfigured = true;
@@ -129,11 +139,13 @@ export class NodemailerMailer implements Mailer {
       host: smtp.host,
       port: smtp.port,
       secure: smtp.secure,
-      // Without implicit TLS the session must still be upgraded before the
+      // Without implicit TLS the session has to be upgraded before the
       // credentials and the message are sent. `requireTLS` makes nodemailer
-      // refuse a plaintext relay instead of continuing unencrypted when an
-      // active attacker strips STARTTLS from the greeting.
-      ...(smtp.secure ? {} : { requireTLS: true }),
+      // fail instead of continuing cleartext when a man in the middle strips
+      // `STARTTLS` from the greeting and would otherwise receive `AUTH PLAIN`
+      // plus the sign-in link. The only exception is the deliberate, warned
+      // `SF_SMTP_ALLOW_PLAINTEXT` opt-in.
+      ...(smtp.requireTls ? { requireTLS: true } : {}),
       ...(smtp.user !== null && smtp.pass !== null
         ? { auth: { user: smtp.user, pass: smtp.pass } }
         : {}),

@@ -91,6 +91,7 @@ Die API liest ausschließlich `SF_*`-Variablen mit entwicklungsfreundlichen Defa
 | `SF_SMTP_PASS_FILE`        | leer                         | Datei mit dem Passwort; hat Vorrang vor `SF_SMTP_PASS`                                                                                                  |
 | `SF_SMTP_FROM`             | `SF_OPERATOR_EMAIL`          | Absender der Anmeldemail; Anzeigename erlaubt                                                                                                           |
 | `SF_SMTP_REPLY_TO`         | leer                         | Optionale Antwortadresse                                                                                                                                |
+| `SF_SMTP_ALLOW_PLAINTEXT`  | `0`                          | Nur Entwicklung: erlaubt unverschlüsseltes SMTP. In `NODE_ENV=production` verboten; der Start warnt, wenn es greift                                     |
 
 Der Magic-Link wird per SMTP verschickt, sobald `SF_SMTP_HOST` gesetzt ist. Ohne Transport
 antwortet `POST /api/v1/auth/magic-link` mit `{"sent":false,…}` und die Anmeldeseite sagt,

@@ -16,6 +16,18 @@ import type {
 const API_PREFIX = '/api/v1';
 
 /**
+ * The language the UI is showing, sent as `Accept-Language` so a mail the server
+ * generates matches what the person just read. The SPA never sends its own
+ * `Accept-Language`, so without this the browser's preference would win and an
+ * English browser could get an English mail from a German UI.
+ */
+let requestLocale: 'de' | 'en' = 'de';
+
+export function setRequestLocale(locale: 'de' | 'en'): void {
+  requestLocale = locale;
+}
+
+/**
  * Upper bound for a single request. Without it a hanging `/auth/confirm` would
  * leave the login spinner running forever.
  */
@@ -268,7 +280,10 @@ function requestSignal(signal: AbortSignal | undefined): AbortSignal {
 }
 
 async function requestJson(path: string, options: RequestOptions = {}): Promise<unknown> {
-  const headers: Record<string, string> = { accept: 'application/json' };
+  const headers: Record<string, string> = {
+    accept: 'application/json',
+    'accept-language': requestLocale,
+  };
   if (options.body !== undefined) {
     headers['content-type'] = 'application/json';
   }

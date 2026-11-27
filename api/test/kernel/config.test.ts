@@ -247,6 +247,11 @@ test('a partially configured transport stops the start instead of dropping mail'
     [{ SF_SMTP_USER: 'smartflow' }, /SF_SMTP_HOST is not/],
     [{ SF_SMTP_PASS: 'geheim' }, /SF_SMTP_HOST is not/],
     [{ SF_SMTP_PASS_FILE: '/tmp/x' }, /SF_SMTP_HOST is not/],
+    // A sender or reply address without a host is configuration that would be
+    // ignored silently, so it is rejected like the rest.
+    [{ SF_SMTP_FROM: 'SmartFlow <noreply@example.test>' }, /SF_SMTP_FROM is set but SF_SMTP_HOST/],
+    [{ SF_SMTP_REPLY_TO: 'ops@example.test' }, /SF_SMTP_REPLY_TO is set but SF_SMTP_HOST/],
+    [{ SF_SMTP_ALLOW_PLAINTEXT: '1' }, /SF_SMTP_ALLOW_PLAINTEXT is set but SF_SMTP_HOST/],
     [{ SF_SMTP_HOST: 'h', SF_SMTP_PORT: 'smtp' }, /SF_SMTP_PORT must be a TCP port/],
     [{ SF_SMTP_HOST: 'h', SF_SMTP_PORT: '70000' }, /SF_SMTP_PORT must be a TCP port/],
     [{ SF_SMTP_HOST: 'h', SF_SMTP_USER: 'smartflow' }, /no password is available/],
@@ -256,4 +261,38 @@ test('a partially configured transport stops the start instead of dropping mail'
   for (const [env, pattern] of broken) {
     assert.throws(() => loadConfig(env), pattern, JSON.stringify(env));
   }
+});
+
+test('a non-TLS port demands STARTTLS unless the operator opts out explicitly', () => {
+  // Opportunistic TLS would let a man in the middle strip the upgrade and read
+  // AUTH PLAIN plus the sign-in link off the wire.
+  const strict = loadConfig({ SF_SMTP_HOST: 'mail.example.test', SF_SMTP_PORT: '587' }).smtp;
+  assert.equal(strict.requireTls, true);
+  assert.equal(strict.allowPlaintext, false);
+
+  const localSink = loadConfig({
+    SF_SMTP_HOST: '127.0.0.1',
+    SF_SMTP_PORT: '1025',
+    SF_SMTP_ALLOW_PLAINTEXT: '1',
+  }).smtp;
+  assert.equal(localSink.requireTls, false);
+  assert.equal(localSink.allowPlaintext, true);
+
+  // Implicit TLS protects the session from the first byte, so no STARTTLS demand.
+  const implicit = loadConfig({ SF_SMTP_HOST: 'mail.example.test', SF_SMTP_PORT: '465' }).smtp;
+  assert.equal(implicit.secure, true);
+  assert.equal(implicit.requireTls, false);
+});
+
+test('the plaintext opt-in cannot reach production', () => {
+  assert.throws(
+    () =>
+      loadConfig({
+        NODE_ENV: 'production',
+        SF_PUBLIC_URL: 'https://app.example.test',
+        SF_SMTP_HOST: 'mail.example.test',
+        SF_SMTP_ALLOW_PLAINTEXT: '1',
+      }),
+    /SF_SMTP_ALLOW_PLAINTEXT is not allowed when NODE_ENV=production/,
+  );
 });

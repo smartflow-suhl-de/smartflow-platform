@@ -1,4 +1,4 @@
-import { ApiError } from './api';
+import { ApiError, setRequestLocale } from './api';
 import type { Role, TenantStatus } from './types';
 
 export type Locale = 'de' | 'en';
@@ -17,6 +17,9 @@ export function storedLocale(): Locale {
 
 export function applyLocale(locale: Locale): void {
   document.documentElement.lang = locale;
+  // Every request announces the language the user is reading, so a server-side
+  // mail matches the UI instead of the browser's Accept-Language.
+  setRequestLocale(locale);
   try {
     localStorage.setItem(LOCALE_KEY, locale);
   } catch {

@@ -42,14 +42,16 @@ smartflow_data`), nicht im Image. Ein `docker compose down` ohne `-v` behält si
 ### Ohne öffentliche Domain ausprobieren
 
 ```bash
-printf 'SF_DOMAIN=localhost\nSF_OPERATOR_EMAIL=ops@example.com\nSF_SMTP_HOST=<host-oder-ip-des-mailpit>\nSF_SMTP_PORT=1025\n' > .env
+printf 'SF_DOMAIN=localhost\nSF_OPERATOR_EMAIL=ops@example.com\nSF_SMTP_HOST=<host-oder-ip-des-relays>\nSF_SMTP_PORT=587\n' > .env
 # in deploy/caddy/Caddyfile zusätzlich "tls internal" in den Site-Block schreiben
 docker compose up -d --build       # baut auch das Caddy-Image neu
 curl -k https://localhost/api/v1/health
 ```
 
 Selbstsignierte Zertifikate lassen `curl` ohne `-k` scheitern; das ist erwartet und kein
-Fehler der Anwendung.
+Fehler der Anwendung. Ein Testpostfach ohne TLS (Mailpit) läuft nur im Entwicklungsmodus,
+weil `SF_SMTP_ALLOW_PLAINTEXT` in Produktion verboten ist — siehe
+[Mailversand (SMTP)](#mailversand-smtp).
 
 ## Mailversand (SMTP)
 
@@ -76,6 +78,9 @@ SF_SMTP_REPLY_TO=                  # optional
   scheitern, statt Zugangsdaten und Anmeldelink im Klartext zu übertragen.
 - **Port 465** bedeutet implizites TLS und schaltet `secure` automatisch ein. `SF_SMTP_SECURE`
   überschreibt das, falls ein Relay es anders will.
+- **Kein Klartext.** Die STARTTLS-Pflicht lässt sich nur über `SF_SMTP_ALLOW_PLAINTEXT=1`
+  aufheben, ausschließlich für einen lokalen Test-Sink und nie in `NODE_ENV=production`
+  (der Start bricht dort ab). Greift die Ausnahme, schreibt der Start eine Warnung ins Log.
 - **Zugangsdaten** entweder über `SF_SMTP_USER` + `SF_SMTP_PASS` oder über
   `SF_SMTP_PASS_FILE`. Eine Datei ist die bessere Wahl: sie steht nicht in `docker inspect`
   und nicht in der Prozessumgebung. Eine halbe Kombination (Benutzer ohne Passwort,
@@ -86,37 +91,53 @@ SF_SMTP_REPLY_TO=                  # optional
 
 ### Versand prüfen
 
-Der schnellste Beleg ist ein lokaler Mailpit-Container. Er zeigt die Nachricht im Browser und
-braucht keine Zugangsdaten — seit der STARTTLS-Pflicht aber ein Zertifikat, sonst scheitert
-der Versand am fehlenden TLS:
+Der schnellste Beleg ist ein lokaler Mailpit-Container. Mailpit bietet von Haus aus kein
+STARTTLS; die Anwendung verlangt es aber, sobald nicht `secure` gilt — sonst könnte ein
+Man-in-the-Middle `STARTTLS` aus der Begrüßung entfernen und Zugangsdaten samt Anmeldelink
+im Klartext mitlesen. Für einen reinen Testlauf gibt es genau eine Ausnahme, und die gilt
+nur außerhalb von `NODE_ENV=production`: `SF_SMTP_ALLOW_PLAINTEXT=1`.
+
+Getestet wird deshalb mit dem Entwicklungsmodus, nicht mit dem Produktions-Image:
 
 ```bash
-docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit \
-  --smtp-tls-cert /pfad/cert.pem --smtp-tls-key /pfad/key.pem
-# in .env für einen Testlauf:
-#   SF_SMTP_HOST=host.docker.internal   # oder die IP des Hosts im Docker-Netz
-#   SF_SMTP_PORT=1025
-#   SF_SMTP_USER=
-#   SF_SMTP_PASS=
-docker compose up -d app
-curl -X POST https://<SF_DOMAIN>/api/v1/auth/magic-link \
+docker run -d --name mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+cd api
+SF_DATA_DIR=/tmp/sf-mailtest \
+SF_PUBLIC_URL=http://127.0.0.1:8790 \
+SF_DEV_MAGIC_LINK=0 \
+SF_OPERATOR_EMAIL=<SF_OPERATOR_EMAIL> \
+SF_SMTP_HOST=127.0.0.1 SF_SMTP_PORT=1025 SF_SMTP_ALLOW_PLAINTEXT=1 \
+  npm start
+# zweites Terminal:
+curl -X POST http://127.0.0.1:8790/api/v1/auth/magic-link \
   -H 'content-type: application/json' -d '{"email":"<SF_OPERATOR_EMAIL>"}'
 # http://localhost:8025 öffnen: Betreff, Text und Link stehen dort.
 ```
 
-Ein selbstsigniertes Zertifikat muss der Anwendung zusätzlich als vertrauenswürdig gelten;
-sonst steht im Log ein TLS-Fehler statt einer Zustellung.
+Im Log steht dabei eine Warnung:
+
+```
+{"level":40,...,"msg":"SF_SMTP_ALLOW_PLAINTEXT is set: mail is sent without TLS"}
+```
+
+Dieselbe Instanz **ohne** `SF_SMTP_ALLOW_PLAINTEXT` verschickt an Mailpit nichts: der
+Versuch scheitert an der STARTTLS-Pflicht und landet als
+`magic link mail could not be sent` im Log. Genau das ist gewollt — ein Downgrade auf
+Klartext darf nicht still passieren. `SF_SMTP_ALLOW_PLAINTEXT` in
+`NODE_ENV=production` bricht den Start ab; im echten Betrieb ist die Variable also nicht
+verwendbar.
 
 Die Antwort ist immer `202` mit `{"sent":true,"expiresAt":"…"}` — unabhängig davon, ob die
 Adresse bekannt ist. Ohne Transport lautet sie `{"sent":false,…}`, und die Anmeldeseite
 sagt dann, dass nichts verschickt wurde, statt „prüfen Sie Ihr Postfach“ zu behaupten.
 
 Ein Versandfehler (Relay lehnt ab, Zeitüberschreitung) ändert die Antwort nicht: der
-Versand läuft nach der Antwort, der Fehler steht im Log mit einem gekürzten Hash des
-Empfängers, dem SMTP-Code und dem Kommando — nie mit Adresse, Link oder Token.
+Versand läuft nach der Antwort, der Fehler steht im Log mit einem Pseudonym des
+Empfängers (HMAC mit dem Instanzschlüssel, nicht der Adresse), dem SMTP-Code und dem
+Kommando — nie mit Adresse, Link oder Token.
 
 ```bash
-docker compose logs app | grep 'magic link mail could not be sent'
+grep 'magic link mail could not be sent' <logdatei>
 ```
 
 ### Grenzen des Versands
@@ -185,11 +206,12 @@ gegen den Volume-Pfad tun. Ein Stopp der Dienste (`docker compose down`) vor dem
 ist die einfache, aber unterbrechende Variante.
 
 Sitzungen liegen als Hashes in der Tabelle `sessions` in `platform.sqlite`; nach einem
-Restore mit aktuellem Stand sind bestehende Anmeldungen also weiter gültig. Ein eigenes
-Schlüsseldatei (`secrets.key`) legt der aktuelle Stand noch nicht an — die
-Verschlüsselungshelfer in `api/src/kernel/secrets.ts` werden bisher von keiner Route
-genutzt. Die Zertifikate liegen getrennt im
-Volume `caddy_data`; ein Verlust kostet nur eine Neuausstellung.
+Restore mit aktuellem Stand sind bestehende Anmeldungen also weiter gültig. Die
+Schlüsseldatei `secrets.key` legt der Prozess im Datenverzeichnis an und nutzt sie als
+HMAC-Schlüssel für das Empfänger-Pseudonym im Mail-Fehlerlog — ohne sie lassen sich alte
+Logzeilen keinem Empfänger mehr zuordnen, für die Anmeldung selbst ist sie entbehrlich.
+Die Zertifikate liegen getrennt im Volume `caddy_data`; ein Verlust kostet nur eine
+Neuausstellung.
 
 ## Logs
 

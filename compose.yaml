@@ -41,6 +41,9 @@ services:
       SF_SMTP_PASS_FILE: ${SF_SMTP_PASS_FILE:-}
       SF_SMTP_FROM: ${SF_SMTP_FROM:-}
       SF_SMTP_REPLY_TO: ${SF_SMTP_REPLY_TO:-}
+      # Nur für einen lokalen Test-Sink ohne TLS. In Produktion verboten (der
+      # Start bricht ab), deshalb hier nur durchgereicht, nicht vorbelegt.
+      SF_SMTP_ALLOW_PLAINTEXT: ${SF_SMTP_ALLOW_PLAINTEXT:-}
       # Nur hier korrekt, weil Caddy als einziger Proxy davorsteht und
       # X-Forwarded-* setzt. Ohne Caddy wäre das Vertrauen in den Header falsch;
       # die Topologie gehört deshalb zu dieser Datei, nicht in ein Image-Default.

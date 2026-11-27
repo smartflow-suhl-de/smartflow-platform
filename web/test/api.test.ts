@@ -35,6 +35,7 @@ const {
   ApiError,
   api,
   setOutageHandler,
+  setRequestLocale,
   setUnauthorizedHandler,
   translateFetchError,
   REQUEST_TIMEOUT_MS,
@@ -44,7 +45,25 @@ describe('api requests', () => {
   beforeEach(() => {
     calls = [];
     setUnauthorizedHandler(null);
+    setRequestLocale('de');
     respond = () => jsonResponse(200, {});
+  });
+
+  it('announces the UI language instead of leaving it to the browser', async () => {
+    // The SPA has no browser Accept-Language of its own: without this header the
+    // server would pick the browser's preference, so a German UI could produce an
+    // English sign-in mail.
+    respond = () => jsonResponse(202, { sent: true, expiresAt: '2026-01-01T00:00:00Z' });
+    setRequestLocale('en');
+    await api.requestMagicLink('someone@example.com');
+
+    const headers = calls[0]?.init.headers as Record<string, string>;
+    assert.equal(headers['accept-language'], 'en');
+
+    setRequestLocale('de');
+    await api.requestMagicLink('someone@example.com');
+    const second = calls[1]?.init.headers as Record<string, string>;
+    assert.equal(second['accept-language'], 'de');
   });
 
   it('prefixes every call with /api/v1', async () => {

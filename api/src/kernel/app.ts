@@ -32,6 +32,7 @@ import { generatedPlugins } from './plugin-registry.generated.ts';
 import { platformMigrations } from './platform-migrations.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerNavRoutes } from './routes/nav.ts';
+import { loadOrCreateKey } from './secrets.ts';
 
 export const SESSION_COOKIE = 'sf_session';
 
@@ -134,12 +135,27 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   auth.seedOperator();
   auth.pruneSessions();
 
+  // `magic_links` gets a row per request, whether or not the address exists, so
+  // expired rows must not wait for the next restart. The interval is unref'd:
+  // it must never be the reason the process stays alive.
+  const pruneTimer = setInterval(() => auth.pruneSessions(), 60 * 60 * 1000);
+  pruneTimer.unref();
+
   // The transport is chosen once at startup. A process without `SF_SMTP_HOST`
   // keeps a no-op mailer: it answers honestly that nothing was sent instead of
   // pretending a mailbox was filled.
   const mailer =
     options.mailer ??
     (config.smtp.host === null ? new NoopMailer() : new NodemailerMailer(config.smtp, now));
+
+  // The opt-in exists so a local sink without STARTTLS can be used. It must not
+  // be quiet: a cleartext relay puts the sign-in link on the wire.
+  if (config.smtp.allowPlaintext) {
+    app.log.warn(
+      { host: config.smtp.host, port: config.smtp.port },
+      'SF_SMTP_ALLOW_PLAINTEXT is set: mail is sent without TLS',
+    );
+  }
 
   await app.register(cookie);
   await app.register(swagger, {
@@ -379,6 +395,9 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
         db,
         now,
         mailer,
+        // The instance key, so a recipient in a failure log is a keyed MAC and
+        // not a hash anyone can recompute from a company address.
+        logKey: loadOrCreateKey(config.dataDir),
         resolveTenant: (tenantId) => tenantDirectory?.resolve(tenantId) ?? null,
       });
       registerNavRoutes(scope, { plugins });
@@ -438,6 +457,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   }
 
   app.addHook('onClose', async () => {
+    clearInterval(pruneTimer);
     // The route does not await a send, so one may still be on the wire here.
     // Waiting for it (bounded) beats closing the transporter underneath it.
     await mailer.close({
