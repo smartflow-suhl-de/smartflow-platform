@@ -14,6 +14,7 @@ import {
 } from '../components/ui';
 import { useToast } from '../components/useToast';
 import { ApiError, api, isAbortError } from '../lib/api';
+import { useUiStore } from '../lib/store';
 import {
   formatApiError,
   formatDateShort,
@@ -42,8 +43,8 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; slug?: string }>({});
   const [creating, setCreating] = useState(false);
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [query, setQuery] = useState('');
+  const { statusFilter, query } = useUiStore((state) => state.tenants);
+  const setTenantFilter = useUiStore((state) => state.setTenantFilter);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [list, setList] = useState<TenantListResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,12 +99,12 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
   }, [onStatsChange]);
 
   function applyFilter(next: StatusFilter): void {
-    setStatusFilter(next);
+    setTenantFilter({ statusFilter: next });
     setCursorStack([]);
   }
 
   function applyQuery(next: string): void {
-    setQuery(next);
+    setTenantFilter({ query: next });
     setCursorStack([]);
   }
 
