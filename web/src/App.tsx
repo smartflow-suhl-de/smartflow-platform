@@ -7,7 +7,7 @@ import { TenantSwitcherModal } from './components/TenantSwitcher';
 import { useToast } from './components/useToast';
 import { api, isAbortError, setOutageHandler, setUnauthorizedHandler } from './lib/api';
 import { sessionProbeOutcome } from './lib/auth-flow';
-import { applyLocale, formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
+import { formatApiError, getMessages, storedLocale, type Locale } from './lib/i18n';
 import { buildNavigation, pageTitle, resolveAliasRedirect } from './lib/navigation';
 import { isPublicNamespace, matchPublicRoute } from './lib/public-routes';
 import { navigate, normalizePath, useRoute } from './lib/router';
@@ -18,7 +18,7 @@ import type {
   TenantListResponse,
   TenantStats,
 } from './lib/types';
-import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
+import { BUILTIN_THEMES, type ThemeDefinition } from './lib/themes';
 import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
 import { LlmProviderDetailPage, LlmProviderFormPage, LlmProvidersPage } from './pages/LlmProviders';
@@ -27,17 +27,11 @@ import { NotFoundPage } from './pages/NotFound';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
 import { TenantsPage } from './pages/Tenants';
-import {
-  applyTheme,
-  clearCustomTheme,
-  storedCustomTheme,
-  storedMode,
-  storedTheme,
-  type Mode,
-} from './theme';
+import { applyTheme, type Mode } from './theme';
 import { WebsiteDetailPage } from './pages/WebsiteDetail';
 import { WebsitesPage } from './pages/Websites';
 import { AgentPage } from './pages/Agent';
+import { useUiStore } from './lib/store';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -101,10 +95,14 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   const [sessionExpired, setSessionExpired] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>(() => storedMode());
-  const [theme, setTheme] = useState<ThemeDefinition>(() => storedTheme());
-  const [customTheme, setCustomTheme] = useState<ThemeDefinition | null>(() => storedCustomTheme());
-  const [locale, setLocale] = useState<Locale>(() => storedLocale());
+  const mode = useUiStore((state) => state.preferences.mode);
+  const theme = useUiStore((state) => state.preferences.theme);
+  const customTheme = useUiStore((state) => state.preferences.customTheme);
+  const locale = useUiStore((state) => state.preferences.locale);
+  const setMode = useUiStore((state) => state.setMode);
+  const setTheme = useUiStore((state) => state.setTheme);
+  const removeCustomTheme = useUiStore((state) => state.removeCustomTheme);
+  const setLocale = useUiStore((state) => state.setLocale);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState(false);
   const [healthProbe, setHealthProbe] = useState(0);
@@ -127,25 +125,30 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     applyTheme(theme, mode);
   }, [theme, mode]);
 
-  const handleModeChange = useCallback((next: Mode) => {
-    setMode(next);
-  }, []);
+  const handleModeChange = useCallback(
+    (next: Mode) => {
+      setMode(next);
+    },
+    [setMode],
+  );
 
-  const handleThemeChange = useCallback((next: ThemeDefinition) => {
-    setTheme(next);
-    if (next.id === 'custom') setCustomTheme(next);
-  }, []);
+  const handleThemeChange = useCallback(
+    (next: ThemeDefinition) => {
+      setTheme(next);
+    },
+    [setTheme],
+  );
 
   const handleRemoveCustomTheme = useCallback(() => {
-    clearCustomTheme();
-    setCustomTheme(null);
-    setTheme((current) => (current.id === CUSTOM_THEME_ID ? defaultTheme() : current));
-  }, []);
+    removeCustomTheme();
+  }, [removeCustomTheme]);
 
-  const handleLocaleChange = useCallback((next: Locale) => {
-    setLocale(next);
-    applyLocale(next);
-  }, []);
+  const handleLocaleChange = useCallback(
+    (next: Locale) => {
+      setLocale(next);
+    },
+    [setLocale],
+  );
 
   useEffect(() => {
     setUnauthorizedHandler(() => {

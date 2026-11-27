@@ -20,12 +20,11 @@ import {
   type Messages,
 } from '../lib/i18n';
 import { siteStatusTone } from '../lib/websites';
+import { useUiStore } from '../lib/store';
 import { navigate } from '../lib/router';
 import type { WebsiteClient, WebsiteListResponse, WebsiteSummary } from '../lib/types';
 
 const PAGE_SIZE = 10;
-
-type OwnerFilter = 'all' | 'own' | 'client';
 
 export interface WebsitesPageProps {
   search: string;
@@ -34,8 +33,8 @@ export interface WebsitesPageProps {
 }
 
 export function WebsitesPage({ search, locale, messages }: WebsitesPageProps) {
-  const [filter, setFilter] = useState<OwnerFilter>('all');
-  const [query, setQuery] = useState('');
+  const { filter, query } = useUiStore((state) => state.websites);
+  const setWebsiteFilter = useUiStore((state) => state.setWebsiteFilter);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [list, setList] = useState<WebsiteListResponse | null>(null);
   const [summary, setSummary] = useState<WebsiteSummary | null>(null);
@@ -299,7 +298,7 @@ export function WebsitesPage({ search, locale, messages }: WebsitesPageProps) {
                   aria-pressed={filter === value}
                   className={filter === value ? 'sf-tab sf-tab-active' : 'sf-tab'}
                   onClick={() => {
-                    setFilter(value);
+                    setWebsiteFilter({ filter: value });
                     setCursorStack([]);
                   }}
                 >
@@ -313,7 +312,7 @@ export function WebsitesPage({ search, locale, messages }: WebsitesPageProps) {
                 type="search"
                 value={query}
                 onChange={(event) => {
-                  setQuery(event.target.value);
+                  setWebsiteFilter({ query: event.target.value });
                   setCursorStack([]);
                 }}
                 placeholder={messages.websites.searchPlaceholder}

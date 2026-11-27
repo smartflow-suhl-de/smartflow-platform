@@ -33,6 +33,7 @@ import type {
   DiscoveryReport,
 } from '../lib/types';
 import { ReportView } from './DiscoveryPublic';
+import { useUiStore } from '../lib/store';
 
 const PAGE_SIZE = 10;
 
@@ -89,10 +90,17 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
   const [list, setList] = useState<DiscoveryInviteListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | DiscoveryInviteStatus>('all');
-  const [query, setQuery] = useState(() => new URLSearchParams(search).get('q') ?? '');
+  const { statusFilter, query } = useUiStore((state) => state.discovery);
+  const setDiscoveryFilter = useUiStore((state) => state.setDiscoveryFilter);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [reloadNonce, setReloadNonce] = useState(0);
+
+  useEffect(() => {
+    const paramQ = new URLSearchParams(search).get('q');
+    if (paramQ !== null && paramQ !== query) {
+      setDiscoveryFilter({ query: paramQ });
+    }
+  }, [search, query, setDiscoveryFilter]);
 
   const [customerName, setCustomerName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -388,7 +396,7 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
                     aria-selected={statusFilter === entry}
                     className={`sf-tab${statusFilter === entry ? ' sf-tab-active' : ''}`}
                     onClick={() => {
-                      setStatusFilter(entry);
+                      setDiscoveryFilter({ statusFilter: entry });
                       setCursorStack([]);
                     }}
                   >
@@ -403,7 +411,7 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
                 placeholder={m.discovery.searchPlaceholder}
                 value={query}
                 onChange={(event) => {
-                  setQuery(event.target.value);
+                  setDiscoveryFilter({ query: event.target.value });
                   setCursorStack([]);
                 }}
               />
@@ -422,7 +430,10 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
               title={m.discovery.emptyTitle}
               description={m.discovery.emptyDescription}
               action={
-                <Button variant="secondary" onClick={() => setStatusFilter('all')}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setDiscoveryFilter({ statusFilter: 'all' })}
+                >
                   {m.discovery.filterAll}
                 </Button>
               }
