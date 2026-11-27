@@ -44,6 +44,7 @@ export interface ProviderDto {
   retentionDays: number;
   allowedPlugins: string[] | null;
   status: ProviderStatus;
+  isDefault: boolean;
   lastTestAt: string | null;
   lastTestStatus: string | null;
   lastTestMs: number | null;
@@ -156,6 +157,35 @@ export interface ProviderTestResult {
 export interface ModelCandidate {
   modelKey: string;
   label?: string;
+}
+
+export interface ConsumerPluginDto {
+  id: string;
+  label: string;
+  description: string;
+  needsLlm: boolean;
+}
+
+export interface ConsumerPluginListResponse {
+  items: ConsumerPluginDto[];
+}
+
+export type LlmLogLevel = 'info' | 'warn' | 'error';
+
+export interface LlmLogDto {
+  id: string;
+  level: LlmLogLevel;
+  action: string;
+  providerId: string | null;
+  providerName: string | null;
+  message: string;
+  createdAt: string;
+}
+
+export interface LlmLogListResponse {
+  items: LlmLogDto[];
+  total: number;
+  nextCursor: string | null;
 }
 
 // --- Internal API -----------------------------------------------------------

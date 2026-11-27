@@ -162,6 +162,32 @@ export class LlmRuntime {
       .run(at, status, ms, providerId);
   }
 
+  recordLog(
+    level: 'info' | 'warn' | 'error',
+    action: string,
+    message: string,
+    provider?: { id?: string | null; name?: string | null },
+  ): void {
+    try {
+      this.db
+        .prepare(
+          `insert into llm_log (id, level, action, provider_id, provider_name, message, created_at)
+           values (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          newId('llm_l'),
+          level,
+          action,
+          provider?.id ?? null,
+          provider?.name ?? null,
+          message,
+          this.now().toISOString(),
+        );
+    } catch (error) {
+      this.log.warn({ err: error, action }, 'llm plugin log insert failed');
+    }
+  }
+
   /**
    * Daily token and monthly budget caps, counted from the usage table.
    *

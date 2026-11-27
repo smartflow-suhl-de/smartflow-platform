@@ -3,6 +3,7 @@ import type { PluginContext } from '../../kernel/context.ts';
 import { decodeCursor, encodeCursor } from '../../kernel/cursor.ts';
 import { AppError } from '../../kernel/errors.ts';
 import { newId } from '../../kernel/ids.ts';
+import { generatedPlugins } from '../../kernel/plugin-registry.generated.ts';
 import { registerInternalRoutes } from './internal.ts';
 import { manifest } from './manifest.ts';
 import {
@@ -72,6 +73,7 @@ const providerBody = {
     retentionDays: { type: 'integer', minimum: 1, maximum: 365 },
     allowedPlugins: { type: ['array', 'null'], items: { type: 'string' } },
     status: { type: 'string', enum: ['active', 'disabled'] },
+    isDefault: { type: 'boolean' },
   },
 } as const;
 
@@ -141,6 +143,7 @@ interface ProviderBody {
   retentionDays?: number;
   allowedPlugins?: string[] | null;
   status?: ProviderStatus;
+  isDefault?: boolean;
 }
 
 interface ProviderDraft {
@@ -311,11 +314,11 @@ function validateDraft(
     }
   }
 
-  if (draft.timeoutMs < 1000 || draft.timeoutMs > 60_000) {
-    fields.timeoutMs = 'Use a timeout between 1 and 60 seconds.';
+  if (draft.timeoutMs < 1000 || draft.timeoutMs > 120_000) {
+    fields.timeoutMs = 'Use a timeout between 1 and 120 seconds.';
   }
-  if (draft.maxRetries < 0 || draft.maxRetries > 3) {
-    fields.maxRetries = 'Use 0 to 3 retries.';
+  if (draft.maxRetries < 0 || draft.maxRetries > 5) {
+    fields.maxRetries = 'Use 0 to 5 retries.';
   }
   if (draft.rateLimitPerMinute < 1 || draft.rateLimitPerMinute > 600) {
     fields.rateLimitPerMinute = 'Use 1 to 600 calls per minute.';
@@ -457,7 +460,63 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 2,
+      up(database) {
+        database.exec(`
+          create table llm_log (
+            id text primary key,
+            level text not null check (level in ('info', 'warn', 'error')),
+            action text not null,
+            provider_id text,
+            provider_name text,
+            message text not null,
+            created_at text not null
+          );
+          create index llm_log_created on llm_log(created_at, id);
+          create index llm_log_level on llm_log(level, created_at);
+        `);
+      },
+    },
+    {
+      version: 3,
+      up(database) {
+        database.exec(`
+          alter table llm_provider add column is_default integer not null default 0;
+          update llm_provider set is_default = 1
+           where id = (
+             select id from llm_provider
+              order by case when status = 'active' then 0 else 1 end, created_at asc, id asc
+              limit 1
+           );
+        `);
+      },
+    },
   ]);
+
+  function recordLog(
+    level: 'info' | 'warn' | 'error',
+    action: string,
+    message: string,
+    provider?: { id?: string | null; name?: string | null },
+  ): void {
+    try {
+      db.prepare(
+        `insert into llm_log (id, level, action, provider_id, provider_name, message, created_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        newId('llm_l'),
+        level,
+        action,
+        provider?.id ?? null,
+        provider?.name ?? null,
+        message,
+        ctx.now().toISOString(),
+      );
+    } catch (error) {
+      ctx.log.warn({ err: error, action }, 'llm plugin log insert failed');
+    }
+  }
 
   // Old rows disappear at start and once a day; the timer never keeps a test
   // process alive because it is unref'd.
@@ -479,6 +538,139 @@ export function register(ctx: PluginContext): void {
   purgeTimer.unref();
 
   const operator = app.requireRole('operator');
+
+  app.get(
+    '/llm/plugins',
+    {
+      preHandler: operator,
+      schema: {
+        summary: 'List installed plugins and whether they declare LLM usage',
+        tags: ['llm-providers'],
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['items'],
+            properties: {
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['id', 'label', 'description', 'needsLlm'],
+                  properties: {
+                    id: { type: 'string' },
+                    label: { type: 'string' },
+                    description: { type: 'string' },
+                    needsLlm: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
+          401: errorSchema,
+          403: errorSchema,
+        },
+      },
+    },
+    async (_request, reply) => {
+      const items = generatedPlugins
+        .filter((entry) => entry.manifest.id !== manifest.id)
+        .map((entry) => ({
+          id: entry.manifest.id,
+          label: entry.manifest.label,
+          description: entry.manifest.description,
+          needsLlm: Boolean(entry.manifest.dependsOn?.includes('llm-providers')),
+        }));
+      reply.type('application/json');
+      return { items };
+    },
+  );
+
+  app.get<{
+    Querystring: { level?: 'info' | 'warn' | 'error'; limit?: string; cursor?: string };
+  }>(
+    '/llm/logs',
+    {
+      preHandler: operator,
+      schema: {
+        summary: 'List operational logs of the LLM provider plugin',
+        tags: ['llm-providers'],
+        querystring: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            level: { type: 'string', enum: ['info', 'warn', 'error'] },
+            limit: { type: 'string' },
+            cursor: { type: 'string' },
+          },
+        },
+        response: {
+          200: objectSchema,
+          400: errorSchema,
+          401: errorSchema,
+          403: errorSchema,
+        },
+      },
+    },
+    async (request) => {
+      const limit = parseLimit(request.query.limit);
+      const where: string[] = [];
+      const params: unknown[] = [];
+      if (request.query.level) {
+        where.push('level = ?');
+        params.push(request.query.level);
+      }
+      const whereSql = where.length > 0 ? `where ${where.join(' and ')}` : '';
+      const total = (
+        db.prepare(`select count(*) as n from llm_log ${whereSql}`).get(...params) as { n: number }
+      ).n;
+
+      const pageWhere = [...where];
+      const pageParams = [...params];
+      if (request.query.cursor) {
+        const cursor = decodeCursor(request.query.cursor);
+        if (!cursor) {
+          throw new AppError('invalid_cursor', 'The pagination cursor is invalid.', 400);
+        }
+        pageWhere.push('(created_at < ? or (created_at = ? and id < ?))');
+        pageParams.push(cursor.created_at, cursor.created_at, cursor.id);
+      }
+      const pageWhereSql = pageWhere.length > 0 ? `where ${pageWhere.join(' and ')}` : '';
+      const rows = db
+        .prepare(
+          `select id, level, action, provider_id, provider_name, message, created_at
+           from llm_log ${pageWhereSql}
+           order by created_at desc, id desc
+           limit ?`,
+        )
+        .all(...pageParams, limit + 1) as Array<{
+        id: string;
+        level: 'info' | 'warn' | 'error';
+        action: string;
+        provider_id: string | null;
+        provider_name: string | null;
+        message: string;
+        created_at: string;
+      }>;
+      const hasMore = rows.length > limit;
+      const slice = hasMore ? rows.slice(0, limit) : rows;
+      const last = slice.at(-1);
+      return {
+        items: slice.map((row) => ({
+          id: row.id,
+          level: row.level,
+          action: row.action,
+          providerId: row.provider_id,
+          providerName: row.provider_name,
+          message: row.message,
+          createdAt: row.created_at,
+        })),
+        total,
+        nextCursor: hasMore && last ? encodeCursor({ created_at: last.created_at, id: last.id }) : null,
+      };
+    },
+  );
 
   app.get<{
     Querystring: { status?: ProviderStatus; q?: string; limit?: string; cursor?: string };
@@ -597,6 +789,13 @@ export function register(ctx: PluginContext): void {
 
       const now = ctx.now().toISOString();
       const id = newId('llm_p');
+      const existingCount = (
+        db.prepare('select count(*) as count from llm_provider').get() as { count: number }
+      ).count;
+      const isDefault = body.isDefault === true || existingCount === 0;
+      if (isDefault) {
+        db.prepare('update llm_provider set is_default = 0').run();
+      }
       const extra =
         draft.extraHeaders && Object.keys(draft.extraHeaders).length > 0
           ? validateExtraHeaders(draft.extraHeaders)
@@ -606,9 +805,9 @@ export function register(ctx: PluginContext): void {
          (id, name, preset, base_url, chat_path, api_version, auth_style, auth_header,
           api_key_sealed, api_key_updated_at, extra_headers_sealed, extra_header_names,
           timeout_ms, max_retries, rate_limit_per_minute, daily_token_limit,
-          monthly_budget_micros, retention_days, allowed_plugins, status,
+          monthly_budget_micros, retention_days, allowed_plugins, status, is_default,
           created_at, updated_at, created_by)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         draft.name,
@@ -630,12 +829,315 @@ export function register(ctx: PluginContext): void {
         draft.retentionDays,
         draft.allowedPlugins ? JSON.stringify(draft.allowedPlugins) : null,
         draft.status,
+        isDefault ? 1 : 0,
         now,
         now,
         request.user?.id ?? 'unknown',
       );
       reply.code(201);
+      recordLog('info', 'provider.created', `Provider "${draft.name}" angelegt (${draft.baseUrl}).`, {
+        id,
+        name: draft.name,
+      });
       return runtime.toProvider(runtime.provider(id) as ProviderRow);
+    },
+  );
+
+  const MARTLLM_API_BASE = 'https://api.martllm.com';
+  const MARTLLM_TRUSTED_HOSTS = new Set(['api.martllm.com', 'api.uberllm.dev']);
+
+  interface MartLlmCatalogEntry {
+    id: string;
+    label: string;
+    contextWindow: number | null;
+    maxOutputTokens: number | null;
+    capabilities: Capabilities;
+    inputCostMicrosPerMtok: number;
+    outputCostMicrosPerMtok: number;
+  }
+
+  let martLlmCatalogCache: { expiresAt: number; map: Map<string, MartLlmCatalogEntry> } | null =
+    null;
+
+  function isMartLlmProvider(provider: ProviderRow): boolean {
+    if (provider.preset === 'martllm') return true;
+    try {
+      return MARTLLM_TRUSTED_HOSTS.has(new URL(provider.base_url).hostname);
+    } catch {
+      return false;
+    }
+  }
+
+  async function fetchMartLlmCatalog(): Promise<Map<string, MartLlmCatalogEntry>> {
+    const now = Date.now();
+    if (martLlmCatalogCache && martLlmCatalogCache.expiresAt > now) {
+      return martLlmCatalogCache.map;
+    }
+    const map = new Map<string, MartLlmCatalogEntry>();
+    try {
+      const response = await fetch(`${MARTLLM_API_BASE}/api/v1/public/models`, {
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return map;
+      const payload = (await response.json()) as
+        | Array<Record<string, unknown>>
+        | { models?: Array<Record<string, unknown>>; data?: Array<Record<string, unknown>> };
+      const rows = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload.models)
+          ? payload.models
+          : Array.isArray(payload.data)
+            ? payload.data
+            : [];
+      for (const item of rows) {
+        const id = typeof item.id === 'string' ? item.id : '';
+        if (!id) continue;
+        const capsList = Array.isArray(item.capabilities)
+          ? item.capabilities.filter((c): c is string => typeof c === 'string')
+          : [];
+        const inputMods = Array.isArray(item.input_modalities)
+          ? item.input_modalities.filter((m): m is string => typeof m === 'string')
+          : [];
+        const outputMods = Array.isArray(item.output_modalities)
+          ? item.output_modalities.filter((m): m is string => typeof m === 'string')
+          : [];
+        const price7d =
+          item.price_7d && typeof item.price_7d === 'object'
+            ? (item.price_7d as Record<string, unknown>)
+            : null;
+        const priceNow =
+          item.price_now && typeof item.price_now === 'object'
+            ? (item.price_now as Record<string, unknown>)
+            : null;
+        const inputUsd =
+          typeof price7d?.input_usd_per_mtok === 'number'
+            ? price7d.input_usd_per_mtok
+            : typeof priceNow?.input_usd_per_mtok === 'number'
+              ? priceNow.input_usd_per_mtok
+              : 0;
+        const outputUsd =
+          typeof price7d?.output_usd_per_mtok === 'number'
+            ? price7d.output_usd_per_mtok
+            : typeof priceNow?.output_usd_per_mtok === 'number'
+              ? priceNow.output_usd_per_mtok
+              : 0;
+        map.set(id, {
+          id,
+          label: typeof item.display_name === 'string' && item.display_name ? item.display_name : id,
+          contextWindow:
+            typeof item.context_length === 'number' && item.context_length > 0
+              ? Math.round(item.context_length)
+              : null,
+          maxOutputTokens:
+            typeof item.max_output_tokens === 'number' && item.max_output_tokens > 0
+              ? Math.round(item.max_output_tokens)
+              : null,
+          capabilities: {
+            tools: item.supports_tools === true || capsList.includes('tools'),
+            json: capsList.includes('response_format') || capsList.includes('structured_outputs'),
+            vision: inputMods.includes('image'),
+            embeddings:
+              outputMods.includes('embeddings') ||
+              capsList.includes('embeddings') ||
+              id.toLowerCase().includes('embed'),
+          },
+          inputCostMicrosPerMtok: Math.max(0, Math.round(inputUsd * 1_000_000)),
+          outputCostMicrosPerMtok: Math.max(0, Math.round(outputUsd * 1_000_000)),
+        });
+      }
+      martLlmCatalogCache = { expiresAt: now + 60_000, map };
+    } catch {
+      // fail-open: never block model creation or refresh
+    }
+    return map;
+  }
+
+  app.post(
+    '/llm/providers/martllm/link/start',
+    {
+      preHandler: operator,
+      schema: {
+        summary: 'Start MartLLM browser device-link flow',
+        tags: ['llm-providers'],
+        response: {
+          200: objectSchema,
+          401: errorSchema,
+          403: errorSchema,
+          502: errorSchema,
+        },
+      },
+    },
+    async () => {
+      let response: Response;
+      try {
+        response = await fetch(`${MARTLLM_API_BASE}/api/v1/cli/link/start`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            client_name: 'SmartFlow Platform',
+            client_platform: process.platform,
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch {
+        throw new AppError(
+          'llm_provider_error',
+          'MartLLM konnte nicht erreicht werden.',
+          502,
+        );
+      }
+      if (!response.ok) {
+        throw new AppError(
+          'llm_provider_error',
+          `MartLLM-Anmeldung fehlgeschlagen (HTTP ${response.status}).`,
+          502,
+        );
+      }
+      const data = (await response.json()) as {
+        device_code?: string;
+        verification_url?: string;
+        link_code?: string;
+        interval?: number;
+        expires_in?: number;
+      };
+      if (!data.device_code || !data.verification_url) {
+        throw new AppError(
+          'llm_provider_error',
+          'Ungültige Antwort von MartLLM beim Start der Browser-Anmeldung.',
+          502,
+        );
+      }
+      return {
+        deviceCode: data.device_code,
+        verificationUrl: data.verification_url,
+        linkCode: data.link_code ?? '',
+        interval: Math.max(2, Number(data.interval) || 3),
+        expiresIn: Number(data.expires_in) || 900,
+      };
+    },
+  );
+
+  app.post<{ Body: { deviceCode: string; name?: string } }>(
+    '/llm/providers/martllm/link/poll',
+    {
+      preHandler: operator,
+      schema: {
+        summary: 'Poll MartLLM browser device-link flow and create provider on approval',
+        tags: ['llm-providers'],
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['deviceCode'],
+          properties: {
+            deviceCode: { type: 'string', minLength: 1, maxLength: 300 },
+            name: { type: 'string', minLength: 1, maxLength: 80 },
+          },
+        },
+        response: {
+          200: objectSchema,
+          401: errorSchema,
+          403: errorSchema,
+          502: errorSchema,
+        },
+      },
+    },
+    async (request) => {
+      const { deviceCode } = request.body;
+      let response: Response;
+      try {
+        response = await fetch(`${MARTLLM_API_BASE}/api/v1/cli/link/poll`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ device_code: deviceCode }),
+          signal: AbortSignal.timeout(15_000),
+        });
+      } catch {
+        return { status: 'pending' as const };
+      }
+      if (response.status === 429) {
+        return { status: 'pending' as const };
+      }
+      if (!response.ok) {
+        throw new AppError(
+          'llm_provider_error',
+          `MartLLM-Statusabfrage fehlgeschlagen (HTTP ${response.status}).`,
+          502,
+        );
+      }
+      const poll = (await response.json()) as {
+        status?: string;
+        api_key?: string;
+        base_url?: string;
+      };
+      if (poll.status === 'denied' || poll.status === 'expired') {
+        return { status: poll.status };
+      }
+      if (poll.status !== 'approved' || !poll.api_key) {
+        return { status: 'pending' as const };
+      }
+
+      let apiOrigin = MARTLLM_API_BASE;
+      if (poll.base_url) {
+        try {
+          const parsed = new URL(poll.base_url);
+          if (parsed.protocol === 'https:' && MARTLLM_TRUSTED_HOSTS.has(parsed.hostname)) {
+            apiOrigin = parsed.origin;
+          }
+        } catch {
+          // keep default trusted origin
+        }
+      }
+      const baseUrl = `${apiOrigin}/v1`;
+      const name = (request.body.name?.trim() || 'MartLLM').slice(0, 80);
+      const now = ctx.now().toISOString();
+      const id = newId('llm_p');
+      const existingCount = (
+        db.prepare('select count(*) as count from llm_provider').get() as { count: number }
+      ).count;
+      const isDefault = existingCount === 0 ? 1 : 0;
+
+      db.prepare(
+        `insert into llm_provider
+         (id, name, preset, base_url, chat_path, api_version, auth_style, auth_header,
+          api_key_sealed, api_key_updated_at, extra_headers_sealed, extra_header_names,
+          timeout_ms, max_retries, rate_limit_per_minute, daily_token_limit,
+          monthly_budget_micros, retention_days, allowed_plugins, status, is_default,
+          created_at, updated_at, created_by)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        name,
+        'martllm',
+        baseUrl,
+        '/chat/completions',
+        null,
+        'bearer',
+        'Authorization',
+        runtime.sealKey(poll.api_key),
+        now,
+        null,
+        '[]',
+        30_000,
+        1,
+        60,
+        0,
+        0,
+        90,
+        null,
+        'active',
+        isDefault,
+        now,
+        now,
+        request.user?.id ?? 'unknown',
+      );
+      recordLog('info', 'provider.created', `Provider "${name}" per MartLLM Browser-Login verbunden (${baseUrl}).`, {
+        id,
+        name,
+      });
+      return {
+        status: 'approved' as const,
+        provider: runtime.toProvider(runtime.provider(id) as ProviderRow),
+      };
     },
   );
 
@@ -721,6 +1223,16 @@ export function register(ctx: PluginContext): void {
       );
 
       const now = ctx.now().toISOString();
+      const totalProviders = (
+        db.prepare('select count(*) as count from llm_provider').get() as { count: number }
+      ).count;
+      let nextIsDefault = existing.is_default === 1;
+      if (body.isDefault === true) {
+        db.prepare('update llm_provider set is_default = 0 where id != ?').run(existing.id);
+        nextIsDefault = true;
+      } else if (body.isDefault === false) {
+        nextIsDefault = totalProviders <= 1;
+      }
       const extra =
         draft.extraHeaders && Object.keys(draft.extraHeaders).length > 0
           ? validateExtraHeaders(draft.extraHeaders)
@@ -731,7 +1243,7 @@ export function register(ctx: PluginContext): void {
            auth_style = ?, auth_header = ?, api_key_sealed = ?, api_key_updated_at = ?,
            extra_headers_sealed = ?, extra_header_names = ?, timeout_ms = ?, max_retries = ?,
            rate_limit_per_minute = ?, daily_token_limit = ?, monthly_budget_micros = ?,
-           retention_days = ?, allowed_plugins = ?, status = ?, updated_at = ?
+           retention_days = ?, allowed_plugins = ?, status = ?, is_default = ?, updated_at = ?
          where id = ?`,
       ).run(
         draft.name,
@@ -769,9 +1281,14 @@ export function register(ctx: PluginContext): void {
         draft.retentionDays,
         draft.allowedPlugins ? JSON.stringify(draft.allowedPlugins) : null,
         draft.status,
+        nextIsDefault ? 1 : 0,
         now,
         existing.id,
       );
+      recordLog('info', 'provider.updated', `Provider "${draft.name}" aktualisiert.`, {
+        id: existing.id,
+        name: draft.name,
+      });
       return runtime.toProvider(runtime.provider(existing.id) as ProviderRow);
     },
   );
@@ -781,7 +1298,7 @@ export function register(ctx: PluginContext): void {
     {
       preHandler: operator,
       schema: {
-        summary: 'Delete an unused LLM provider',
+        summary: 'Delete an LLM provider and its models',
         tags: ['llm-providers'],
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
         response: {
@@ -789,21 +1306,40 @@ export function register(ctx: PluginContext): void {
           401: errorSchema,
           403: errorSchema,
           404: errorSchema,
-          409: errorSchema,
         },
       },
     },
     async (request, reply) => {
       const existing = runtime.provider(request.params.id);
       if (!existing) throw new AppError('llm_provider_not_found', 'Provider not found.', 404);
-      if (runtime.modelCount(existing.id) > 0) {
-        throw new AppError(
-          'llm_provider_in_use',
-          'Remove the provider’s models before deleting it.',
-          409,
-        );
-      }
-      db.prepare('delete from llm_provider where id = ?').run(existing.id);
+      // Deleting a provider is always allowed: its models go with it and any
+      // purpose that still pointed at one of them is cleared, so the delete never
+      // fails on a reference the operator cannot see in the confirmation dialog.
+      db.transaction(() => {
+        const providerModels = 'select id from llm_model where provider_id = ?';
+        db.prepare(
+          `update llm_purpose set model_id = null where model_id in (${providerModels})`,
+        ).run(existing.id);
+        db.prepare(
+          `update llm_purpose set fallback_model_id = null where fallback_model_id in (${providerModels})`,
+        ).run(existing.id);
+        db.prepare('delete from llm_model where provider_id = ?').run(existing.id);
+        db.prepare('delete from llm_provider where id = ?').run(existing.id);
+        if (existing.is_default === 1) {
+          db.prepare(
+            `update llm_provider set is_default = 1
+              where id = (
+                select id from llm_provider
+                 order by case when status = 'active' then 0 else 1 end, created_at asc, id asc
+                 limit 1
+              )`,
+          ).run();
+        }
+      })();
+      recordLog('warn', 'provider.deleted', `Provider "${existing.name}" gelöscht.`, {
+        id: existing.id,
+        name: existing.name,
+      });
       reply.code(204).send();
     },
   );
@@ -895,6 +1431,7 @@ export function register(ctx: PluginContext): void {
       retention_days: draft.retentionDays,
       allowed_plugins: existing?.allowed_plugins ?? null,
       status: draft.status,
+      is_default: existing?.is_default ?? 0,
       last_test_at: existing?.last_test_at ?? null,
       last_test_status: existing?.last_test_status ?? null,
       last_test_ms: existing?.last_test_ms ?? null,
@@ -939,6 +1476,12 @@ export function register(ctx: PluginContext): void {
       if (existing) {
         runtime.recordTest(existing.id, 'ok', latencyMs);
       }
+      recordLog(
+        'info',
+        'provider.test',
+        `Verbindungstest erfolgreich (${latencyMs} ms, ${models.length} Modelle).`,
+        { id: existing?.id ?? null, name: existing?.name ?? provider.name },
+      );
       return {
         ok: true,
         latencyMs,
@@ -948,6 +1491,12 @@ export function register(ctx: PluginContext): void {
       const latencyMs = Date.now() - started;
       if (!(error instanceof UpstreamError)) throw error;
       if (existing) runtime.recordTest(existing.id, error.reason, latencyMs);
+      recordLog(
+        'error',
+        'provider.test',
+        `Verbindungstest fehlgeschlagen (${error.reason}, ${latencyMs} ms): ${error.message}`,
+        { id: existing?.id ?? null, name: existing?.name ?? provider.name },
+      );
       return {
         ok: false,
         latencyMs,
@@ -1032,9 +1581,13 @@ export function register(ctx: PluginContext): void {
       if (!provider) throw new AppError('llm_provider_not_found', 'Provider not found.', 404);
       const rows = db
         .prepare(
-          'select * from llm_model where provider_id = ? order by is_default desc, label asc',
+          'select * from llm_model where provider_id = ? order by label asc, id asc',
         )
         .all(provider.id) as ModelRow[];
+      if (rows.length === 1 && rows[0] && rows[0].is_default === 0) {
+        db.prepare('update llm_model set is_default = 1 where id = ?').run(rows[0].id);
+        rows[0].is_default = 1;
+      }
       return { items: rows.map(toModel) };
     },
   );
@@ -1067,16 +1620,21 @@ export function register(ctx: PluginContext): void {
       if (modelKey === '.' || modelKey === '..') {
         throw new FieldError({ modelKey: 'The model id must not be a path segment.' });
       }
-      const isDefault = body.isDefault === true;
-      const capabilities: Capabilities = {
-        tools: (body.capabilities as Capabilities | undefined)?.tools === true,
-        json: (body.capabilities as Capabilities | undefined)?.json === true,
-        vision: (body.capabilities as Capabilities | undefined)?.vision === true,
-        embeddings: (body.capabilities as Capabilities | undefined)?.embeddings === true,
+      const requestedDefault = body.isDefault === true;
+      const rawCaps = body.capabilities as Partial<Capabilities> | undefined;
+      const catalogEntry = isMartLlmProvider(provider)
+        ? (await fetchMartLlmCatalog()).get(modelKey)
+        : undefined;
+      const resolvedCapabilities: Capabilities = {
+        tools: rawCaps?.tools ?? catalogEntry?.capabilities.tools ?? false,
+        json: rawCaps?.json ?? catalogEntry?.capabilities.json ?? false,
+        vision: rawCaps?.vision ?? catalogEntry?.capabilities.vision ?? false,
+        embeddings: rawCaps?.embeddings ?? catalogEntry?.capabilities.embeddings ?? false,
       };
       const id = newId('llm_m');
       try {
         db.transaction(() => {
+          const isDefault = requestedDefault || runtime.modelCount(provider.id) === 0;
           if (isDefault) {
             db.prepare('update llm_model set is_default = 0 where provider_id = ?').run(
               provider.id,
@@ -1088,17 +1646,17 @@ export function register(ctx: PluginContext): void {
               input_cost_micros_per_mtok, output_cost_micros_per_mtok, is_default, source,
               status, created_at)
              values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).run(
-            id,
-            provider.id,
-            modelKey,
-            String(body.label ?? modelKey).trim() || modelKey,
-            body.contextWindow ?? null,
-            body.maxOutputTokens ?? null,
-            JSON.stringify(capabilities),
-            body.inputCostMicrosPerMtok ?? 0,
-            body.outputCostMicrosPerMtok ?? 0,
-            isDefault ? 1 : 0,
+        ).run(
+          id,
+          provider.id,
+          modelKey,
+          String(body.label ?? catalogEntry?.label ?? modelKey).trim() || modelKey,
+          body.contextWindow ?? catalogEntry?.contextWindow ?? null,
+          body.maxOutputTokens ?? catalogEntry?.maxOutputTokens ?? null,
+          JSON.stringify(resolvedCapabilities),
+          body.inputCostMicrosPerMtok ?? catalogEntry?.inputCostMicrosPerMtok ?? 0,
+          body.outputCostMicrosPerMtok ?? catalogEntry?.outputCostMicrosPerMtok ?? 0,
+          isDefault ? 1 : 0,
             body.source ?? 'manual',
             body.status ?? 'active',
             ctx.now().toISOString(),
@@ -1205,7 +1763,15 @@ export function register(ctx: PluginContext): void {
           409,
         );
       }
-      db.prepare('delete from llm_model where id = ?').run(existing.id);
+      db.transaction(() => {
+        db.prepare('delete from llm_model where id = ?').run(existing.id);
+        const remaining = db
+          .prepare('select id from llm_model where provider_id = ?')
+          .all(existing.provider_id) as Array<{ id: string }>;
+        if (remaining.length === 1 && remaining[0]) {
+          db.prepare('update llm_model set is_default = 1 where id = ?').run(remaining[0].id);
+        }
+      })();
       reply.code(204).send();
     },
   );
@@ -1247,16 +1813,52 @@ export function register(ctx: PluginContext): void {
           headers,
           Math.min(5000, provider.timeout_ms),
         );
-        const existing = new Set(
-          (
-            db
-              .prepare('select model_key from llm_model where provider_id = ?')
-              .all(provider.id) as Array<{ model_key: string }>
-          ).map((row) => row.model_key),
+        const existingRows = db
+          .prepare('select id, model_key from llm_model where provider_id = ?')
+          .all(provider.id) as Array<{ id: string; model_key: string }>;
+        const existing = new Set(existingRows.map((row) => row.model_key));
+        let enrichedCount = 0;
+        if (isMartLlmProvider(provider) && existingRows.length > 0) {
+          const catalog = await fetchMartLlmCatalog();
+          const updateModel = db.prepare(
+            `update llm_model
+                set context_window = coalesce(?, context_window),
+                    max_output_tokens = coalesce(?, max_output_tokens),
+                    capabilities = ?,
+                    input_cost_micros_per_mtok = ?,
+                    output_cost_micros_per_mtok = ?
+              where id = ?`,
+          );
+          for (const row of existingRows) {
+            const entry = catalog.get(row.model_key);
+            if (!entry) continue;
+            updateModel.run(
+              entry.contextWindow,
+              entry.maxOutputTokens,
+              JSON.stringify(entry.capabilities),
+              entry.inputCostMicrosPerMtok,
+              entry.outputCostMicrosPerMtok,
+              row.id,
+            );
+            enrichedCount += 1;
+          }
+        }
+        const discovered = models.filter((model) => !existing.has(model.modelKey));
+        recordLog(
+          'info',
+          'models.refresh',
+          `${models.length} Modelle vom Provider geladen (${discovered.length} neu${enrichedCount > 0 ? `, ${enrichedCount} Preise & Capabilities aktualisiert` : ''}).`,
+          { id: provider.id, name: provider.name },
         );
-        return { items: models.filter((model) => !existing.has(model.modelKey)) };
+        return { items: discovered };
       } catch (error) {
         if (!(error instanceof UpstreamError)) throw error;
+        recordLog(
+          'error',
+          'models.refresh',
+          `Modelle laden fehlgeschlagen (${error.reason}): ${error.message}`,
+          { id: provider.id, name: provider.name },
+        );
         throw new AppError('llm_provider_error', 'The provider did not return its models.', 502, {
           reason: error.reason,
         });

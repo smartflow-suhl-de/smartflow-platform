@@ -33,6 +33,7 @@ export interface ProviderRow {
   retention_days: number;
   allowed_plugins: string | null;
   status: ProviderStatus;
+  is_default: number;
   last_test_at: string | null;
   last_test_status: string | null;
   last_test_ms: number | null;
@@ -140,6 +141,7 @@ export function toProvider(row: ProviderRow, modelCount: number): ProviderDto {
     retentionDays: row.retention_days,
     allowedPlugins: parseAllowedPlugins(row.allowed_plugins),
     status: row.status,
+    isDefault: row.is_default === 1,
     lastTestAt: row.last_test_at,
     lastTestStatus: row.last_test_status,
     lastTestMs: row.last_test_ms,

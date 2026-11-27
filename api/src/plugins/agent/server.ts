@@ -58,9 +58,10 @@ const sourceInfoSchema = {
 const statusSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['configured', 'model', 'reachable', 'retentionDays', 'limits', 'sources'],
+  required: ['configured', 'provider', 'model', 'reachable', 'retentionDays', 'limits', 'sources'],
   properties: {
     configured: { type: 'boolean' },
+    provider: { type: ['string', 'null'] },
     model: { type: ['string', 'null'] },
     reachable: { type: 'boolean' },
     retentionDays: { type: 'integer' },
@@ -203,7 +204,30 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 2,
+      up(database) {
+        database.exec(`
+          create table agent_settings (
+            id text primary key,
+            provider_id text,
+            model_id text,
+            updated_at text not null
+          );
+        `);
+      },
+    },
   ]);
+
+  function loadSettings(): { providerId: string | null; modelId: string | null } {
+    const row = db
+      .prepare('select provider_id, model_id from agent_settings where id = ?')
+      .get('default') as { provider_id: string | null; model_id: string | null } | undefined;
+    return {
+      providerId: row?.provider_id ?? null,
+      modelId: row?.model_id ?? null,
+    };
+  }
 
   // The agent describes its own surface as a source, so "what can I ask?" is
   // answerable from data rather than from prompt text the model could invent.
@@ -232,7 +256,7 @@ export function register(ctx: PluginContext): void {
 
   /** Always asks the provider plugin; a cached "no" would hide a fixed setup. */
   async function providerState(): Promise<ProviderState> {
-    return await provider.status();
+    return await provider.status(loadSettings());
   }
 
   function pruneOldRuns(): void {
@@ -327,12 +351,91 @@ export function register(ctx: PluginContext): void {
       const state = await providerState();
       return {
         configured: state.configured,
+        provider: state.provider,
         model: state.model,
         reachable: state.reachable,
         retentionDays: config.retentionDays,
         limits: { perMinute: config.perMinute, perDay: config.perDay },
         sources: sourceInfos(),
       };
+    },
+  );
+
+  app.get(
+    '/agent/settings',
+    {
+      preHandler: app.requireRole('operator'),
+      schema: {
+        summary: 'Read selected LLM provider and model for the chat plugin',
+        tags: ['agent'],
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['providerId', 'modelId'],
+            properties: {
+              providerId: { type: ['string', 'null'] },
+              modelId: { type: ['string', 'null'] },
+            },
+          },
+          401: errorSchema,
+          403: errorSchema,
+        },
+      },
+    },
+    async () => loadSettings(),
+  );
+
+  app.patch<{ Body: { providerId?: string | null; modelId?: string | null } }>(
+    '/agent/settings',
+    {
+      preHandler: app.requireRole('operator'),
+      schema: {
+        summary: 'Save selected LLM provider and model for the chat plugin',
+        tags: ['agent'],
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            providerId: { type: ['string', 'null'], maxLength: 80 },
+            modelId: { type: ['string', 'null'], maxLength: 80 },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['providerId', 'modelId'],
+            properties: {
+              providerId: { type: ['string', 'null'] },
+              modelId: { type: ['string', 'null'] },
+            },
+          },
+          401: errorSchema,
+          403: errorSchema,
+        },
+      },
+    },
+    async (request) => {
+      const current = loadSettings();
+      const providerId =
+        request.body.providerId !== undefined
+          ? request.body.providerId?.trim() || null
+          : current.providerId;
+      const modelId =
+        request.body.modelId !== undefined
+          ? request.body.modelId?.trim() || null
+          : current.modelId;
+      const now = ctx.now().toISOString();
+      db.prepare(
+        `insert into agent_settings (id, provider_id, model_id, updated_at)
+         values ('default', ?, ?, ?)
+         on conflict(id) do update set
+           provider_id = excluded.provider_id,
+           model_id = excluded.model_id,
+           updated_at = excluded.updated_at`,
+      ).run(providerId, providerId ? modelId : null, now);
+      return loadSettings();
     },
   );
 
@@ -430,6 +533,7 @@ export function register(ctx: PluginContext): void {
           const response = await provider.complete(
             llmRequest,
             Math.min(config.timeoutMs, remaining),
+            loadSettings(),
           );
           model = response.model;
 
@@ -618,17 +722,21 @@ export function register(ctx: PluginContext): void {
     },
   );
 
-  app.get<{ Querystring: { limit?: string; cursor?: string } }>(
+  app.get<{ Querystring: { limit?: string; cursor?: string; q?: string } }>(
     '/agent/runs',
     {
       preHandler: app.requireRole('operator'),
       schema: {
-        summary: 'Recent agent runs, newest first',
+        summary: 'The caller’s own agent runs, newest first',
         tags: ['agent'],
         querystring: {
           type: 'object',
           additionalProperties: false,
-          properties: { limit: { type: 'string' }, cursor: { type: 'string' } },
+          properties: {
+            limit: { type: 'string' },
+            cursor: { type: 'string' },
+            q: { type: 'string', maxLength: 200 },
+          },
         },
         response: { 200: listSchema, 400: errorSchema, 401: errorSchema, 403: errorSchema },
       },
@@ -643,8 +751,26 @@ export function register(ctx: PluginContext): void {
         if (!cursor) throw new AppError('invalid_cursor', 'The cursor is invalid.', 400);
       }
 
+      // A run holds the operator's own questions and answers, so the list is
+      // always scoped to the caller: no operator reads another one's history.
+      const operator = request.user;
+      if (!operator) throw new AppError('unauthorized', 'Sign in required.', 401);
+
+      const where: string[] = ['user_id = ?'];
+      const params: unknown[] = [operator.id];
+      const needle = (request.query.q ?? '').trim();
+      if (needle.length > 0) {
+        // `%`, `_` and `\` in the search text are literals, not wildcards.
+        where.push("(lower(question) like ? escape '\\' or lower(coalesce(answer, '')) like ? escape '\\')");
+        const pattern = `%${needle.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
+        params.push(pattern, pattern);
+      }
+      const filters = where.join(' and ');
+
       const total = (
-        db.prepare('select count(*) as count from agent_runs').get() as { count: number }
+        db.prepare(`select count(*) as count from agent_runs where ${filters}`).get(...params) as {
+          count: number;
+        }
       ).count;
 
       const rows = (
@@ -653,16 +779,17 @@ export function register(ctx: PluginContext): void {
               .prepare(
                 `select id, question, answer, status, error_code, model, duration_ms, created_at,
                  finished_at from agent_runs
-                 where (created_at < ? or (created_at = ? and id < ?))
+                 where ${filters} and (created_at < ? or (created_at = ? and id < ?))
                  order by created_at desc, id desc limit ?`,
               )
-              .all(cursor.created_at, cursor.created_at, cursor.id, limit + 1)
+              .all(...params, cursor.created_at, cursor.created_at, cursor.id, limit + 1)
           : db
               .prepare(
                 `select id, question, answer, status, error_code, model, duration_ms, created_at,
-                 finished_at from agent_runs order by created_at desc, id desc limit ?`,
+                 finished_at from agent_runs where ${filters}
+                 order by created_at desc, id desc limit ?`,
               )
-              .all(limit + 1)
+              .all(...params, limit + 1)
       ) as RunRow[];
 
       const hasMore = rows.length > limit;
@@ -692,14 +819,70 @@ export function register(ctx: PluginContext): void {
       },
     },
     async (request) => {
+      const operator = request.user;
+      if (!operator) throw new AppError('unauthorized', 'Sign in required.', 401);
       const row = db
         .prepare(
           `select id, question, answer, status, error_code, model, duration_ms, created_at,
-           finished_at from agent_runs where id = ?`,
+           finished_at from agent_runs where id = ? and user_id = ?`,
         )
-        .get(request.params.id) as RunRow | undefined;
+        .get(request.params.id, operator.id) as RunRow | undefined;
       if (!row) throw new AppError('agent_run_not_found', 'Agent run not found.', 404);
       return runToJson(row, stepsFor(row.id));
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/agent/runs/:id',
+    {
+      preHandler: app.requireRole('operator'),
+      schema: {
+        summary: 'Delete one of the caller’s own agent runs',
+        tags: ['agent'],
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+        response: { 204: { type: 'null' }, 401: errorSchema, 403: errorSchema, 404: errorSchema },
+      },
+    },
+    async (request, reply) => {
+      const operator = request.user;
+      if (!operator) throw new AppError('unauthorized', 'Sign in required.', 401);
+      // The steps cascade with the run (foreign_keys is on).
+      const removed = db
+        .prepare('delete from agent_runs where id = ? and user_id = ?')
+        .run(request.params.id, operator.id);
+      if (removed.changes === 0) {
+        throw new AppError('agent_run_not_found', 'Agent run not found.', 404);
+      }
+      reply.code(204).send();
+    },
+  );
+
+  app.delete(
+    '/agent/runs',
+    {
+      preHandler: app.requireRole('operator'),
+      schema: {
+        summary: 'Delete every agent run of the caller',
+        tags: ['agent'],
+        response: {
+          200: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['deleted'],
+            properties: { deleted: { type: 'integer' } },
+          },
+          401: errorSchema,
+          403: errorSchema,
+        },
+      },
+    },
+    async (request) => {
+      const operator = request.user;
+      if (!operator) throw new AppError('unauthorized', 'Sign in required.', 401);
+      const removed = db
+        .prepare('delete from agent_runs where user_id = ?')
+        .run(operator.id);
+      return { deleted: removed.changes };
     },
   );
 

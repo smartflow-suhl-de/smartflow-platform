@@ -6,22 +6,38 @@ import type { AgentConfig } from '../../kernel/config.ts';
 /** Status as the page needs it: configured, model, and whether the plugin answered. */
 export interface ProviderState {
   configured: boolean;
+  provider: string | null;
   model: string | null;
   reachable: boolean;
 }
 
+export interface AgentLlmSelection {
+  providerId: string | null;
+  modelId: string | null;
+}
+
 export interface LlmProvider {
-  status(): Promise<ProviderState>;
-  complete(request: LlmRequest, timeoutMs: number): Promise<LlmResponse>;
+  status(selection?: AgentLlmSelection): Promise<ProviderState>;
+  complete(
+    request: LlmRequest,
+    timeoutMs: number,
+    selection?: AgentLlmSelection,
+  ): Promise<LlmResponse>;
 }
 
 /** The purpose the operator maps to a model in the provider plugin. */
 export const AGENT_PURPOSE = 'agent';
 
 /** Neutral agent request -> wire form of `POST {base}/internal/complete`. */
-export function toWireRequest(request: LlmRequest, timeoutMs: number): Record<string, unknown> {
+export function toWireRequest(
+  request: LlmRequest,
+  timeoutMs: number,
+  selection?: AgentLlmSelection,
+): Record<string, unknown> {
   return {
     purpose: AGENT_PURPOSE,
+    ...(selection?.providerId ? { providerId: selection.providerId } : {}),
+    ...(selection?.modelId ? { modelId: selection.modelId } : {}),
     messages: request.messages.map((message) => {
       if (message.role === 'tool') {
         return { role: 'tool', content: message.content, tool_call_id: message.toolCallId };
@@ -93,17 +109,43 @@ export function createProvider(ctx: PluginContext, config: AgentConfig): LlmProv
     });
 
   return {
-    async status(): Promise<ProviderState> {
+    async status(selection?: AgentLlmSelection): Promise<ProviderState> {
       try {
-        const response = await call('GET', '/internal/status', undefined, config.timeoutMs);
+        const query = new URLSearchParams();
+        if (selection?.providerId) query.set('providerId', selection.providerId);
+        if (selection?.modelId) query.set('modelId', selection.modelId);
+        const suffix = query.toString();
+        const path = suffix.length > 0 ? `/internal/status?${suffix}` : '/internal/status';
+        const response = await call('GET', path, undefined, config.timeoutMs);
         if (response.status !== 200) {
-          return { configured: false, model: null, reachable: false };
+          return { configured: false, provider: null, model: null, reachable: false };
         }
         const parsed = parseJson(response.body);
-        if (!isRecord(parsed) || !Array.isArray(parsed.purposes)) {
-          return { configured: false, model: null, reachable: false };
+        if (!isRecord(parsed)) {
+          return { configured: false, provider: null, model: null, reachable: false };
         }
-        // Configured means: the `agent` purpose has a model, not "some purpose does".
+        if (isRecord(parsed.availableForCaller)) {
+          const avail = parsed.availableForCaller;
+          const configured = avail.configured === true;
+          const providerName =
+            typeof avail.providerName === 'string' && avail.providerName.length > 0
+              ? avail.providerName
+              : null;
+          const label =
+            typeof avail.modelKey === 'string' && avail.modelKey.length > 0
+              ? avail.modelKey
+              : null;
+          return {
+            configured,
+            provider: configured ? providerName : null,
+            model: configured ? label : null,
+            reachable: true,
+          };
+        }
+        if (!Array.isArray(parsed.purposes)) {
+          return { configured: false, provider: null, model: null, reachable: false };
+        }
+        // Fallback for older providers: check the `agent` purpose.
         const entry = parsed.purposes.find(
           (item): item is Record<string, unknown> =>
             isRecord(item) && item.purpose === AGENT_PURPOSE,
@@ -115,19 +157,23 @@ export function createProvider(ctx: PluginContext, config: AgentConfig): LlmProv
             ? model.modelKey
             : null;
         const status: LlmStatus = { configured, model: configured ? label : null };
-        return { ...status, reachable: true };
+        return { ...status, provider: null, reachable: true };
       } catch {
         // A provider that is down is not a configured provider. The page says
         // so instead of promising answers it cannot deliver.
-        return { configured: false, model: null, reachable: false };
+        return { configured: false, provider: null, model: null, reachable: false };
       }
     },
 
-    async complete(request: LlmRequest, timeoutMs: number): Promise<LlmResponse> {
+    async complete(
+      request: LlmRequest,
+      timeoutMs: number,
+      selection?: AgentLlmSelection,
+    ): Promise<LlmResponse> {
       const response = await call(
         'POST',
         '/internal/complete',
-        toWireRequest(request, timeoutMs),
+        toWireRequest(request, timeoutMs, selection),
         timeoutMs,
       );
       if (response.status !== 200) {

@@ -104,6 +104,8 @@ const completeBody = {
   properties: {
     purpose: { type: 'string', minLength: 3, maxLength: 80 },
     model: { type: 'string', minLength: 1, maxLength: 200 },
+    providerId: { type: 'string', minLength: 1, maxLength: 80 },
+    modelId: { type: 'string', minLength: 1, maxLength: 80 },
     messages: { type: 'array', minItems: 1, maxItems: 50, items: messageSchema },
     temperature: { type: 'number', minimum: 0, maximum: 2 },
     maxTokens: { type: 'integer', minimum: 1, maximum: 8192 },
@@ -179,21 +181,25 @@ function assertCapabilities(
   body: { tools?: unknown[]; responseFormat?: ResponseFormat },
 ): Capabilities {
   const capabilities = parseCapabilities(model.capabilities);
-  if (body.tools && body.tools.length > 0 && !capabilities.tools) {
-    throw new AppError(
-      'llm_capability_unsupported',
-      'This model does not support tool calling.',
-      422,
-      { reason: 'tools' },
-    );
-  }
-  if (body.responseFormat && body.responseFormat.type !== 'text' && !capabilities.json) {
-    throw new AppError(
-      'llm_capability_unsupported',
-      'This model does not support JSON output.',
-      422,
-      { reason: 'json' },
-    );
+  // OpenAI-compatible /v1/models discovery does not report capability flags,
+  // so only enforce local capability blocks on manually configured models.
+  if (model.source !== 'discovered') {
+    if (body.tools && body.tools.length > 0 && !capabilities.tools) {
+      throw new AppError(
+        'llm_capability_unsupported',
+        'This model does not support tool calling.',
+        422,
+        { reason: 'tools' },
+      );
+    }
+    if (body.responseFormat && body.responseFormat.type !== 'text' && !capabilities.json) {
+      throw new AppError(
+        'llm_capability_unsupported',
+        'This model does not support JSON output.',
+        422,
+        { reason: 'json' },
+      );
+    }
   }
   return capabilities;
 }
@@ -226,7 +232,77 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
     return true;
   }
 
-  function resolveTarget(purposeName: string, modelKey: string | undefined): Resolved {
+  function resolveForCaller(
+    caller: string,
+    providerId?: string,
+    modelId?: string,
+  ): { provider: ProviderRow; model: ModelRow } | null {
+    const activeProviders = runtime.db
+      .prepare(
+        "select * from llm_provider where status = 'active' order by is_default desc, created_at asc",
+      )
+      .all() as ProviderRow[];
+    const allowed = activeProviders.filter((p) => runtime.isAllowedFor(p, caller));
+    if (allowed.length === 0) return null;
+
+    const pickModel = (provider: ProviderRow, preferredModelId?: string): ModelRow | undefined => {
+      if (preferredModelId) {
+        return runtime.db
+          .prepare(
+            "select * from llm_model where id = ? and provider_id = ? and status = 'active'",
+          )
+          .get(preferredModelId, provider.id) as ModelRow | undefined;
+      }
+      return runtime.db
+        .prepare(
+          `select * from llm_model
+           where provider_id = ? and status = 'active'
+           order by is_default desc, label asc limit 1`,
+        )
+        .get(provider.id) as ModelRow | undefined;
+    };
+
+    if (providerId) {
+      const provider = allowed.find((p) => p.id === providerId);
+      if (!provider) return null;
+      const model = pickModel(provider, modelId);
+      return model ? { provider, model } : null;
+    }
+
+    if (modelId) {
+      for (const provider of allowed) {
+        const model = pickModel(provider, modelId);
+        if (model) return { provider, model };
+      }
+      return null;
+    }
+
+    for (const provider of allowed) {
+      const model = pickModel(provider);
+      if (model) return { provider, model };
+    }
+    return null;
+  }
+
+  function resolveTarget(
+    purposeName: string,
+    modelKey: string | undefined,
+    caller?: string,
+    providerId?: string,
+    modelId?: string,
+  ): Resolved {
+    if ((providerId || modelId) && caller) {
+      const direct = resolveForCaller(caller, providerId, modelId);
+      if (!direct) {
+        throw new AppError(
+          'llm_provider_not_found',
+          'No active allowed provider or model matches the selection.',
+          409,
+        );
+      }
+      return { purpose: purposeName, provider: direct.provider, model: direct.model, fallback: null };
+    }
+
     if (modelKey) {
       const model = runtime.db
         .prepare(
@@ -246,6 +322,17 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
 
     const purpose = runtime.purpose(purposeName);
     if (!purpose || !purpose.model_id) {
+      if (caller) {
+        const fallbackDirect = resolveForCaller(caller);
+        if (fallbackDirect) {
+          return {
+            purpose: purposeName,
+            provider: fallbackDirect.provider,
+            model: fallbackDirect.model,
+            fallback: null,
+          };
+        }
+      }
       throw new AppError('llm_purpose_unmapped', 'No model is assigned to this purpose.', 409);
     }
     const model = runtime.model(purpose.model_id);
@@ -383,6 +470,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
     target: Resolved | null,
     body: { metadata?: { tenantId?: string; requestId?: string } },
     started: number,
+    action: 'llm.complete' | 'llm.embed' = 'llm.complete',
   ): void {
     const code =
       error instanceof AppError
@@ -390,6 +478,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         : error instanceof FieldError
           ? 'validation_failed'
           : 'llm_provider_error';
+    const latencyMs = Date.now() - started;
     runtime.recordUsage({
       providerId: target?.provider.id ?? null,
       modelId: target?.model.id ?? null,
@@ -401,9 +490,24 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
       inputTokens: null,
       outputTokens: null,
       costMicros: 0,
-      latencyMs: Date.now() - started,
+      latencyMs,
       requestId: body.metadata?.requestId ?? null,
     });
+    const detail =
+      error instanceof AppError
+        ? error.message
+        : error instanceof FieldError
+          ? Object.values(error.fields).join('; ')
+          : error instanceof Error
+            ? error.message
+            : 'Unbekannter Fehler';
+    const modelLabel = target?.model.model_key ?? purpose;
+    runtime.recordLog(
+      'error',
+      action,
+      `[${caller}] ${modelLabel} fehlgeschlagen (${code}, ${latencyMs} ms): ${detail}`,
+      target ? { id: target.provider.id, name: target.provider.name } : undefined,
+    );
   }
 
   app.post<{ Body: InternalCompleteRequest }>(
@@ -435,11 +539,21 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
       let target: Resolved | null = null;
 
       try {
-        if (!body.purpose && !body.model) {
+        const bodyWithTarget = body as InternalCompleteRequest & {
+          providerId?: string;
+          modelId?: string;
+        };
+        if (!body.purpose && !body.model && !bodyWithTarget.providerId && !bodyWithTarget.modelId) {
           throw new FieldError({ purpose: 'Send a purpose or a model.' });
         }
         responseFormat(body);
-        target = resolveTarget(purpose, body.model);
+        target = resolveTarget(
+          purpose,
+          body.model,
+          caller,
+          bodyWithTarget.providerId,
+          bodyWithTarget.modelId,
+        );
         if (!runtime.isAllowedFor(target.provider, caller)) {
           throw new AppError(
             'llm_caller_not_allowed',
@@ -454,6 +568,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
           result.model.input_cost_micros_per_mtok,
           result.model.output_cost_micros_per_mtok,
         );
+        const latencyMs = Date.now() - started;
         const id = runtime.recordUsage({
           providerId: result.provider.id,
           modelId: result.model.id,
@@ -465,9 +580,15 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
           costMicros: cost,
-          latencyMs: Date.now() - started,
+          latencyMs,
           requestId: body.metadata?.requestId ?? null,
         });
+        runtime.recordLog(
+          'info',
+          'llm.complete',
+          `[${caller}] ${result.model.model_key} erfolgreich (${latencyMs} ms, ${result.inputTokens ?? 0}/${result.outputTokens ?? 0} Tokens).`,
+          { id: result.provider.id, name: result.provider.name },
+        );
         const response: InternalCompleteResponse = {
           id,
           model: {
@@ -500,7 +621,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         // the error object, and an unmapped UpstreamError carries the raw
         // provider detail. The mapped AppError has a stable code and no body.
         const mapped = error instanceof UpstreamError ? mapUpstream(error) : error;
-        usageError(mapped, caller, purpose, target, body, started);
+        usageError(mapped, caller, purpose, target, body, started, 'llm.complete');
         throw mapped;
       }
     },
@@ -594,6 +715,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
           target.model.input_cost_micros_per_mtok,
           target.model.output_cost_micros_per_mtok,
         );
+        const latencyMs = Date.now() - started;
         const id = runtime.recordUsage({
           providerId: target.provider.id,
           modelId: target.model.id,
@@ -605,9 +727,15 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
           inputTokens: result.inputTokens,
           outputTokens: null,
           costMicros: cost,
-          latencyMs: Date.now() - started,
+          latencyMs,
           requestId: body.metadata?.requestId ?? null,
         });
+        runtime.recordLog(
+          'info',
+          'llm.embed',
+          `[${caller}] ${target.model.model_key} Embeddings erfolgreich (${latencyMs} ms, ${result.inputTokens ?? 0} Tokens).`,
+          { id: target.provider.id, name: target.provider.name },
+        );
         const response: InternalEmbedResponse = {
           id,
           model: {
@@ -627,7 +755,7 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
         // the error object, and an unmapped UpstreamError carries the raw
         // provider detail. The mapped AppError has a stable code and no body.
         const mapped = error instanceof UpstreamError ? mapUpstream(error) : error;
-        usageError(mapped, caller, purpose, target, body, started);
+        usageError(mapped, caller, purpose, target, body, started, 'llm.embed');
         throw mapped;
       }
     },
@@ -651,17 +779,25 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
     };
   }
 
-  app.get(
+  app.get<{ Querystring: { providerId?: string; modelId?: string } }>(
     '/llm/internal/status',
     {
       preHandler: internal,
       schema: {
-        summary: 'Report configured purposes without secrets',
+        summary: 'Report configured purposes and caller availability without secrets',
         tags: ['llm-providers'],
+        querystring: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            providerId: { type: 'string', maxLength: 80 },
+            modelId: { type: 'string', maxLength: 80 },
+          },
+        },
         response: { 200: objectSchema, 401: errorSchema },
       },
     },
-    async () => {
+    async (request) => {
       const purposes = runtime.db
         .prepare('select * from llm_purpose order by purpose')
         .all() as PurposeRow[];
@@ -688,12 +824,31 @@ export function registerInternalRoutes(app: FastifyInstance, runtime: LlmRuntime
           .prepare("select count(*) as count from llm_provider where status = 'active'")
           .get() as { count: number }
       ).count;
-      const response: InternalStatusResponse = {
-        configured: items.some((item) => item.configured),
+      const rawCaller = request.headers['x-internal-caller'];
+      const caller = typeof rawCaller === 'string' ? rawCaller.trim() : '';
+      const direct = caller
+        ? resolveForCaller(caller, request.query.providerId, request.query.modelId)
+        : null;
+      return {
+        configured: items.some((item) => item.configured) || direct !== null,
         providers,
         purposes: items,
+        availableForCaller: direct
+          ? {
+              configured: true,
+              providerId: direct.provider.id,
+              providerName: direct.provider.name,
+              modelId: direct.model.id,
+              modelKey: direct.model.model_key,
+            }
+          : {
+              configured: false,
+              providerId: null,
+              providerName: null,
+              modelId: null,
+              modelKey: null,
+            },
       };
-      return response;
     },
   );
 

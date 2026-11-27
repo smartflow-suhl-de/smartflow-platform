@@ -402,11 +402,10 @@ test('a mapped purpose reaches the provider and records token usage', async (t) 
   assert.equal(usage.tenant_id, 'ten_demo');
 });
 
-test('an unmapped purpose is visible in the usage table', async (t) => {
+test('an unmapped purpose without any provider is visible in the usage table', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
-  const cookie = await ctx.signIn();
-  await seed(ctx, cookie, { withPurpose: false });
+  await ctx.signIn();
 
   const response = await internal(ctx, {
     purpose: 'vision.describe',
@@ -427,6 +426,29 @@ test('an unmapped purpose is visible in the usage table', async (t) => {
   assert.equal(row.status, 'error');
   assert.equal(row.error_code, 'llm_purpose_unmapped');
   assert.equal(row.provider_id, null);
+});
+
+test('an unmapped purpose falls back to the default provider', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  await seed(ctx, cookie, { withPurpose: false });
+
+  stubFetch(t, () =>
+    json({
+      choices: [
+        { message: { role: 'assistant', content: 'Fallback.' }, finish_reason: 'stop' },
+      ],
+      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+    }),
+  );
+
+  const response = await internal(ctx, {
+    purpose: 'vision.describe',
+    messages: [{ role: 'user', content: 'describe' }],
+  });
+  assert.equal(response.statusCode, 200, response.payload);
+  assert.equal((response.json() as { message: { content: string } }).message.content, 'Fallback.');
 });
 
 test('a model without tool support refuses tools instead of faking them', async (t) => {
@@ -592,12 +614,22 @@ test('models are unique per provider and stay while a purpose uses them', async 
   assert.equal(deleteModel.statusCode, 409);
   assert.equal((deleteModel.json() as { error: { code: string } }).error.code, 'llm_model_in_use');
 
+  // A provider can always be deleted, even while a purpose still points at one
+  // of its models: the models go with it and the purpose is cleared.
   const deleteProvider = await ctx.app.inject({
     method: 'DELETE',
     url: `/api/v1/llm/providers/${providerId}`,
     headers: { cookie },
   });
-  assert.equal(deleteProvider.statusCode, 409);
+  assert.equal(deleteProvider.statusCode, 204);
+  const remainingModels = ctx.db
+    .prepare('select count(*) as count from llm_model where provider_id = ?')
+    .get(providerId) as { count: number };
+  assert.equal(remainingModels.count, 0);
+  const clearedPurpose = ctx.db
+    .prepare('select model_id from llm_purpose where purpose = ?')
+    .get('chat.default') as { model_id: string | null } | undefined;
+  assert.equal(clearedPurpose?.model_id ?? null, null);
 });
 
 test('purposes can be created and reassigned', async (t) => {
@@ -1437,4 +1469,33 @@ test('a model id cannot be a dot segment', async (t) => {
       modelKey,
     );
   }
+});
+
+test('GET /api/v1/llm/plugins lists installed plugins with their needsLlm flag', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/llm/plugins',
+    headers: { cookie },
+  });
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    items: Array<{ id: string; label: string; description: string; needsLlm: boolean }>;
+  };
+  assert.ok(Array.isArray(body.items));
+  assert.equal(
+    body.items.some((p) => p.id === 'llm-providers'),
+    false,
+  );
+  const agent = body.items.find((p) => p.id === 'agent');
+  const discovery = body.items.find((p) => p.id === 'automation-discovery');
+  const websites = body.items.find((p) => p.id === 'websites');
+  const tenants = body.items.find((p) => p.id === 'tenants');
+  assert.equal(agent?.needsLlm, true);
+  assert.equal(discovery?.needsLlm, true);
+  assert.equal(websites?.needsLlm, true);
+  assert.equal(tenants?.needsLlm, false);
 });
