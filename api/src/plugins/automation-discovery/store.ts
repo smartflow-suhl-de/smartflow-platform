@@ -34,6 +34,8 @@ export interface SessionRow {
   consent_at: string | null;
   pending_json: string | null;
   suggestions_json: string | null;
+  /** How often the customer asked for the assessment; the model is costly. */
+  complete_attempts: number;
 }
 
 export interface AnswerRow {

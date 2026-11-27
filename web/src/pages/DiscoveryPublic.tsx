@@ -20,7 +20,7 @@ type ClosedKind = 'completed' | 'revoked' | 'expired' | 'invalid';
  * What the customer sees when the model cannot answer: the difference matters
  * to them, a retry helps after a cut-off answer, but not after an invalid one.
  */
-type AiNotice = 'unavailable' | 'truncated' | null;
+type AiNotice = 'unavailable' | 'truncated' | 'limit' | null;
 
 /**
  * The model errors the public page turns into a localised notice, each with a
@@ -29,10 +29,22 @@ type AiNotice = 'unavailable' | 'truncated' | null;
 const AI_NOTICE_CODES: Record<string, Exclude<AiNotice, null>> = {
   discovery_ai_unavailable: 'unavailable',
   discovery_ai_truncated: 'truncated',
+  // Retrying cannot help here, so this notice carries no retry button.
+  discovery_complete_limit_reached: 'limit',
   // Unusable JSON is retried the same way; the customer does not need the
   // difference between "too long" and "not usable".
   discovery_analysis_invalid: 'unavailable',
 };
+
+/** The customer-facing text of a notice; the server text never reaches them. */
+export function aiNoticeText(
+  notice: Exclude<AiNotice, null>,
+  m: { discovery: { aiUnavailable: string; aiTruncated: string; aiLimitReached: string } },
+): string {
+  if (notice === 'truncated') return m.discovery.aiTruncated;
+  if (notice === 'limit') return m.discovery.aiLimitReached;
+  return m.discovery.aiUnavailable;
+}
 
 /** Exported because the web test suite checks the mapping without a DOM. */
 export function aiNoticeFor(err: unknown): AiNotice {
@@ -425,14 +437,16 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
 
       {aiNotice ? (
         <div className="sf-alert sf-alert-info" role="status">
-          <p>{aiNotice === 'truncated' ? m.discovery.aiTruncated : m.discovery.aiUnavailable}</p>
-          <button
-            type="button"
-            className="sf-btn sf-btn-secondary sf-btn-sm"
-            onClick={() => void (state.canComplete ? handleComplete() : handleNext())}
-          >
-            {m.discovery.retry}
-          </button>
+          <p>{aiNoticeText(aiNotice, m)}</p>
+          {aiNotice === 'limit' ? null : (
+            <button
+              type="button"
+              className="sf-btn sf-btn-secondary sf-btn-sm"
+              onClick={() => void (state.canComplete ? handleComplete() : handleNext())}
+            >
+              {m.discovery.retry}
+            </button>
+          )}
         </div>
       ) : null}
 

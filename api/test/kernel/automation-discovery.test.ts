@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { createTestApp, type TestApp } from './helpers.ts';
 import {
+  COMPLETE_ATTEMPT_LIMIT,
   PublicRateLimiter,
   publicRateLimiter,
 } from '../../src/plugins/automation-discovery/server.ts';
@@ -752,6 +753,79 @@ test('an empty reasoning answer becomes truncated, not a schema error', async (t
   assert.equal(error.reason, 'truncated');
   // One retry, then the defined error: not the old schema message.
   assert.equal(analysisCalls, 2);
+});
+
+test('repeated complete calls stop at the attempt limit, and a report still wins', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let analysisCalls = 0;
+  let breakAnalysis = true;
+  stubLlm(ctx, (payload) => {
+    const hit = JSON.stringify(payload).includes('structured automation assessment');
+    if (!hit) return llmReply(payload);
+    analysisCalls += 1;
+    if (breakAnalysis) {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          message: { content: '{"summary":"Das Unternehmen verliert Zeit' },
+          model: { modelKey: 'test-model' },
+          finishReason: 'length',
+        }),
+      };
+    }
+    return llmReply(payload);
+  });
+
+  await runInterview(ctx, invite.token);
+  const complete = () =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/discovery/public/${invite.token}/complete`,
+    });
+
+  // Each failing attempt is two provider calls (first answer plus the doubled
+  // retry) and leaves no report. Without a counter one link could go on
+  // forever.
+  const refused: number[] = [];
+  for (let index = 0; index < 7; index += 1) {
+    const response = await complete();
+    if (response.statusCode === 429) refused.push(index);
+    else assert.equal(response.statusCode, 502);
+  }
+  assert.deepEqual(refused, [5, 6]);
+  const overLimit = await complete();
+  assert.equal(overLimit.statusCode, 429);
+  assert.equal(
+    (overLimit.json() as { error: { code: string } }).error.code,
+    'discovery_complete_limit_reached',
+  );
+  // Five refused attempts, each two provider calls, then no call at all.
+  assert.equal(analysisCalls, 10);
+
+  // A report that already exists is still delivered: the limit must not hide
+  // it, and it must not need another model call.
+  breakAnalysis = false;
+  ctx.db
+    .prepare('update discovery_session set complete_attempts = 0 where invite_id = ?')
+    .run(invite.id);
+  const created = await complete();
+  assert.equal(created.statusCode, 200);
+  const reports = ctx.db.prepare('select count(*) as total from discovery_report').get() as {
+    total: number;
+  };
+  assert.equal(reports.total, 1);
+
+  ctx.db
+    .prepare('update discovery_session set complete_attempts = ? where invite_id = ?')
+    .run(COMPLETE_ATTEMPT_LIMIT, invite.id);
+  const callsBefore = analysisCalls;
+  const again = await complete();
+  assert.equal(again.statusCode, 200);
+  assert.equal(analysisCalls, callsBefore);
 });
 
 test('the short check skips the deep phase unless the operator forces full', async (t) => {

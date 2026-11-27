@@ -64,6 +64,13 @@ const RATE_LIMIT_PER_MINUTE = 240;
 /** Coarse per-IP cap so rotating tokens cannot fill the limiter map. */
 const RATE_LIMIT_IP_PER_MINUTE = 1200;
 const RATE_WINDOW_MS = 60_000;
+/**
+ * How often one invitation may ask for an assessment. Each attempt can cost up
+ * to 12 000 output tokens (4000 plus the doubled truncation retry), and a
+ * failed attempt leaves the link usable, so without a counter one link could
+ * spend without bound.
+ */
+export const COMPLETE_ATTEMPT_LIMIT = 5;
 const RATE_MAX_KEYS = 5_000;
 const RATE_PRUNE_INTERVAL_MS = 30_000;
 /** The one answer key that is not part of a question definition. */
@@ -649,6 +656,17 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 3,
+      up(database) {
+        // Every assessment request costs model tokens, and a failed one leaves
+        // the link open. The counter is per session, so one link cannot spend
+        // without bound.
+        database.exec(
+          'alter table discovery_session add column complete_attempts integer not null default 0',
+        );
+      },
+    },
   ]);
 
   const call: CallInternal = (caller, request) => ctx.callInternal(caller, request);
@@ -993,6 +1011,7 @@ export function register(ctx: PluginContext): void {
       consent_at: null,
       pending_json: null,
       suggestions_json: null,
+      complete_attempts: 0,
     };
     db.prepare(
       `insert into discovery_session
@@ -1876,6 +1895,25 @@ export function register(ctx: PluginContext): void {
           'discovery_not_ready',
           'The confirmation questions are not answered yet.',
           409,
+        );
+      }
+
+      // Count before the model runs: a failed attempt also costs tokens, and
+      // the condition in the update makes the limit race-free.
+      const attempt = db
+        .prepare(
+          'update discovery_session set complete_attempts = complete_attempts + 1 where id = ? and complete_attempts < ?',
+        )
+        .run(session.id, COMPLETE_ATTEMPT_LIMIT);
+      if (attempt.changes === 0) {
+        log.warn(
+          { inviteId: invite.id, sessionId: session.id, limit: COMPLETE_ATTEMPT_LIMIT },
+          'discovery assessment refused: attempt limit reached',
+        );
+        throw new AppError(
+          'discovery_complete_limit_reached',
+          'The assessment was requested too often for this link.',
+          429,
         );
       }
 

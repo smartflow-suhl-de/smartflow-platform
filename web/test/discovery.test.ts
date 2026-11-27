@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { DiscoveryStep } from '../src/lib/types.ts';
 
-const { answersForStep, missingRequired, initialValues, reorderRank, rankMoveLabel, aiNoticeFor } =
-  await import('../src/pages/DiscoveryPublic.tsx');
+const {
+  answersForStep,
+  missingRequired,
+  initialValues,
+  reorderRank,
+  rankMoveLabel,
+  aiNoticeFor,
+  aiNoticeText,
+} = await import('../src/pages/DiscoveryPublic.tsx');
 const { getMessages } = await import('../src/lib/i18n.ts');
 const { discoveryPublic, ApiError, DISCOVERY_TIMEOUT_MS, REQUEST_TIMEOUT_MS } =
   await import('../src/lib/api.ts');
@@ -225,6 +232,10 @@ describe('aiNoticeFor', () => {
     assert.equal(aiNoticeFor(error('discovery_analysis_invalid')), 'unavailable');
   });
 
+  it('reports the attempt limit without a retry, because a retry cannot help', () => {
+    assert.equal(aiNoticeFor(error('discovery_complete_limit_reached', 429)), 'limit');
+  });
+
   it('leaves unrelated errors to the caller', () => {
     assert.equal(aiNoticeFor(new ApiError(409, 'discovery_token_used', 'x')), null);
     assert.equal(aiNoticeFor(new Error('boom')), null);
@@ -235,11 +246,20 @@ describe('aiNoticeFor', () => {
       const messages = getMessages(locale);
       assert.ok(messages.discovery.aiTruncated.length > 20);
       assert.notEqual(messages.discovery.aiTruncated, messages.discovery.aiUnavailable);
+      assert.ok(messages.discovery.aiLimitReached.length > 20);
+      assert.notEqual(messages.discovery.aiLimitReached, messages.discovery.aiTruncated);
     }
     const de = getMessages('de').discovery.aiTruncated;
     const en = getMessages('en').discovery.aiTruncated;
     assert.notEqual(de, en);
     // The customer must not read the English server message in the German UI.
     assert.ok(!de.includes('token budget'));
+  });
+
+  it('renders each notice from the catalogue, never from the server text', () => {
+    const messages = getMessages('de');
+    assert.equal(aiNoticeText('truncated', messages), messages.discovery.aiTruncated);
+    assert.equal(aiNoticeText('unavailable', messages), messages.discovery.aiUnavailable);
+    assert.equal(aiNoticeText('limit', messages), messages.discovery.aiLimitReached);
   });
 });
