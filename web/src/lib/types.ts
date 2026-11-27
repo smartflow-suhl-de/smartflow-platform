@@ -18,6 +18,7 @@ export interface SessionTenant {
 export interface AuthMe {
   user: SessionUser;
   tenant: SessionTenant | null;
+  activeTenant: SessionTenant | null;
 }
 
 /** Public answer to `GET /auth/setup`: is the first account still missing? */
