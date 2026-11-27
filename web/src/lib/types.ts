@@ -398,3 +398,157 @@ export interface LlmModelInput {
   source?: 'manual' | 'discovered';
   status?: LlmModelStatus;
 }
+
+// --- Websites --------------------------------------------------------------
+
+export type WebsiteStatus = 'draft' | 'live' | 'failed';
+export type WebsiteBuildStatus = 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
+export type WebsiteApprovalState = 'open' | 'approved' | 'changes' | 'expired';
+export type WebsitePageOrigin = 'ai' | 'manual' | 'template';
+
+export interface WebsiteClient {
+  id: string;
+  name: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebsiteBuild {
+  id: string;
+  site_id: string;
+  trigger: string;
+  status: WebsiteBuildStatus;
+  duration_ms: number | null;
+  error_file: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface WebsiteBuildSummary {
+  id: string;
+  status: WebsiteBuildStatus;
+  created_at: string;
+  duration_ms: number | null;
+}
+
+export interface WebsiteReleaseSummary {
+  id: string;
+  build_id: string;
+  version: string;
+  published_at: string;
+}
+
+export interface WebsiteOpenApproval {
+  id: string;
+  state: WebsiteApprovalState;
+  expires_at: string;
+  recipient: string | null;
+}
+
+export interface Website {
+  id: string;
+  client_id: string | null;
+  name: string;
+  slug: string;
+  status: WebsiteStatus;
+  astro_version: string;
+  repo: string | null;
+  branch: string | null;
+  deploy_target: string | null;
+  domain: string | null;
+  domain_state: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebsiteListItem extends Website {
+  client_name: string | null;
+  last_build: WebsiteBuildSummary | null;
+}
+
+export interface WebsiteDetail extends Website {
+  client: WebsiteClient | null;
+  pages_count: number;
+  last_build: WebsiteBuildSummary | null;
+  release: WebsiteReleaseSummary | null;
+  open_approval: WebsiteOpenApproval | null;
+  require_approval: boolean;
+}
+
+export interface WebsitePage {
+  id: string;
+  site_id: string;
+  route: string;
+  title: string;
+  origin: WebsitePageOrigin;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebsiteApproval {
+  id: string;
+  site_id: string;
+  build_id: string;
+  recipient: string | null;
+  state: WebsiteApprovalState;
+  comment: string | null;
+  expires_at: string;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export interface WebsiteApprovalLink extends WebsiteApproval {
+  url: string;
+}
+
+export interface WebsiteSummary {
+  total: number;
+  own: number;
+  client: number;
+  live: number;
+  draft: number;
+  failed: number;
+  builds_running: number;
+  approvals_open: number;
+}
+
+export interface WebsiteListResponse {
+  items: WebsiteListItem[];
+  total: number;
+  nextCursor: string | null;
+}
+
+export interface WebsiteSettings {
+  provider: 'anthropic' | 'openai' | 'local';
+  model: string;
+  max_tokens_per_run: number;
+  max_cost_cents_per_run: number;
+  monthly_budget_cents: number;
+  require_approval: boolean;
+  generate_images: boolean;
+  updated_at: string;
+}
+
+export interface WebsiteAiJob {
+  id: string;
+  site_id: string;
+  status: 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
+  provider: string;
+  model: string;
+  brief: { goal: string; tone: string; pages: string[]; sources: string; max_tokens: number };
+  created_at: string;
+}
+
+export interface PublicApproval {
+  site: { name: string; domain: string | null; status: WebsiteStatus };
+  build: { id: string; status: WebsiteBuildStatus; created_at: string } | null;
+  state: WebsiteApprovalState;
+  recipient: string | null;
+  expires_at: string;
+  pages: Array<{ route: string; title: string; origin: WebsitePageOrigin }>;
+  comment: string | null;
+}

@@ -27,6 +27,8 @@ import {
   storedTheme,
   type Mode,
 } from './theme';
+import { WebsiteDetailPage } from './pages/WebsiteDetail';
+import { WebsitesPage } from './pages/Websites';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -260,6 +262,8 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
       .finally(() => setLoggingOut(false));
   }, [locale]);
 
+  // The approval link is opened by the client, who has no account. It is a
+  // public route (public-routes.ts), so it never reaches this session shell.
   if (session.kind === 'loading') {
     return (
       <div className="sf-center-load" role="status">
@@ -352,6 +356,23 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     content = (
       <LlmProviderDetailPage
         providerId={safeDecode(pathname.split('/')[2] ?? '') ?? ''}
+        locale={locale}
+        messages={messages}
+      />
+    );
+  } else if (
+    pathname === '/websites' &&
+    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+  ) {
+    content = <WebsitesPage search={search} locale={locale} messages={messages} />;
+  } else if (
+    pathname.startsWith('/websites/') &&
+    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+  ) {
+    content = (
+      <WebsiteDetailPage
+        siteId={pathname.slice('/websites/'.length)}
+        role={auth.user.role}
         locale={locale}
         messages={messages}
       />

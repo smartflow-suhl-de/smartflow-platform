@@ -1,4 +1,20 @@
 import type {
+  PublicApproval,
+  Website,
+  WebsiteAiJob,
+  WebsiteApproval,
+  WebsiteApprovalLink,
+  WebsiteApprovalState,
+  WebsiteBuild,
+  WebsiteBuildStatus,
+  WebsiteClient,
+  WebsiteDetail,
+  WebsiteListItem,
+  WebsiteListResponse,
+  WebsitePage,
+  WebsiteSettings,
+  WebsiteStatus,
+  WebsiteSummary,
   AuthMe,
   DiscoveryInvite,
   DiscoveryInviteCreated,
@@ -108,6 +124,211 @@ function asString(value: unknown, label: string): string {
     throw new ApiError(500, 'invalid_response', `Expected string for ${label}`);
   }
   return value;
+}
+
+// --- Websites --------------------------------------------------------------
+
+function isWebsiteStatus(value: unknown): value is WebsiteStatus {
+  return value === 'draft' || value === 'live' || value === 'failed';
+}
+
+function isWebsiteBuildStatus(value: unknown): value is WebsiteBuildStatus {
+  return (
+    value === 'queued' ||
+    value === 'running' ||
+    value === 'ok' ||
+    value === 'failed' ||
+    value === 'cancelled'
+  );
+}
+
+function isWebsiteApprovalState(value: unknown): value is WebsiteApprovalState {
+  return value === 'open' || value === 'approved' || value === 'changes' || value === 'expired';
+}
+
+function asWebsiteNullableString(value: unknown, label: string): string | null {
+  if (value === null || value === undefined) return null;
+  return asString(value, label);
+}
+
+function asWebsiteNullableNumber(value: unknown, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  return asNumber(value, label);
+}
+
+function parseWebsite(raw: unknown): Website {
+  if (!isRecord(raw) || !isWebsiteStatus(raw.status)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid website payload');
+  }
+  return {
+    id: asString(raw.id, 'website.id'),
+    client_id: asWebsiteNullableString(raw.client_id, 'website.client_id'),
+    name: asString(raw.name, 'website.name'),
+    slug: asString(raw.slug, 'website.slug'),
+    status: raw.status,
+    astro_version: asString(raw.astro_version, 'website.astro_version'),
+    repo: asWebsiteNullableString(raw.repo, 'website.repo'),
+    branch: asWebsiteNullableString(raw.branch, 'website.branch'),
+    deploy_target: asWebsiteNullableString(raw.deploy_target, 'website.deploy_target'),
+    domain: asWebsiteNullableString(raw.domain, 'website.domain'),
+    domain_state: asString(raw.domain_state, 'website.domain_state'),
+    created_by: asString(raw.created_by, 'website.created_by'),
+    created_at: asString(raw.created_at, 'website.created_at'),
+    updated_at: asString(raw.updated_at, 'website.updated_at'),
+  };
+}
+
+function parseWebsiteBuildSummary(
+  raw: unknown,
+): WebsiteBuild['status'] extends never
+  ? never
+  : { id: string; status: WebsiteBuildStatus; created_at: string; duration_ms: number | null } {
+  if (!isRecord(raw) || !isWebsiteBuildStatus(raw.status)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid website build payload');
+  }
+  return {
+    id: asString(raw.id, 'build.id'),
+    status: raw.status,
+    created_at: asString(raw.created_at, 'build.created_at'),
+    duration_ms: asWebsiteNullableNumber(raw.duration_ms, 'build.duration_ms'),
+  };
+}
+
+function parseWebsiteListItem(raw: unknown): WebsiteListItem {
+  const site = parseWebsite(raw);
+  if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid website payload');
+  return {
+    ...site,
+    client_name: asWebsiteNullableString(raw.client_name, 'website.client_name'),
+    last_build: raw.last_build == null ? null : parseWebsiteBuildSummary(raw.last_build),
+  };
+}
+
+function parseWebsiteDetail(raw: unknown): WebsiteDetail {
+  const site = parseWebsite(raw);
+  if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid website payload');
+  const client = raw.client == null ? null : (raw.client as WebsiteClient);
+  const release = raw.release == null ? null : (raw.release as WebsiteDetail['release']);
+  const approval =
+    raw.open_approval == null ? null : (raw.open_approval as WebsiteDetail['open_approval']);
+  return {
+    ...site,
+    client,
+    pages_count: asNumber(raw.pages_count, 'website.pages_count'),
+    last_build: raw.last_build == null ? null : parseWebsiteBuildSummary(raw.last_build),
+    release,
+    open_approval: approval,
+    require_approval: raw.require_approval !== false,
+  };
+}
+
+function parseWebsitePage(raw: unknown): WebsitePage {
+  if (
+    !isRecord(raw) ||
+    (raw.origin !== 'ai' && raw.origin !== 'manual' && raw.origin !== 'template')
+  ) {
+    throw new ApiError(500, 'invalid_response', 'Invalid website page payload');
+  }
+  return {
+    id: asString(raw.id, 'page.id'),
+    site_id: asString(raw.site_id, 'page.site_id'),
+    route: asString(raw.route, 'page.route'),
+    title: asString(raw.title, 'page.title'),
+    origin: raw.origin,
+    created_at: asString(raw.created_at, 'page.created_at'),
+    updated_at: asString(raw.updated_at, 'page.updated_at'),
+  };
+}
+
+function parseWebsiteBuild(raw: unknown): WebsiteBuild {
+  if (!isRecord(raw) || !isWebsiteBuildStatus(raw.status)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid website build payload');
+  }
+  return {
+    id: asString(raw.id, 'build.id'),
+    site_id: asString(raw.site_id, 'build.site_id'),
+    trigger: asString(raw.trigger, 'build.trigger'),
+    status: raw.status,
+    duration_ms: asWebsiteNullableNumber(raw.duration_ms, 'build.duration_ms'),
+    error_file: asWebsiteNullableString(raw.error_file, 'build.error_file'),
+    created_at: asString(raw.created_at, 'build.created_at'),
+    started_at: asWebsiteNullableString(raw.started_at, 'build.started_at'),
+    finished_at: asWebsiteNullableString(raw.finished_at, 'build.finished_at'),
+  };
+}
+
+function parseWebsiteApproval(raw: unknown): WebsiteApproval {
+  if (!isRecord(raw) || !isWebsiteApprovalState(raw.state)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid approval payload');
+  }
+  return {
+    id: asString(raw.id, 'approval.id'),
+    site_id: asString(raw.site_id, 'approval.site_id'),
+    build_id: asString(raw.build_id, 'approval.build_id'),
+    recipient: asWebsiteNullableString(raw.recipient, 'approval.recipient'),
+    state: raw.state,
+    comment: asWebsiteNullableString(raw.comment, 'approval.comment'),
+    expires_at: asString(raw.expires_at, 'approval.expires_at'),
+    decided_at: asWebsiteNullableString(raw.decided_at, 'approval.decided_at'),
+    created_at: asString(raw.created_at, 'approval.created_at'),
+  };
+}
+
+function parseWebsiteApprovalLink(raw: unknown): WebsiteApprovalLink {
+  const approval = parseWebsiteApproval(raw);
+  if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid approval payload');
+  return { ...approval, url: asString(raw.url, 'approval.url') };
+}
+
+function parseWebsiteSummary(raw: unknown): WebsiteSummary {
+  if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid website summary');
+  return {
+    total: asNumber(raw.total, 'summary.total'),
+    own: asNumber(raw.own, 'summary.own'),
+    client: asNumber(raw.client, 'summary.client'),
+    live: asNumber(raw.live, 'summary.live'),
+    draft: asNumber(raw.draft, 'summary.draft'),
+    failed: asNumber(raw.failed, 'summary.failed'),
+    builds_running: asNumber(raw.builds_running, 'summary.builds_running'),
+    approvals_open: asNumber(raw.approvals_open, 'summary.approvals_open'),
+  };
+}
+
+function parseWebsiteList(raw: unknown): WebsiteListResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.items)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid website list');
+  }
+  return {
+    items: raw.items.map(parseWebsiteListItem),
+    total: asNumber(raw.total, 'websites.total'),
+    nextCursor: raw.nextCursor === null ? null : asString(raw.nextCursor, 'websites.nextCursor'),
+  };
+}
+
+function parsePublicApproval(raw: unknown): PublicApproval {
+  if (!isRecord(raw) || !isWebsiteApprovalState(raw.state) || !isRecord(raw.site)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid public approval payload');
+  }
+  const build = raw.build == null ? null : (raw.build as PublicApproval['build']);
+  return {
+    site: {
+      name: asString(raw.site.name, 'public.site.name'),
+      domain: asWebsiteNullableString(raw.site.domain, 'public.site.domain'),
+      status: isWebsiteStatus(raw.site.status) ? raw.site.status : 'draft',
+    },
+    build,
+    state: raw.state,
+    recipient: asWebsiteNullableString(raw.recipient, 'public.recipient'),
+    expires_at: asString(raw.expires_at, 'public.expires_at'),
+    pages: Array.isArray(raw.pages)
+      ? raw.pages.filter(isRecord).map((page) => ({
+          route: asString(page.route, 'public.page.route'),
+          title: asString(page.title, 'public.page.title'),
+          origin: page.origin === 'manual' || page.origin === 'template' ? page.origin : 'ai',
+        }))
+      : [],
+    comment: asWebsiteNullableString(raw.comment, 'public.comment'),
+  };
 }
 
 function asNumber(value: unknown, label: string): number {
@@ -258,7 +479,7 @@ function extractApiError(status: number, payload: unknown): ApiError {
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   notifyUnauthorized?: boolean;
   signal?: AbortSignal;
@@ -879,6 +1100,197 @@ export const api = {
 
   async llmUsageSummary(days = 30, signal?: AbortSignal): Promise<LlmUsageSummary> {
     return parseLlmUsageSummary(await requestJson(`/llm/usage/summary?days=${days}`, { signal }));
+  },
+
+  async listWebsites(
+    params: {
+      status?: WebsiteStatus;
+      owner?: 'own' | 'client';
+      q?: string;
+      limit?: number;
+      cursor?: string | null;
+    },
+    signal?: AbortSignal,
+  ): Promise<WebsiteListResponse> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.owner) query.set('owner', params.owner);
+    if (params.q && params.q.trim().length > 0) query.set('q', params.q.trim());
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const suffix = query.toString();
+    return parseWebsiteList(
+      await requestJson(suffix.length > 0 ? `/websites?${suffix}` : '/websites', { signal }),
+    );
+  },
+
+  async websiteSummary(signal?: AbortSignal): Promise<WebsiteSummary> {
+    return parseWebsiteSummary(await requestJson('/websites/summary', { signal }));
+  },
+
+  async getWebsite(id: string, signal?: AbortSignal): Promise<WebsiteDetail> {
+    return parseWebsiteDetail(await requestJson(`/websites/${encodeURIComponent(id)}`, { signal }));
+  },
+
+  async createWebsite(input: {
+    name: string;
+    client_id?: string | null;
+    domain?: string;
+    repo?: string;
+    deploy_target?: string;
+  }): Promise<WebsiteDetail> {
+    return parseWebsiteDetail(await requestJson('/websites', { method: 'POST', body: input }));
+  },
+
+  async deleteWebsite(id: string): Promise<void> {
+    await requestJson(`/websites/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  async websitePages(id: string, signal?: AbortSignal): Promise<WebsitePage[]> {
+    const raw = await requestJson(`/websites/${encodeURIComponent(id)}/pages`, { signal });
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid page list');
+    }
+    return raw.items.map(parseWebsitePage);
+  },
+
+  async websiteBuilds(id: string, signal?: AbortSignal): Promise<WebsiteBuild[]> {
+    const raw = await requestJson(`/websites/${encodeURIComponent(id)}/builds`, { signal });
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid build list');
+    }
+    return raw.items.map(parseWebsiteBuild);
+  },
+
+  async queueWebsiteBuild(id: string): Promise<WebsiteBuild> {
+    return parseWebsiteBuild(
+      await requestJson(`/websites/${encodeURIComponent(id)}/builds`, {
+        method: 'POST',
+        body: {},
+      }),
+    );
+  },
+
+  async websiteApprovals(id: string, signal?: AbortSignal): Promise<WebsiteApproval[]> {
+    const raw = await requestJson(`/websites/${encodeURIComponent(id)}/approvals`, { signal });
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid approval list');
+    }
+    return raw.items.map(parseWebsiteApproval);
+  },
+
+  async createWebsiteApproval(
+    id: string,
+    input: { build_id: string; recipient?: string; expires_in_days?: number },
+  ): Promise<WebsiteApprovalLink> {
+    return parseWebsiteApprovalLink(
+      await requestJson(`/websites/${encodeURIComponent(id)}/approvals`, {
+        method: 'POST',
+        body: input,
+      }),
+    );
+  },
+
+  async publishWebsite(id: string, buildId: string): Promise<{ version: string }> {
+    const raw = await requestJson(`/websites/${encodeURIComponent(id)}/releases`, {
+      method: 'POST',
+      body: { build_id: buildId },
+    });
+    if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid release payload');
+    return { version: asString(raw.version, 'release.version') };
+  },
+
+  async createWebsiteJob(
+    id: string,
+    input: { goal: string; tone?: string; pages?: string[]; max_tokens?: number },
+  ): Promise<WebsiteAiJob> {
+    const raw = await requestJson(`/websites/${encodeURIComponent(id)}/jobs`, {
+      method: 'POST',
+      body: input,
+    });
+    if (!isRecord(raw) || !isRecord(raw.brief)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid AI job payload');
+    }
+    const brief = raw.brief;
+    return {
+      id: asString(raw.id, 'job.id'),
+      site_id: asString(raw.site_id, 'job.site_id'),
+      status: 'queued',
+      provider: asString(raw.provider, 'job.provider'),
+      model: asString(raw.model, 'job.model'),
+      brief: {
+        goal: asString(brief.goal, 'job.goal'),
+        tone: asString(brief.tone, 'job.tone'),
+        pages: asStringArray(brief.pages),
+        sources: asString(brief.sources, 'job.sources'),
+        max_tokens: asNumber(brief.max_tokens, 'job.max_tokens'),
+      },
+      created_at: asString(raw.created_at, 'job.created_at'),
+    };
+  },
+
+  async websiteClients(q?: string, signal?: AbortSignal): Promise<WebsiteClient[]> {
+    const suffix = q && q.trim().length > 0 ? `?q=${encodeURIComponent(q.trim())}` : '';
+    const raw = await requestJson(`/websites/clients${suffix}`, { signal });
+    if (!isRecord(raw) || !Array.isArray(raw.items)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid client list');
+    }
+    return raw.items as WebsiteClient[];
+  },
+
+  async createWebsiteClient(input: {
+    name: string;
+    contact_name?: string;
+    contact_email?: string;
+  }): Promise<WebsiteClient> {
+    const raw = await requestJson('/websites/clients', { method: 'POST', body: input });
+    if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid client payload');
+    return raw as unknown as WebsiteClient;
+  },
+
+  async websiteSettings(signal?: AbortSignal): Promise<WebsiteSettings> {
+    const raw = await requestJson('/websites/settings', { signal });
+    if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid settings');
+    return raw as unknown as WebsiteSettings;
+  },
+
+  async updateWebsiteSettings(input: Partial<WebsiteSettings>): Promise<WebsiteSettings> {
+    const raw = await requestJson('/websites/settings', { method: 'PUT', body: input });
+    if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid settings');
+    return raw as unknown as WebsiteSettings;
+  },
+
+  async publicApproval(
+    tenantId: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<PublicApproval> {
+    return parsePublicApproval(
+      await requestJson(
+        `/public/websites/${encodeURIComponent(tenantId)}/approvals/${encodeURIComponent(token)}`,
+        { signal, notifyUnauthorized: false },
+      ),
+    );
+  },
+
+  async decidePublicApproval(
+    tenantId: string,
+    token: string,
+    decision: 'approve' | 'changes',
+    comment?: string,
+  ): Promise<{ state: WebsiteApprovalState }> {
+    const raw = await requestJson(
+      `/public/websites/${encodeURIComponent(tenantId)}/approvals/${encodeURIComponent(token)}/decision`,
+      {
+        method: 'POST',
+        body: { decision, ...(comment ? { comment } : {}) },
+        notifyUnauthorized: false,
+      },
+    );
+    if (!isRecord(raw) || !isWebsiteApprovalState(raw.state)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid decision payload');
+    }
+    return { state: raw.state };
   },
 };
 

@@ -189,6 +189,16 @@ export function CircleHelpIcon(props: IconProps) {
   );
 }
 
+export function GlobeIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
+    </Svg>
+  );
+}
+
 export function navIconByName(name: string, size = 15) {
   switch (name) {
     case 'gauge':
@@ -206,6 +216,8 @@ export function navIconByName(name: string, size = 15) {
       return <CircleHelpIcon size={size} />;
     case 'compass':
       return <CompassIcon size={size} />;
+    case 'globe':
+      return <GlobeIcon size={size} />;
     default:
       return <PuzzleIcon size={size} />;
   }
