@@ -290,12 +290,16 @@ function truncatedError(): AiUnavailable {
  * Calls the model and decides what an answer means.
  *
  * `finish_reason` decides, not the content alone:
- * - a cut-off answer (any of `length`, `max_tokens`, `content_filter`) that is
- *   not usable JSON is retried once with a doubled budget;
+ * - a cut-off answer (`length`, `max_tokens`) that is not usable JSON is
+ *   retried once with a doubled budget;
  * - still cut off and unusable afterwards is `truncated`, with its own log
  *   line and error code instead of the generic schema message;
  * - a cut-off answer that is nevertheless complete JSON is accepted, because
  *   re-asking cannot improve it;
+ * - a `content_filter` refusal is `filtered`, on the first answer and on the
+ *   retry alike, and is never retried any further: same prompt, same policy,
+ *   same refusal. It is checked before any JSON is accepted, so content the
+ *   provider filtered cannot slip through as a result;
  * - an empty answer that really stopped is `invalid_output`.
  *
  * The whole call, retry included, is bounded by `withDeadline`, so the
@@ -313,12 +317,16 @@ async function complete(
       () => new AiUnavailable('timeout', 'The AI service did not answer in time.'),
     );
 
+  /** The budget the answer currently in `answer` was produced with. */
+  let maxTokens = request.maxTokens;
   let answer = await run(request);
 
   if (isFiltered(answer.finishReason)) {
     log?.warn(
       {
         purpose: request.purpose,
+        attempt: 'first',
+        maxTokens,
         outputChars: answer.content.length,
         finishReason: answer.finishReason,
       },
@@ -337,7 +345,7 @@ async function complete(
       log?.warn(
         {
           purpose: request.purpose,
-          maxTokens: request.maxTokens,
+          maxTokens,
           outputChars: answer.content.length,
           finishReason: answer.finishReason,
           remainingMs,
@@ -349,7 +357,7 @@ async function complete(
     log?.warn(
       {
         purpose: request.purpose,
-        maxTokens: request.maxTokens,
+        maxTokens,
         retryMaxTokens,
         outputChars: answer.content.length,
         finishReason: answer.finishReason,
@@ -357,11 +365,29 @@ async function complete(
       },
       'discovery ai answer hit the token budget; retrying with a larger one',
     );
+    maxTokens = retryMaxTokens;
     answer = await run({
       ...request,
       maxTokens: retryMaxTokens,
       timeoutMs: Math.min(request.timeoutMs, remainingMs),
     });
+  }
+
+  // The retry is a separate answer and needs the same refusal check as the
+  // first one: a filter refusal is not a schema problem, must not be reported
+  // as one and must not be billed as a failed attempt.
+  if (isFiltered(answer.finishReason)) {
+    log?.warn(
+      {
+        purpose: request.purpose,
+        attempt: 'retry',
+        maxTokens,
+        outputChars: answer.content.length,
+        finishReason: answer.finishReason,
+      },
+      'discovery retry was refused by the content filter; giving up',
+    );
+    throw filteredError();
   }
 
   const parsed = extractJson(answer.content);
@@ -370,7 +396,7 @@ async function complete(
       log?.warn(
         {
           purpose: request.purpose,
-          maxTokens: request.maxTokens,
+          maxTokens,
           outputChars: answer.content.length,
           finishReason: answer.finishReason,
         },
@@ -383,6 +409,7 @@ async function complete(
     log?.warn(
       {
         purpose: request.purpose,
+        maxTokens,
         outputChars: answer.content.length,
         finishReason: answer.finishReason,
       },

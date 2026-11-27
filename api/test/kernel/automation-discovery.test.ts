@@ -788,6 +788,48 @@ test('a filtered answer reaches the customer with its own code, not a budget mes
   assert.equal(error.reason, 'filtered');
 });
 
+test('a filter refusal on the retry is filtered, not a schema error', async () => {
+  // First answer is cut off with unusable JSON, so the retry runs; the retry
+  // then comes back filtered. That is a refusal, not a broken schema.
+  let calls = 0;
+  const call = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          message: { content: '{"summary":"Das Unternehmen verliert Zeit bei Ange' },
+          model: { modelKey: 'test-model' },
+          finishReason: 'length',
+        }),
+      };
+    }
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'content_filter',
+      }),
+    };
+  };
+  const warnings: string[] = [];
+  await assert.rejects(
+    () =>
+      analyse(call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        selectedClusters: ['A'],
+        answers: [],
+        log: { warn: (_obj, message) => warnings.push(message) },
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'filtered',
+  );
+  // Two paid calls: the truncation retry, then the filter stops it for good.
+  assert.equal(calls, 2);
+  assert.ok(warnings.some((line) => /retry was refused by the content filter/.test(line)));
+});
+
 test('isFiltered recognises the filter and isTruncated no longer claims it', () => {
   assert.equal(isFiltered('content_filter'), true);
   assert.equal(isFiltered('CONTENT_FILTER'), true);
