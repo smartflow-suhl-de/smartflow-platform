@@ -69,7 +69,11 @@ export function registerNavRoutes(
       },
     },
     async (request): Promise<NavResponse> => {
-      return navFor(options.plugins, request.user?.role ?? 'employee');
+      return navFor(
+        options.plugins,
+        request.user?.role ?? 'employee',
+        request.user?.activeTenantId != null,
+      );
     },
   );
 }

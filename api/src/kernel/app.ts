@@ -126,6 +126,8 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   });
   const auth = new AuthService(db, config, now, (name, payload) => eventBus.emit(name, payload));
   auth.pruneSessions();
+  // Looked up lazily: the tenant directory is provided by a plugin that registers later.
+  auth.useTenantGate((tenantId) => tenantDirectory?.resolve(tenantId)?.status === 'active');
 
   await app.register(cookie);
   await app.register(swagger, {
@@ -375,6 +377,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   // means the next `tenantDb` call re-checks the status, so a suspended tenant
   // cannot keep reading through an older handle.
   eventBus.on('tenant.suspended', ({ tenantId }) => {
+    auth.clearTenantContext(tenantId);
     const cached = tenantCache.get(tenantId);
     if (!cached) return;
     tenantCache.delete(tenantId);
@@ -600,9 +603,16 @@ function pathOf(url: string | undefined): string {
 }
 
 /** Nav entries from manifests, filtered for the role, in display order. */
-export function navFor(plugins: PluginManifest[], role: Role): NavResponse {
+export function navFor(
+  plugins: PluginManifest[],
+  role: Role,
+  hasActiveTenant = false,
+): NavResponse {
   const items: NavEntry[] = plugins
     .filter((manifest) => manifest.nav)
+    // An operator has no tenant of their own: a tenant-scoped plugin is offered
+    // only while a tenant is chosen, so its page never opens onto a 403.
+    .filter((manifest) => role !== 'operator' || manifest.scope !== 'tenant' || hasActiveTenant)
     .map((manifest) => {
       const nav = manifest.nav as NonNullable<PluginManifest['nav']>;
       return {
@@ -627,9 +637,13 @@ export function authMeFor(
   user: SessionUser,
   resolveTenant: (tenantId: string) => { id: string; name: string; slug: string } | null,
 ): AuthMe {
-  const tenant = user.tenantId ? resolveTenant(user.tenantId) : null;
+  const ref = (tenantId: string | null) => {
+    const tenant = tenantId ? resolveTenant(tenantId) : null;
+    return tenant ? { id: tenant.id, name: tenant.name, slug: tenant.slug } : null;
+  };
   return {
     user: { id: user.id, email: user.email, name: user.name, role: user.role },
-    tenant: tenant ? { id: tenant.id, name: tenant.name, slug: tenant.slug } : null,
+    tenant: ref(user.tenantId),
+    activeTenant: ref(user.activeTenantId),
   };
 }

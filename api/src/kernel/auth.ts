@@ -7,7 +7,9 @@ import { newId, token } from './ids.ts';
 import { hashPassword, verifyAgainstDummy, verifyPassword } from './password.ts';
 
 /** The auth service reports sign-ins, sign-outs and the first-run setup; the kernel owns the log. */
-export type AuthEvents = <K extends 'auth.setup_completed' | 'auth.signed_in' | 'auth.signed_out'>(
+export type AuthEvents = <
+  K extends 'auth.setup_completed' | 'auth.signed_in' | 'auth.signed_out' | 'auth.tenant_switched',
+>(
   name: K,
   payload: PlatformEvents[K],
 ) => void;
@@ -37,7 +39,14 @@ export interface SessionUser {
   email: string;
   name: string;
   role: Role;
+  /** Fixed binding of the account; `null` for an operator. */
   tenantId: string | null;
+  /**
+   * The tenant this request may work in. `tenant_admin`/`employee`: always
+   * `tenantId`. `operator`: the tenant chosen for this session, re-checked on
+   * every request, else `null`. Tenant-bound code reads this, never `tenantId`.
+   */
+  activeTenantId: string | null;
 }
 
 interface UserRow {
@@ -65,9 +74,22 @@ export interface SetupInput {
   password: string;
 }
 
-function toUser(row: UserRow): SessionUser {
-  return { id: row.id, email: row.email, name: row.name, role: row.role, tenantId: row.tenant_id };
+function toUser(row: UserRow, activeTenantId: string | null = null): SessionUser {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    tenantId: row.tenant_id,
+    activeTenantId: row.role === 'operator' ? activeTenantId : row.tenant_id,
+  };
 }
+
+/** Upper bound for remembered operator contexts; the oldest entry goes first. */
+const MAX_CONTEXTS = 10_000;
+
+/** Answers whether a tenant exists and may be worked in right now. */
+export type TenantGate = (tenantId: string) => boolean;
 
 /** A duplicate key on `users.email` is the only constraint a setup can hit. */
 function isEmailTaken(error: unknown): boolean {
@@ -84,6 +106,13 @@ export class AuthService {
   readonly #config: Config;
   readonly #now: () => Date;
   readonly #emit: AuthEvents;
+  /**
+   * Operator context per session id, in memory on purpose: a restart keeps the
+   * session but forgets the tenant, so nobody wakes up in the last tenant.
+   * Map order is insertion order, which makes the oldest entry the first key.
+   */
+  readonly #context = new Map<string, string>();
+  #tenantGate: TenantGate = () => false;
 
   constructor(
     db: Db,
@@ -95,6 +124,67 @@ export class AuthService {
     this.#config = config;
     this.#now = now;
     this.#emit = emit;
+  }
+
+  /** Installed once the tenant plugin has registered; until then no tenant is usable. */
+  useTenantGate(gate: TenantGate): void {
+    this.#tenantGate = gate;
+  }
+
+  /**
+   * Sets or clears the operator's active tenant for the session behind `plain`.
+   * The caller has already checked the role and the tenant; nothing changes if
+   * the session is unknown.
+   */
+  setActiveTenant(plain: string | undefined, tenantId: string | null): boolean {
+    if (!plain) return false;
+    const session = this.#db
+      .prepare('select id from sessions where token_hash = ?')
+      .get(hashToken(plain)) as { id: string } | undefined;
+    if (!session) return false;
+    if (tenantId === null) {
+      this.#context.delete(session.id);
+      return true;
+    }
+    this.#context.delete(session.id); // re-insert so this entry becomes the newest
+    if (this.#context.size >= MAX_CONTEXTS) this.#makeRoom();
+    this.#context.set(session.id, tenantId);
+    return true;
+  }
+
+  /** Audit entry for a switch; IDs only. */
+  recordTenantSwitch(change: {
+    userId: string;
+    fromTenantId: string | null;
+    toTenantId: string | null;
+  }): void {
+    this.#emit('auth.tenant_switched', change);
+  }
+
+  /** Drops every context pointing at a tenant, e.g. after it was suspended. */
+  clearTenantContext(tenantId: string): void {
+    for (const [sessionId, chosen] of this.#context) {
+      if (chosen === tenantId) this.#context.delete(sessionId);
+    }
+  }
+
+  #makeRoom(): void {
+    const alive = new Set(
+      (this.#db.prepare('select id from sessions').all() as { id: string }[]).map((row) => row.id),
+    );
+    for (const sessionId of this.#context.keys()) {
+      if (!alive.has(sessionId)) this.#context.delete(sessionId);
+    }
+    while (this.#context.size >= MAX_CONTEXTS) {
+      const oldest = this.#context.keys().next().value;
+      if (oldest === undefined) break;
+      this.#context.delete(oldest);
+    }
+  }
+
+  /** Test and diagnostics only: how many contexts are held. */
+  contextCount(): number {
+    return this.#context.size;
   }
 
   /**
@@ -165,7 +255,14 @@ export class AuthService {
         if (isEmailTaken(error)) throw new AuthError('email_taken');
         throw error;
       }
-      return { id: row.id, email: input.email, name: input.name, role: 'operator', tenantId: null };
+      return {
+        id: row.id,
+        email: input.email,
+        name: input.name,
+        role: 'operator',
+        tenantId: null,
+        activeTenantId: null,
+      };
     }
 
     const user: SessionUser = {
@@ -174,6 +271,7 @@ export class AuthService {
       name: input.name,
       role: 'operator',
       tenantId: null,
+      activeTenantId: null,
     };
     try {
       this.#db
@@ -250,6 +348,7 @@ export class AuthService {
     if (!session) return null;
     if (new Date(session.expires_at).getTime() <= this.#now().getTime()) {
       this.#db.prepare('delete from sessions where id = ?').run(session.id);
+      this.#context.delete(session.id);
       return null;
     }
     const user = this.#db
@@ -259,21 +358,36 @@ export class AuthService {
     this.#db
       .prepare('update sessions set last_seen_at = ? where id = ?')
       .run(this.#now().toISOString(), session.id);
-    return toUser(user);
+    // Fresh check on every request: a tenant that was suspended or removed
+    // since the choice drops out here instead of living on in the cache.
+    let active: string | null = null;
+    if (user.role === 'operator') {
+      const chosen = this.#context.get(session.id) ?? null;
+      if (chosen !== null && this.#tenantGate(chosen)) active = chosen;
+      else if (chosen !== null) this.#context.delete(session.id);
+    }
+    return toUser(user, active);
   }
 
   destroySession(plain: string | undefined): void {
     if (!plain) return;
     const hash = hashToken(plain);
     const session = this.#db
-      .prepare('select user_id from sessions where token_hash = ?')
-      .get(hash) as { user_id: string } | undefined;
+      .prepare('select id, user_id from sessions where token_hash = ?')
+      .get(hash) as { id: string; user_id: string } | undefined;
     if (!session) return;
     this.#db.prepare('delete from sessions where token_hash = ?').run(hash);
+    this.#context.delete(session.id);
     this.#emit('auth.signed_out', { userId: session.user_id });
   }
 
   pruneSessions(): void {
     this.#db.prepare('delete from sessions where expires_at <= ?').run(this.#now().toISOString());
+    const alive = new Set(
+      (this.#db.prepare('select id from sessions').all() as { id: string }[]).map((row) => row.id),
+    );
+    for (const sessionId of this.#context.keys()) {
+      if (!alive.has(sessionId)) this.#context.delete(sessionId);
+    }
   }
 }

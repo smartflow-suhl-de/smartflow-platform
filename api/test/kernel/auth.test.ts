@@ -56,6 +56,7 @@ test('a fresh installation asks for setup, and setup creates the operator', asyn
   assert.deepEqual(me.json(), {
     user: { id: body.user.id, email: TEST_EMAIL, name: TEST_NAME, role: 'operator' },
     tenant: null,
+    activeTenant: null,
   });
 
   const after = await ctx.app.inject({ method: 'GET', url: '/api/v1/auth/setup' });

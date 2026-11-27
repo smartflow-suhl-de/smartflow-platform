@@ -183,7 +183,14 @@ export interface PluginStateEntry {
 
 export interface AuthMe {
   user: { id: string; email: string; name: string; role: Role };
+  /** Fixed binding of the account. An operator has none (`null`). */
   tenant: { id: string; name: string; slug: string } | null;
+  /**
+   * The tenant this session works in. Equals `tenant` for `tenant_admin` and
+   * `employee`; for an `operator` it is the tenant chosen with
+   * `POST /api/v1/auth/tenant`, or `null` while none is chosen.
+   */
+  activeTenant: { id: string; name: string; slug: string } | null;
 }
 
 export interface HealthResponse {
