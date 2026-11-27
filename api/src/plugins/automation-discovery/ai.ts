@@ -18,7 +18,45 @@ export const ANALYSIS_PURPOSE = 'discovery.analysis';
 export type CallInternal = (caller: string, request: InternalRequest) => Promise<InternalResponse>;
 
 export type AiFailureReason =
-  'not_configured' | 'unavailable' | 'timeout' | 'invalid_output' | 'caller_not_allowed';
+  | 'not_configured'
+  | 'unavailable'
+  | 'timeout'
+  | 'invalid_output'
+  | 'truncated'
+  | 'caller_not_allowed';
+
+/** A logger shape the plugin context satisfies. */
+export interface AiLogger {
+  warn(obj: Record<string, unknown>, message: string): void;
+}
+
+/**
+ * Token budgets per call. Reasoning models spend `max_tokens` on their own
+ * reasoning, so a budget that only fits the JSON gets cut off mid-object and
+ * used to surface as a schema error.
+ */
+export const HINT_MAX_TOKENS = 900;
+export const CLUSTER_MAX_TOKENS = 900;
+export const ANALYSIS_MAX_TOKENS = 4000;
+/** The provider route accepts at most 8192; the retry stays under it. */
+const MAX_TOKENS_CAP = 8192;
+/**
+ * Wall-clock budget per provider attempt.
+ *
+ * The provider repeats a timing-out call once on its own, so one attempt can
+ * take twice this long. Both numbers stay below the browser's 45 s budget for
+ * the public discovery routes, also with the internal repeat.
+ */
+export const HINT_TIMEOUT_MS = 20_000;
+export const ANALYSIS_TIMEOUT_MS = 20_000;
+/**
+ * Deadline for one `complete()` call including the truncation retry. The
+ * browser gives up at 45 s, so the server must answer before that: the retry
+ * only starts while enough of this budget is left.
+ */
+export const AI_CALL_BUDGET_MS = 42_000;
+/** Below this a retry cannot finish usefully, so it is skipped. */
+const MIN_RETRY_MS = 5_000;
 
 export class AiUnavailable extends Error {
   readonly reason: AiFailureReason;
@@ -97,28 +135,38 @@ export function extractJson(content: string): unknown {
   }
 }
 
-async function complete(
-  call: CallInternal,
-  purpose: string,
-  system: string,
-  user: string,
-  maxTokens: number,
-): Promise<unknown> {
+interface CompleteRequest {
+  call: CallInternal;
+  purpose: string;
+  system: string;
+  user: string;
+  maxTokens: number;
+  timeoutMs: number;
+}
+
+interface CompleteAnswer {
+  content: string;
+  finishReason: string;
+  model: string;
+}
+
+/** One provider round trip; returns the raw content, finish reason and model. */
+async function completeOnce(request: CompleteRequest): Promise<CompleteAnswer> {
   let response: InternalResponse;
   try {
-    response = await call('automation-discovery', {
+    response = await request.call('automation-discovery', {
       method: 'POST',
       url: '/api/v1/llm/internal/complete',
       payload: {
-        purpose,
+        purpose: request.purpose,
         messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user.slice(0, 24_000) },
+          { role: 'system', content: request.system },
+          { role: 'user', content: request.user.slice(0, 24_000) },
         ],
         temperature: 0.2,
-        maxTokens,
+        maxTokens: request.maxTokens,
         responseFormat: { type: 'json_object' },
-        timeoutMs: 10_000,
+        timeoutMs: request.timeoutMs,
         metadata: { requestId: `discovery-${Date.now()}` },
       },
     });
@@ -157,11 +205,81 @@ async function complete(
   if (content.trim().length === 0) {
     throw new AiUnavailable('invalid_output', 'The AI response was empty.');
   }
-  const parsed = extractJson(content);
+  const finishReason = typeof record?.finishReason === 'string' ? record.finishReason : 'stop';
+  const modelRecord = asRecord(record?.model);
+  const model = typeof modelRecord?.modelKey === 'string' ? modelRecord.modelKey : 'unknown';
+  return { content, finishReason, model };
+}
+
+/**
+ * Calls the model and parses its JSON.
+ *
+ * `finishReason: 'length'` means the answer was cut off at the token budget;
+ * the content then usually misses its closing braces. That is not a schema
+ * problem the customer caused, so it gets one retry with a doubled budget and,
+ * if it is cut off again, its own reason and log line instead of the generic
+ * "did not match the schema" message.
+ */
+async function complete(
+  request: CompleteRequest,
+  log?: AiLogger,
+): Promise<{ parsed: unknown; model: string }> {
+  const deadline = Date.now() + AI_CALL_BUDGET_MS;
+  const first = await completeOnce(request);
+  let answer = first;
+
+  if (first.finishReason === 'length') {
+    const retryMaxTokens = Math.min(request.maxTokens * 2, MAX_TOKENS_CAP);
+    const remaining = deadline - Date.now();
+    log?.warn(
+      {
+        purpose: request.purpose,
+        maxTokens: request.maxTokens,
+        retryMaxTokens,
+        outputChars: first.content.length,
+        finishReason: first.finishReason,
+        remainingMs: remaining,
+      },
+      'discovery ai answer hit the token budget; retrying with a larger one',
+    );
+    if (remaining < MIN_RETRY_MS) {
+      // The answer is cut off, but a retry would outlive the client's budget.
+      log?.warn(
+        { purpose: request.purpose, remainingMs: remaining },
+        'discovery ai retry skipped: no time left in the call budget',
+      );
+      throw new AiUnavailable(
+        'truncated',
+        'The AI answer was cut off by the token budget. Please try again.',
+      );
+    }
+    answer = await completeOnce({
+      ...request,
+      maxTokens: retryMaxTokens,
+      timeoutMs: Math.min(request.timeoutMs, remaining),
+    });
+    if (answer.finishReason === 'length') {
+      log?.warn(
+        {
+          purpose: request.purpose,
+          maxTokens: retryMaxTokens,
+          outputChars: answer.content.length,
+          finishReason: answer.finishReason,
+        },
+        'discovery ai answer was cut off twice; giving up',
+      );
+      throw new AiUnavailable(
+        'truncated',
+        'The AI answer was cut off by the token budget. Please try again.',
+      );
+    }
+  }
+
+  const parsed = extractJson(answer.content);
   if (parsed === null) {
     throw new AiUnavailable('invalid_output', 'The AI response was not a JSON object.');
   }
-  return parsed;
+  return { parsed, model: answer.model };
 }
 
 const INTERVIEW_RULES = `You support a structured automation interview. Answer in the requested language.
@@ -182,6 +300,7 @@ export async function interviewHint(
     answers: Array<{ question: string; answer: string }>;
     followUpsUsed: number;
     showIdeas: boolean;
+    log?: AiLogger;
   },
 ): Promise<InterviewHint> {
   const language = input.locale === 'en' ? 'English' : 'German';
@@ -200,7 +319,18 @@ export async function interviewHint(
     history || '(none)',
   ].join('\n');
 
-  const parsed = asRecord(await complete(call, INTERVIEW_PURPOSE, INTERVIEW_RULES, user, 400));
+  const { parsed: raw } = await complete(
+    {
+      call,
+      purpose: INTERVIEW_PURPOSE,
+      system: INTERVIEW_RULES,
+      user,
+      maxTokens: HINT_MAX_TOKENS,
+      timeoutMs: HINT_TIMEOUT_MS,
+    },
+    input.log,
+  );
+  const parsed = asRecord(raw);
   if (!parsed) throw new AiUnavailable('invalid_output', 'The AI response was not an object.');
 
   const ideas = Array.isArray(parsed.ideas)
@@ -230,6 +360,7 @@ export async function suggestClusters(
     locale: Locale;
     customerName: string;
     answers: Array<{ question: string; answer: string }>;
+    log?: AiLogger;
   },
 ): Promise<SuggestedCluster[]> {
   const language = input.locale === 'en' ? 'English' : 'German';
@@ -244,7 +375,18 @@ export async function suggestClusters(
 Choose 2 to 5 ids from the catalogue, most relevant first. Use only catalogue ids. Never invent a new id. Answer the reason in ${language}.`;
   const user = `Catalogue:\n${catalogue}\n\nCustomer: ${input.customerName}\n\nAnswers:\n${history}`;
 
-  const parsed = asRecord(await complete(call, INTERVIEW_PURPOSE, system, user, 400));
+  const { parsed: raw } = await complete(
+    {
+      call,
+      purpose: INTERVIEW_PURPOSE,
+      system,
+      user,
+      maxTokens: CLUSTER_MAX_TOKENS,
+      timeoutMs: HINT_TIMEOUT_MS,
+    },
+    input.log,
+  );
+  const parsed = asRecord(raw);
   const list = Array.isArray(parsed?.clusters) ? parsed.clusters : [];
   const picked: SuggestedCluster[] = [];
   for (const item of list) {
@@ -348,6 +490,7 @@ export async function analyse(
     customerName: string;
     selectedClusters: string[];
     answers: Array<{ question: string; answer: string }>;
+    log?: AiLogger;
   },
 ): Promise<{ report: AnalysisReport; model: string }> {
   const language = input.locale === 'en' ? 'English' : 'German';
@@ -362,59 +505,16 @@ export async function analyse(
     history,
   ].join('\n');
 
-  let response: InternalResponse;
-  try {
-    response = await call('automation-discovery', {
-      method: 'POST',
-      url: '/api/v1/llm/internal/complete',
-      payload: {
-        purpose: ANALYSIS_PURPOSE,
-        messages: [
-          { role: 'system', content: ANALYSIS_RULES },
-          { role: 'user', content: user.slice(0, 24_000) },
-        ],
-        temperature: 0.2,
-        maxTokens: 2000,
-        responseFormat: { type: 'json_object' },
-        timeoutMs: 10_000,
-        metadata: { requestId: `discovery-report-${Date.now()}` },
-      },
-    });
-  } catch {
-    throw new AiUnavailable('unavailable', 'The AI service could not be reached.');
-  }
-
-  if (response.status === 404) {
-    throw new AiUnavailable('not_configured', 'The AI plugin is not installed.');
-  }
-  if (response.status === 409) {
-    throw new AiUnavailable('not_configured', 'No model is assigned to this purpose.');
-  }
-  if (response.status === 403) {
-    throw new AiUnavailable('caller_not_allowed', 'The AI plugin does not allow this caller.');
-  }
-  if (response.status === 504) {
-    throw new AiUnavailable('timeout', 'The AI service timed out.');
-  }
-  if (response.status !== 200) {
-    throw new AiUnavailable('unavailable', `The AI service answered ${response.status}.`);
-  }
-
-  let body: unknown;
-  try {
-    body = JSON.parse(response.body);
-  } catch {
-    throw new AiUnavailable('invalid_output', 'The AI response was not JSON.');
-  }
-  const record = asRecord(body);
-  const message = asRecord(record?.message);
-  const content = typeof message?.content === 'string' ? message.content : '';
-  const parsed = extractJson(content);
-  if (parsed === null) {
-    throw new AiUnavailable('invalid_output', 'The AI response was not a JSON object.');
-  }
-
-  const modelRecord = asRecord(record?.model);
-  const model = typeof modelRecord?.modelKey === 'string' ? modelRecord.modelKey : 'unknown';
+  const { parsed, model } = await complete(
+    {
+      call,
+      purpose: ANALYSIS_PURPOSE,
+      system: ANALYSIS_RULES,
+      user,
+      maxTokens: ANALYSIS_MAX_TOKENS,
+      timeoutMs: ANALYSIS_TIMEOUT_MS,
+    },
+    input.log,
+  );
   return { report: parseReport(parsed, input.selectedClusters), model };
 }

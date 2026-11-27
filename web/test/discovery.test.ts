@@ -5,7 +5,8 @@ import type { DiscoveryStep } from '../src/lib/types.ts';
 const { answersForStep, missingRequired, initialValues, reorderRank, rankMoveLabel } =
   await import('../src/pages/DiscoveryPublic.tsx');
 const { getMessages } = await import('../src/lib/i18n.ts');
-const { discoveryPublic, ApiError } = await import('../src/lib/api.ts');
+const { discoveryPublic, ApiError, DISCOVERY_TIMEOUT_MS, REQUEST_TIMEOUT_MS } =
+  await import('../src/lib/api.ts');
 
 const step: DiscoveryStep = {
   key: 'map.q4',
@@ -104,6 +105,27 @@ describe('public discovery client', () => {
     assert.equal(calls[0]?.init?.credentials, 'omit');
     assert.equal(calls[0]?.init?.cache, 'no-store');
     assert.match(calls[0]?.url ?? '', /\/api\/v1\/discovery\/public\/abc$/);
+  });
+
+  it('gives the model-backed steps a budget beyond the default request timeout', async () => {
+    const timeouts: number[] = [];
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = ((ms: number) => {
+      timeouts.push(ms);
+      return originalTimeout.call(AbortSignal, ms);
+    }) as typeof AbortSignal.timeout;
+    try {
+      await discoveryPublic.state('abc');
+      await discoveryPublic.advance('abc');
+      await discoveryPublic.complete('abc');
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+
+    assert.ok(DISCOVERY_TIMEOUT_MS > REQUEST_TIMEOUT_MS);
+    assert.equal(timeouts.length, 3);
+    assert.equal(timeouts[0], REQUEST_TIMEOUT_MS, 'a plain state read keeps 15 s');
+    assert.deepEqual(timeouts.slice(1), [DISCOVERY_TIMEOUT_MS, DISCOVERY_TIMEOUT_MS]);
   });
 
   it('throws a typed error for a broken public route', async () => {

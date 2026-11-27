@@ -66,6 +66,13 @@ export const AGENT_STATUS_TIMEOUT_MS = 4_000;
 export const AGENT_TIMEOUT_MS = 60_000;
 
 /**
+ * The public automation interview calls the model inside the request and the
+ * provider may retry once, so a single step can take ~40 s. Without its own
+ * budget the browser gave up at 15 s while the server was still working.
+ */
+export const DISCOVERY_TIMEOUT_MS = 45_000;
+
+/**
  * Upper bound for a single request. Without it a hanging `/auth/login` would
  * leave the login spinner running forever.
  */
@@ -1464,7 +1471,7 @@ export interface DiscoveryPublicResponse {
  */
 async function requestPublic(
   path: string,
-  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  options: { method?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<DiscoveryPublicResponse> {
   const headers: Record<string, string> = { accept: 'application/json' };
   if (options.body !== undefined) headers['content-type'] = 'application/json';
@@ -1477,7 +1484,7 @@ async function requestPublic(
       credentials: 'omit',
       cache: 'no-store',
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: requestSignal(options.signal),
+      signal: requestSignal(options.signal, options.timeoutMs),
     });
     text = await response.text();
   } catch (error) {
@@ -1517,9 +1524,14 @@ export const discoveryPublic = {
     });
   },
 
+  /**
+   * May call the model (hint, topic suggestions) and the provider retries
+   * once, so this step gets a budget beyond the default 15 s.
+   */
   async advance(token: string, shortcut = false): Promise<DiscoveryPublicResponse> {
     return requestPublic(`/discovery/public/${encodeURIComponent(token)}/advance`, {
       body: { shortcut },
+      timeoutMs: DISCOVERY_TIMEOUT_MS,
     });
   },
 
@@ -1529,10 +1541,12 @@ export const discoveryPublic = {
     });
   },
 
+  /** Writes the full report: 4000 output tokens plus one retry can take ~40 s. */
   async complete(token: string): Promise<DiscoveryPublicResponse> {
     return requestPublic(`/discovery/public/${encodeURIComponent(token)}/complete`, {
       method: 'POST',
       body: {},
+      timeoutMs: DISCOVERY_TIMEOUT_MS,
     });
   },
 };

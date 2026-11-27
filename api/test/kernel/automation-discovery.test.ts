@@ -6,7 +6,16 @@ import {
   PublicRateLimiter,
   publicRateLimiter,
 } from '../../src/plugins/automation-discovery/server.ts';
-import { analyse, AiUnavailable } from '../../src/plugins/automation-discovery/ai.ts';
+import {
+  analyse,
+  AiUnavailable,
+  interviewHint,
+  suggestClusters,
+  ANALYSIS_MAX_TOKENS,
+  ANALYSIS_TIMEOUT_MS,
+  HINT_MAX_TOKENS,
+  HINT_TIMEOUT_MS,
+} from '../../src/plugins/automation-discovery/ai.ts';
 
 interface LlmReply {
   status: number;
@@ -676,6 +685,39 @@ test('a broken model output never becomes a report', async (t) => {
   assert.equal(inviteRow.status, 'in_progress');
 });
 
+test('a report cut off twice answers with its own code, not a schema error', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+  stubLlm(ctx, (payload) => {
+    const hit = JSON.stringify(payload).includes('structured automation assessment');
+    if (!hit) return llmReply(payload);
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '{"summary":"Das Unternehmen verliert Zeit bei Ange' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'length',
+      }),
+    };
+  });
+
+  await runInterview(ctx, invite.token);
+  const completed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+  });
+  assert.equal(completed.statusCode, 502);
+  const error = (completed.json() as { error: { code: string; reason?: string } }).error;
+  assert.equal(error.code, 'discovery_ai_truncated');
+  assert.equal(error.reason, 'truncated');
+  const reports = ctx.db.prepare('select count(*) as total from discovery_report').get() as {
+    total: number;
+  };
+  assert.equal(reports.total, 0);
+});
+
 test('the short check skips the deep phase unless the operator forces full', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -1255,4 +1297,156 @@ test('a 504 from the provider becomes a timeout reason', async () => {
       }),
     (error: unknown) => error instanceof AiUnavailable && error.reason === 'timeout',
   );
+});
+
+/**
+ * A model that answers in the requested JSON but signals `finishReason: 'length'`
+ * for the first N calls: exactly the shape the real provider returned when the
+ * answer was cut off at 400 tokens.
+ */
+function truncatingModel(
+  cutOffCalls: number,
+  content: unknown,
+): {
+  call: (caller: string, request: { payload?: unknown }) => Promise<LlmReply>;
+  budgets: number[];
+} {
+  const budgets: number[] = [];
+  let calls = 0;
+  return {
+    budgets,
+    call: async (_caller, request) => {
+      const payload = request.payload as { maxTokens?: number } | undefined;
+      budgets.push(payload?.maxTokens ?? 0);
+      calls += 1;
+      const truncated = calls <= cutOffCalls;
+      return {
+        status: 200,
+        body: JSON.stringify({
+          message: {
+            content: truncated ? JSON.stringify(content).slice(0, 40) : JSON.stringify(content),
+          },
+          model: { modelKey: 'test-model' },
+          finishReason: truncated ? 'length' : 'stop',
+        }),
+      };
+    },
+  };
+}
+
+test('a cut-off answer is retried once with a doubled token budget', async () => {
+  const model = truncatingModel(1, {
+    clusters: [
+      { id: 'A', reason: 'Angebote kosten Zeit.' },
+      { id: 'B', reason: 'Rechnungen werden doppelt erfasst.' },
+    ],
+  });
+  const warnings: string[] = [];
+  const picked = await suggestClusters(model.call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    answers: [{ question: 'Was kostet Zeit?', answer: 'Angebote.' }],
+    log: { warn: (_obj, message) => warnings.push(message) },
+  });
+
+  assert.deepEqual(
+    picked.map((entry) => entry.id),
+    ['A', 'B'],
+  );
+  assert.deepEqual(model.budgets, [HINT_MAX_TOKENS, HINT_MAX_TOKENS * 2]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] ?? '', /token budget/);
+});
+
+test('an answer cut off twice becomes a defined truncated error, not a schema error', async () => {
+  const model = truncatingModel(2, { clusters: [{ id: 'A', reason: 'x' }] });
+  const warnings: string[] = [];
+  await assert.rejects(
+    () =>
+      suggestClusters(model.call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        answers: [],
+        log: { warn: (_obj, message) => warnings.push(message) },
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'truncated',
+  );
+  assert.deepEqual(model.budgets, [HINT_MAX_TOKENS, HINT_MAX_TOKENS * 2]);
+  assert.equal(warnings.length, 2);
+});
+
+test('a complete answer is accepted unchanged and never retried', async () => {
+  const model = truncatingModel(0, {
+    hint: 'Ein kurzer Satz genügt.',
+    ideas: ['Angebotsentwurf vorbereiten', 'Rechnungen prüfen'],
+    examples: ['Zum Beispiel: Angebot per E-Mail.'],
+  });
+  const result = await interviewHint(model.call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    phase: 'deepen',
+    question: 'Wie oft?',
+    answers: [],
+    followUpsUsed: 0,
+    showIdeas: true,
+  });
+
+  assert.equal(result.hint, 'Ein kurzer Satz genügt.');
+  assert.deepEqual(result.ideas, ['Angebotsentwurf vorbereiten', 'Rechnungen prüfen']);
+  assert.deepEqual(model.budgets, [HINT_MAX_TOKENS]);
+});
+
+test('the analysis retries a cut-off report and keeps the model name', async () => {
+  const model = truncatingModel(1, GOOD_REPORT);
+  const { report, model: modelKey } = await analyse(model.call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    selectedClusters: ['A', 'B'],
+    answers: [{ question: 'Angebote?', answer: 'Alles manuell.' }],
+  });
+
+  assert.equal(modelKey, 'test-model');
+  assert.equal(report.clusters.length, 2);
+  assert.deepEqual(model.budgets, [ANALYSIS_MAX_TOKENS, ANALYSIS_MAX_TOKENS * 2]);
+});
+
+test('the requests carry the raised budgets and the browser stays inside its timeout', async () => {
+  const payloads: Array<{ maxTokens?: number; timeoutMs?: number; purpose?: string }> = [];
+  const call = async (_caller: string, request: { payload?: unknown }) => {
+    payloads.push(request.payload as { maxTokens?: number; timeoutMs?: number });
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: JSON.stringify(GOOD_REPORT) },
+        model: { modelKey: 'test-model' },
+        finishReason: 'stop',
+      }),
+    };
+  };
+
+  await analyse(call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    selectedClusters: ['A'],
+    answers: [],
+  });
+  assert.equal(payloads[0]?.maxTokens, 4000);
+  assert.equal(payloads[0]?.timeoutMs, ANALYSIS_TIMEOUT_MS);
+  // The provider repeats a timing-out call once on its own; the browser gives
+  // up at 45 s, so two attempts must stay below that.
+  assert.ok(2 * ANALYSIS_TIMEOUT_MS < 45_000);
+  assert.ok(2 * HINT_TIMEOUT_MS < 45_000);
+  assert.ok(ANALYSIS_MAX_TOKENS * 2 <= 8192);
+});
+
+test('the analysis retry stays under the provider token cap', async () => {
+  const model = truncatingModel(0, GOOD_REPORT);
+  await analyse(model.call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    selectedClusters: ['A'],
+    answers: [],
+  });
+  assert.deepEqual(model.budgets, [ANALYSIS_MAX_TOKENS]);
+  assert.ok(ANALYSIS_MAX_TOKENS * 2 <= 8192);
 });

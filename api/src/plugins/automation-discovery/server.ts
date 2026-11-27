@@ -469,6 +469,16 @@ function validateFields(fields: Field[], input: Record<string, unknown>): Record
 
 function aiError(error: unknown): AppError {
   if (error instanceof AiUnavailable) {
+    if (error.reason === 'truncated') {
+      // A budget problem on our side, not a malformed model answer: the
+      // customer gets a precise, retryable message instead of a schema error.
+      return new AppError(
+        'discovery_ai_truncated',
+        'The AI answer was cut off before it was complete. Please try again.',
+        502,
+        { reason: error.reason },
+      );
+    }
     if (error.reason === 'invalid_output') {
       return new AppError(
         'discovery_analysis_invalid',
@@ -1132,6 +1142,7 @@ export function register(ctx: PluginContext): void {
             answers: interviewHistory(answers),
             followUpsUsed: 2,
             showIdeas: false,
+            log,
           });
           if (result.hint || result.examples.length > 0) {
             hint = { text: result.hint ?? '', examples: result.examples };
@@ -1165,6 +1176,7 @@ export function register(ctx: PluginContext): void {
           locale: invite.locale,
           customerName: invite.customer_name,
           answers: interviewHistory(answers),
+          log,
         });
       } catch (error) {
         throw aiError(error);
@@ -1254,6 +1266,7 @@ export function register(ctx: PluginContext): void {
           answers: interviewHistory(answers),
           followUpsUsed: usedFollowUps,
           showIdeas: isLastQuestion,
+          log,
         });
         if (isLastQuestion && result.ideas.length > 0) {
           const catalogue = result.ideas.map((title, index) => ({
@@ -1875,6 +1888,7 @@ export function register(ctx: PluginContext): void {
           customerName: invite.customer_name,
           selectedClusters: selected,
           answers: interviewHistory(answers),
+          log,
         });
       } catch (error) {
         throw aiError(error);
