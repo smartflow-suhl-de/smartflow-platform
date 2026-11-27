@@ -135,6 +135,28 @@ describe('UI Store & Persistence', () => {
     assert.equal(parsed.state.token, undefined);
   });
 
+  it('clears every filter and search text for logout or tenant switch', () => {
+    useUiStore.getState().setTenantFilter({ statusFilter: 'active', query: 'Acme Kunde' });
+    useUiStore.getState().setWebsiteFilter({ filter: 'own', query: 'portal.example' });
+    useUiStore.getState().setDiscoveryFilter({
+      statusFilter: 'completed',
+      query: 'kunde@example.com',
+    });
+
+    useUiStore.getState().resetAllFilters();
+
+    const state = useUiStore.getState();
+    assert.deepEqual(state.tenants, { statusFilter: 'all', query: '' });
+    assert.deepEqual(state.websites, { filter: 'all', query: '' });
+    assert.deepEqual(state.discovery, { statusFilter: 'all', query: '' });
+
+    // The cleared state is persisted, so nothing survives a reload either.
+    const parsed = JSON.parse(browser.storage.get('sf.ui-state') ?? '{}');
+    assert.equal(parsed.state.tenants.query, '');
+    assert.equal(parsed.state.websites.query, '');
+    assert.equal(parsed.state.discovery.query, '');
+  });
+
   it('survives private browsing / quota errors with in-memory fallback', () => {
     const original = globalThis.localStorage;
     Object.defineProperty(globalThis, 'localStorage', {

@@ -103,6 +103,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   const setTheme = useUiStore((state) => state.setTheme);
   const removeCustomTheme = useUiStore((state) => state.removeCustomTheme);
   const setLocale = useUiStore((state) => state.setLocale);
+  const resetAllFilters = useUiStore((state) => state.resetAllFilters);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState(false);
   const [healthProbe, setHealthProbe] = useState(0);
@@ -304,6 +305,8 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         const updatedAuth = await api.setActiveTenant(tenantId);
         setSession({ kind: 'signed_in', auth: updatedAuth });
         setSwitcherOpen(false);
+        // Filters and search texts belong to the previous tenant context.
+        resetAllFilters();
         // Reload navigation so tenant-scoped plugins (like Websites) appear or disappear
         api
           .nav()
@@ -321,7 +324,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         setBusyTenantId(null);
       }
     },
-    [locale, messages, showToast],
+    [locale, messages, showToast, resetAllFilters],
   );
 
   const handleOpenSwitcher = useCallback(() => {
@@ -364,6 +367,9 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         setSessionExpired(false);
         setStats(null);
         setApiNav([]);
+        // Search texts can hold customer names or contact details; they must not
+        // stay in this browser profile for the next person who signs in.
+        resetAllFilters();
         navigate('/', { replace: true });
       })
       .catch((error: unknown) => {
@@ -373,7 +379,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         setLogoutError(formatApiError(error, locale));
       })
       .finally(() => setLoggingOut(false));
-  }, [locale]);
+  }, [locale, resetAllFilters]);
 
   // The approval link is opened by the client, who has no account. It is a
   // public route (public-routes.ts), so it never reaches this session shell.

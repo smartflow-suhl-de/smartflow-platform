@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Badge,
   Button,
@@ -34,6 +34,7 @@ import type {
 } from '../lib/types';
 import { ReportView } from './DiscoveryPublic';
 import { useUiStore } from '../lib/store';
+import { queryParamOnce } from '../lib/deep-link';
 
 const PAGE_SIZE = 10;
 
@@ -94,13 +95,17 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
   const setDiscoveryFilter = useUiStore((state) => state.setDiscoveryFilter);
   const [cursorStack, setCursorStack] = useState<string[]>([]);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const appliedParamQuery = useRef<string | null>(null);
 
+  // A `?q=` deep link seeds the search field once. The store stays the single
+  // source of truth afterwards, so typing or clearing the field is never
+  // overwritten by the URL.
   useEffect(() => {
-    const paramQ = new URLSearchParams(search).get('q');
-    if (paramQ !== null && paramQ !== query) {
-      setDiscoveryFilter({ query: paramQ });
-    }
-  }, [search, query, setDiscoveryFilter]);
+    const nextQuery = queryParamOnce(search, appliedParamQuery.current);
+    if (nextQuery === null) return;
+    appliedParamQuery.current = nextQuery;
+    setDiscoveryFilter({ query: nextQuery });
+  }, [search, setDiscoveryFilter]);
 
   const [customerName, setCustomerName] = useState('');
   const [contactEmail, setContactEmail] = useState('');

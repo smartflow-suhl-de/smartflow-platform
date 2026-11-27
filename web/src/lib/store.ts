@@ -1,6 +1,17 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
-import { CUSTOM_THEME_ID, defaultTheme, type Mode, type ThemeDefinition } from './themes';
+import {
+  CUSTOM_THEME_ID,
+  TOKEN_KEYS,
+  contrastProblems,
+  defaultTheme,
+  findTheme,
+  type LocalizedText,
+  type Mode,
+  type ThemeDefinition,
+  type ThemeTokens,
+} from './themes';
+import { isHexColor } from './theme-color';
 import { applyMode, applyTheme, clearCustomTheme, storedCustomTheme, storedTheme } from '../theme';
 import { applyLocale, storedLocale, type Locale } from './i18n';
 import type { DiscoveryInviteStatus, TenantStatus } from './types';
@@ -109,6 +120,80 @@ const defaultDiscovery: DiscoveryFilterState = {
   query: '',
 };
 
+function isTokenRecord(value: unknown): value is ThemeTokens {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return TOKEN_KEYS.every((key) => isHexColor(record[key]));
+}
+
+function readLabel(value: unknown): LocalizedText {
+  const record = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  return {
+    de: typeof record.de === 'string' ? record.de : '',
+    en: typeof record.en === 'string' ? record.en : '',
+  };
+}
+
+/**
+ * A structurally complete theme. Persisted state can be stale or hand-edited,
+ * so anything that is not `{ id, light, dark }` with all hex tokens is refused
+ * here instead of failing later inside `applyTheme`.
+ */
+export function isThemeDefinition(value: unknown): value is ThemeDefinition {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== 'string' || record.id.trim() === '') return false;
+  return isTokenRecord(record.light) && isTokenRecord(record.dark);
+}
+
+/** Rebuilds a theme from persisted data, or `null` when it is unusable. */
+export function sanitizeTheme(value: unknown): ThemeDefinition | null {
+  if (!isThemeDefinition(value)) return null;
+  const record = value as ThemeDefinition & Record<string, unknown>;
+  return {
+    id: record.id,
+    label: readLabel(record.label),
+    description: readLabel(record.description),
+    builtin: record.builtin === true,
+    light: { ...record.light },
+    dark: { ...record.dark },
+  };
+}
+
+/**
+ * A stored custom theme is only usable when it still passes every contrast
+ * rule. The importer enforces the same rules, so a theme that fails here was
+ * edited by hand, comes from an older rule set, or is not a SmartFlow theme at
+ * all; the default palette is the safe answer.
+ */
+export function sanitizeCustomTheme(value: unknown): ThemeDefinition | null {
+  const theme = sanitizeTheme(value);
+  if (!theme) return null;
+  return contrastProblems(theme).length === 0 ? theme : null;
+}
+
+/**
+ * The theme to use after loading persisted state: the stored custom theme when
+ * it is intact, otherwise the built-in with the same id, otherwise the default.
+ */
+export function sanitizeActiveTheme(
+  value: unknown,
+  customTheme: ThemeDefinition | null,
+): ThemeDefinition {
+  // Only two kinds of theme are legitimate: the single stored custom theme and
+  // a built-in. Anything else (an unknown id, a hand-edited palette) is
+  // replaced, and built-ins are re-read from the catalog rather than trusted.
+  if (value && typeof value === 'object') {
+    const id = (value as Record<string, unknown>).id;
+    if (typeof id === 'string') {
+      if (id === CUSTOM_THEME_ID) return customTheme ?? defaultTheme();
+      const builtin = findTheme(id);
+      if (builtin) return builtin;
+    }
+  }
+  return defaultTheme();
+}
+
 function safeStoredMode(): Mode {
   try {
     if (typeof localStorage !== 'undefined') {
@@ -169,15 +254,25 @@ function safeApplyMode(mode: Mode): void {
   }
 }
 
-function safeApplyTheme(theme: ThemeDefinition, mode: Mode): void {
+/**
+ * Applies a theme and never throws. Anything that is not a complete theme is
+ * replaced by the default, so a broken persisted entry cannot take the SPA
+ * down when it is replayed into the DOM.
+ */
+export function safeApplyTheme(theme: ThemeDefinition, mode: Mode): void {
+  const target = isThemeDefinition(theme) ? theme : defaultTheme();
   try {
     if (typeof document !== 'undefined') {
-      applyTheme(theme, mode);
+      applyTheme(target, mode);
     } else if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sf.theme', theme.id);
+      localStorage.setItem('sf.theme', target.id);
     }
   } catch {
-    /* ignore */
+    try {
+      applyTheme(defaultTheme(), mode);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -209,6 +304,98 @@ export function getInitialPreferences(): PreferencesState {
     theme: safeStoredTheme(),
     customTheme: safeStoredCustomTheme(),
     locale: safeStoredLocale(),
+  };
+}
+
+/** Locale values a persisted state may carry. */
+function readLocale(value: unknown, fallback: Locale): Locale {
+  return value === 'de' || value === 'en' ? value : fallback;
+}
+
+function readMode(value: unknown, fallback: Mode): Mode {
+  return value === 'light' || value === 'dark' ? value : fallback;
+}
+
+function readString(value: unknown, fallback: string): string {
+  // Search fields are read and persisted as text; anything else (an object, a
+  // null, a huge blob) would break `query.trim()` in the pages.
+  return typeof value === 'string' ? value.slice(0, MAX_QUERY_LENGTH) : fallback;
+}
+
+/** Longest search text that is accepted from persisted state. */
+export const MAX_QUERY_LENGTH = 200;
+
+const TENANT_STATUS_FILTERS: readonly TenantStatusFilter[] = ['all', 'active', 'suspended'];
+const WEBSITE_OWNER_FILTERS: readonly WebsiteOwnerFilter[] = ['all', 'own', 'client'];
+const DISCOVERY_STATUS_FILTERS: readonly DiscoveryStatusFilter[] = [
+  'all',
+  'open',
+  'in_progress',
+  'completed',
+  'revoked',
+  'expired',
+];
+
+function readOneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+/**
+ * Turns whatever sits under `sf.ui-state` into a complete, typed state.
+ *
+ * Persisted data is treated as untrusted: it can be stale after a release, or
+ * edited by hand. Every field falls back to its default instead of being taken
+ * as given, and the themes are validated structurally so a broken entry cannot
+ * crash `applyTheme` later.
+ */
+export function sanitizePersistedState(persistedState: unknown): UiPersistedState {
+  const raw =
+    persistedState && typeof persistedState === 'object'
+      ? (persistedState as Record<string, unknown>)
+      : {};
+  const readSection = (key: string): Record<string, unknown> => {
+    const section = raw[key];
+    return section && typeof section === 'object' && !Array.isArray(section)
+      ? (section as Record<string, unknown>)
+      : {};
+  };
+  const fallbackPrefs = getInitialPreferences();
+  const prefs = readSection('preferences');
+
+  const customTheme = sanitizeCustomTheme(prefs.customTheme) ?? fallbackPrefs.customTheme;
+  const tenants = readSection('tenants');
+  const websites = readSection('websites');
+  const discovery = readSection('discovery');
+
+  return {
+    tenants: {
+      statusFilter: readOneOf(
+        tenants.statusFilter,
+        TENANT_STATUS_FILTERS,
+        defaultTenants.statusFilter,
+      ),
+      query: readString(tenants.query, defaultTenants.query),
+    },
+    websites: {
+      filter: readOneOf(websites.filter, WEBSITE_OWNER_FILTERS, defaultWebsites.filter),
+      query: readString(websites.query, defaultWebsites.query),
+    },
+    discovery: {
+      statusFilter: readOneOf(
+        discovery.statusFilter,
+        DISCOVERY_STATUS_FILTERS,
+        defaultDiscovery.statusFilter,
+      ),
+      query: readString(discovery.query, defaultDiscovery.query),
+    },
+    preferences: {
+      mode: readMode(prefs.mode, fallbackPrefs.mode),
+      theme: sanitizeActiveTheme(prefs.theme, customTheme),
+      customTheme,
+      locale: readLocale(prefs.locale, fallbackPrefs.locale),
+    },
   };
 }
 
@@ -333,41 +520,12 @@ export const useUiStore = create<UiState>()(
           locale: state.preferences.locale,
         },
       }),
-      migrate: (persistedState: unknown, _version: number): UiPersistedState => {
-        const raw = (persistedState as Partial<UiPersistedState>) || {};
-        const fallbackPrefs = getInitialPreferences();
-        return {
-          tenants: {
-            statusFilter: raw.tenants?.statusFilter ?? defaultTenants.statusFilter,
-            query:
-              typeof raw.tenants?.query === 'string' ? raw.tenants.query : defaultTenants.query,
-          },
-          websites: {
-            filter: raw.websites?.filter ?? defaultWebsites.filter,
-            query:
-              typeof raw.websites?.query === 'string' ? raw.websites.query : defaultWebsites.query,
-          },
-          discovery: {
-            statusFilter: raw.discovery?.statusFilter ?? defaultDiscovery.statusFilter,
-            query:
-              typeof raw.discovery?.query === 'string'
-                ? raw.discovery.query
-                : defaultDiscovery.query,
-          },
-          preferences: {
-            mode:
-              raw.preferences?.mode === 'light' || raw.preferences?.mode === 'dark'
-                ? raw.preferences.mode
-                : fallbackPrefs.mode,
-            theme: raw.preferences?.theme ?? fallbackPrefs.theme,
-            customTheme: raw.preferences?.customTheme ?? fallbackPrefs.customTheme,
-            locale:
-              raw.preferences?.locale === 'de' || raw.preferences?.locale === 'en'
-                ? raw.preferences.locale
-                : fallbackPrefs.locale,
-          },
-        };
-      },
+      merge: (persistedState: unknown, currentState: UiState): UiState => ({
+        ...currentState,
+        ...sanitizePersistedState(persistedState),
+      }),
+      migrate: (persistedState: unknown, _version: number): UiPersistedState =>
+        sanitizePersistedState(persistedState),
       onRehydrateStorage: () => (state) => {
         if (state?.preferences) {
           safeApplyTheme(state.preferences.theme, state.preferences.mode);

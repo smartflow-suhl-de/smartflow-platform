@@ -6,7 +6,6 @@ import {
   findTheme,
   parseThemeFile,
   serializeTheme,
-  tokensFor,
   type Mode,
   type ThemeDefinition,
   type ThemeTokens,
@@ -98,14 +97,23 @@ export function storedTheme(): ThemeDefinition {
 /**
  * Applies a theme for one mode. All tokens are written as CSS custom
  * properties, so themes stay plain data and no rule needs its own selector.
+ *
+ * Themes reach this function from persisted browser state, so an incomplete
+ * definition falls back to the default palette instead of throwing.
  */
 export function applyTheme(theme: ThemeDefinition, mode: Mode): void {
   applyMode(mode);
 
-  const root = document.documentElement;
-  root.dataset.theme = theme.id;
+  const fallback = defaultTheme();
+  // A theme without a complete token set for this mode is not usable: fall back
+  // as a whole, so id and colours cannot disagree.
+  const resolved = readTokens(theme, mode) ? theme : fallback;
+  const tokens = readTokens(resolved, mode) as ThemeTokens;
+  const id = resolved.id;
 
-  const tokens = tokensFor(theme, mode);
+  const root = document.documentElement;
+  root.dataset.theme = id;
+
   for (const key of TOKEN_KEYS) {
     root.style.setProperty(TOKEN_VARS[key], tokens[key]);
   }
@@ -113,8 +121,20 @@ export function applyTheme(theme: ThemeDefinition, mode: Mode): void {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', tokens.paper);
 
-  writeItem(THEME_KEY, theme.id);
-  if (theme.id === CUSTOM_THEME_ID) writeItem(CUSTOM_KEY, serializeTheme(theme).trim());
+  writeItem(THEME_KEY, id);
+  if (id === CUSTOM_THEME_ID && readTokens(resolved, 'light') && readTokens(resolved, 'dark')) {
+    writeItem(CUSTOM_KEY, serializeTheme(resolved).trim());
+  }
+}
+
+/** The token set of one mode, or `null` when it is not complete. */
+function readTokens(theme: ThemeDefinition, mode: Mode): ThemeTokens | null {
+  const candidate = theme?.[mode] as Record<string, unknown> | undefined;
+  if (!candidate || typeof candidate !== 'object') return null;
+  for (const key of TOKEN_KEYS) {
+    if (typeof candidate[key] !== 'string') return null;
+  }
+  return candidate as ThemeTokens;
 }
 
 /** Forgets the browser's custom theme and falls back to the default. */
