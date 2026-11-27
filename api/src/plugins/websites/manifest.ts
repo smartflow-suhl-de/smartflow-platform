@@ -10,7 +10,7 @@ export const manifest: PluginManifest = {
   id: 'websites',
   label: 'Webseiten',
   description: 'Own and client websites: Astro projects, AI drafts, previews and approvals.',
-  version: '0.1.0',
+  version: '0.2.0',
   apiVersion: 1,
   scope: 'tenant',
   nav: {
@@ -19,7 +19,7 @@ export const manifest: PluginManifest = {
     group: 'work',
     icon: 'globe',
     order: 30,
-    roles: ['tenant_admin', 'employee'],
+    roles: ['tenant_admin', 'employee', 'operator'],
     createLabel: 'Neue Website',
     aliases: ['/webseiten'],
   },

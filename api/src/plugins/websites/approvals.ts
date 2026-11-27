@@ -67,7 +67,7 @@ export function registerApprovals(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string } }>(
     '/websites/:siteId/approvals',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Approval links of a website' },
     },
     async (request) => {
@@ -98,7 +98,7 @@ export function registerApprovals(runtime: Runtime): void {
   }>(
     '/websites/:siteId/approvals',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: {
         summary: 'Create a one-time approval link for a finished build',
         body: {
@@ -162,7 +162,7 @@ export function registerApprovals(runtime: Runtime): void {
   runtime.app.get<{ Params: { siteId: string } }>(
     '/websites/:siteId/releases',
     {
-      preHandler: runtime.app.requireRole('tenant_admin', 'employee'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
       schema: { summary: 'Published releases of a website' },
     },
     async (request) => {
@@ -179,7 +179,7 @@ export function registerApprovals(runtime: Runtime): void {
   runtime.app.post<{ Params: { siteId: string }; Body: { build_id?: string } }>(
     '/websites/:siteId/releases',
     {
-      preHandler: runtime.app.requireRole('tenant_admin'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'operator'),
       schema: {
         summary: 'Publish a build after the client approved it',
         body: {
@@ -247,7 +247,7 @@ export function registerApprovals(runtime: Runtime): void {
   runtime.app.get(
     '/websites/settings',
     {
-      preHandler: runtime.app.requireRole('tenant_admin'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'operator'),
       schema: { summary: 'AI provider and budget settings of the tenant' },
     },
     async (request) => {
@@ -274,7 +274,7 @@ export function registerApprovals(runtime: Runtime): void {
   }>(
     '/websites/settings',
     {
-      preHandler: runtime.app.requireRole('tenant_admin'),
+      preHandler: runtime.app.requireRole('tenant_admin', 'operator'),
       schema: {
         summary: 'Update AI provider and budget settings',
         body: {
