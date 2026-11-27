@@ -198,16 +198,19 @@ export function siteDetail(db: Db, site: SiteRow): Record<string, unknown> {
     .get(site.id) as Pick<BuildRow, 'id' | 'status' | 'created_at' | 'duration_ms'> | undefined;
   const release = db
     .prepare(
-      `select id, version, published_at from web_releases
+      `select id, build_id, version, published_at from web_releases
         where site_id = ? order by published_at desc, id desc limit 1`,
     )
-    .get(site.id) as Pick<ReleaseRow, 'id' | 'version' | 'published_at'> | undefined;
+    .get(site.id) as Pick<ReleaseRow, 'id' | 'build_id' | 'version' | 'published_at'> | undefined;
   const approval = db
     .prepare(
       `select id, state, expires_at, recipient from web_approvals
         where site_id = ? and state = 'open' order by created_at desc, id desc limit 1`,
     )
     .get(site.id) as Pick<ApprovalRow, 'id' | 'state' | 'expires_at' | 'recipient'> | undefined;
+
+  const settings = db.prepare('select require_approval from web_settings where id = 1').get() as
+    { require_approval: number } | undefined;
 
   return {
     ...site,
@@ -216,10 +219,6 @@ export function siteDetail(db: Db, site: SiteRow): Record<string, unknown> {
     last_build: lastBuild ?? null,
     release: release ?? null,
     open_approval: approval ?? null,
+    require_approval: settings ? settings.require_approval === 1 : true,
   };
-}
-
-/** Days between now and an ISO timestamp; negative when it already passed. */
-export function daysUntil(iso: string, now: Date): number {
-  return Math.floor((Date.parse(iso) - now.getTime()) / 86_400_000);
 }

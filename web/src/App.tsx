@@ -360,9 +360,15 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         messages={messages}
       />
     );
-  } else if (pathname === '/websites') {
+  } else if (
+    pathname === '/websites' &&
+    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+  ) {
     content = <WebsitesPage search={search} locale={locale} messages={messages} />;
-  } else if (pathname.startsWith('/websites/')) {
+  } else if (
+    pathname.startsWith('/websites/') &&
+    (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
+  ) {
     content = (
       <WebsiteDetailPage
         siteId={pathname.slice('/websites/'.length)}

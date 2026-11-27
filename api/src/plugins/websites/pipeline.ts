@@ -146,6 +146,9 @@ export function registerPipeline(runtime: Runtime): void {
       requireSite(database, request.params.siteId);
       const build = findBuild(database, request.params.siteId, request.params.buildId);
       if (!build) throw notFound('Build not found.');
+      // A runner callback that arrives after a cancel or a second callback must
+      // not overwrite the finished state; the same guard protects jobs.
+      if (!isWorkActive(build.status)) throw invalidState('This build already finished.');
       const timestamp = runtime.now().toISOString();
       const status = request.body.status as 'ok' | 'failed';
       database

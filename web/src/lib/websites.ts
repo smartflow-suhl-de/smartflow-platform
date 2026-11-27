@@ -44,8 +44,12 @@ export function canPublish(
   role: string,
   build: { id: string; status: WebsiteBuildStatus } | null,
   approvals: WebsiteApproval[],
+  options: { requireApproval?: boolean; released?: boolean } = {},
 ): boolean {
   if (role !== 'tenant_admin') return false;
   if (!build || build.status !== 'ok') return false;
+  // A build that already has a release would hit the unique index on re-publish.
+  if (options.released === true) return false;
+  if (options.requireApproval === false) return true;
   return buildApproved(build, approvals);
 }

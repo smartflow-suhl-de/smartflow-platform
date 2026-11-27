@@ -53,6 +53,10 @@ export function registerApprovals(runtime: Runtime): void {
   }
 
   function publicGuard(tenantId: string, plaintext: string, ip: string): void {
+    // A coarse per-IP cap stops token rotation from bypassing the per-token one.
+    if (!allowPublic(`ip:${ip}`)) {
+      throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
+    }
     if (!allowPublic(`${tenantId}:${hashToken(plaintext).slice(0, 16)}:${ip}`)) {
       throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
     }
@@ -69,6 +73,14 @@ export function registerApprovals(runtime: Runtime): void {
     async (request) => {
       const database = runtime.tenantDatabase(request);
       const site = requireSite(database, request.params.siteId);
+      // Expired links must not stay "open" in the counts just because nobody
+      // opened them; persist the state on read, like the public route does.
+      database
+        .prepare(
+          `update web_approvals set state = 'expired', decided_at = ?
+            where site_id = ? and state = 'open' and expires_at < ?`,
+        )
+        .run(runtime.now().toISOString(), site.id, runtime.now().toISOString());
       const items = database
         .prepare(
           `select id, site_id, build_id, recipient, state, comment, expires_at, decided_at,
@@ -198,6 +210,11 @@ export function registerApprovals(runtime: Runtime): void {
           throw invalidState('The client has not approved this build yet.');
         }
       }
+
+      const already = database
+        .prepare('select id from web_releases where build_id = ? limit 1')
+        .get(build.id) as { id: string } | undefined;
+      if (already) throw invalidState('This build is already published.');
 
       const published = database
         .prepare('select count(*) as count from web_releases where site_id = ?')
@@ -434,10 +451,20 @@ export function registerApprovals(runtime: Runtime): void {
       if (state === 'changes' && comment === null) {
         throw new FieldError({ comment: 'Please describe what should change.' });
       }
-      found.database
-        .prepare('update web_approvals set state = ?, comment = ?, decided_at = ? where id = ?')
+      // The state predicate makes a parallel second decision a 409 instead of
+      // letting the later request win silently.
+      const decided = found.database
+        .prepare(
+          `update web_approvals set state = ?, comment = ?, decided_at = ?
+            where id = ? and state = 'open'`,
+        )
         .run(state, comment, runtime.now().toISOString(), found.approval.id);
-      if (state === 'changes') {
+      if (decided.changes === 0) {
+        throw invalidState('This approval was already decided.');
+      }
+      // A change request returns the draft to the team, but an already live
+      // release stays published until a new build is approved.
+      if (state === 'changes' && found.site.status !== 'live') {
         found.database
           .prepare("update web_sites set status = 'draft', updated_at = ? where id = ?")
           .run(runtime.now().toISOString(), found.site.id);

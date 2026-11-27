@@ -436,6 +436,7 @@ export interface WebsiteBuildSummary {
 
 export interface WebsiteReleaseSummary {
   id: string;
+  build_id: string;
   version: string;
   published_at: string;
 }
@@ -475,6 +476,7 @@ export interface WebsiteDetail extends Website {
   last_build: WebsiteBuildSummary | null;
   release: WebsiteReleaseSummary | null;
   open_approval: WebsiteOpenApproval | null;
+  require_approval: boolean;
 }
 
 export interface WebsitePage {

@@ -711,3 +711,184 @@ test('an unknown tenant and an unknown token answer the same 404', async (t) => 
   assert.equal(unknownToken.statusCode, 404);
   assert.equal(unknownTenant.payload, unknownToken.payload);
 });
+
+test('duplicate publish, duplicate slug and a late callback are rejected', async (t) => {
+  const session = await setup(t);
+  const site = await createSite(session, session.admin);
+
+  const duplicateSlug = await inject(session, session.admin, 'POST', '/api/v1/websites', {
+    name: 'Doppelt',
+    slug: site.slug,
+  });
+  assert.equal(duplicateSlug.statusCode, 422, duplicateSlug.payload);
+
+  const build = await inject(session, session.admin, 'POST', `/api/v1/websites/${site.id}/builds`, {
+    trigger: 'ai',
+  });
+  const buildId = (build.json() as { id: string }).id;
+
+  const firstResult = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/builds/${buildId}/result`,
+    { status: 'ok' },
+    runnerHeaders(session),
+  );
+  assert.equal(firstResult.statusCode, 200, firstResult.payload);
+
+  const lateResult = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/builds/${buildId}/result`,
+    { status: 'failed' },
+    runnerHeaders(session),
+  );
+  assert.equal(lateResult.statusCode, 409, lateResult.payload);
+
+  const approval = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/approvals`,
+    {
+      build_id: buildId,
+    },
+  );
+  assert.equal(approval.statusCode, 201, approval.payload);
+  const token = (approval.json() as { url: string }).url.split('/').pop();
+  const decision = await session.ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/public/websites/${session.tenantId}/approvals/${token}/decision`,
+    payload: { decision: 'approve' },
+  });
+  assert.equal(decision.statusCode, 200, decision.payload);
+
+  const published = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/releases`,
+    {
+      build_id: buildId,
+    },
+  );
+  assert.equal(published.statusCode, 201, published.payload);
+  const again = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/releases`,
+    {
+      build_id: buildId,
+    },
+  );
+  assert.equal(again.statusCode, 409, again.payload);
+
+  const releases = session.ctx
+    .tenantDb(session.tenantId)
+    .prepare('select count(*) as count from web_releases where site_id = ?')
+    .get(site.id) as { count: number };
+  assert.equal(releases.count, 1);
+});
+
+test('a change request leaves a live release published and expires old links', async (t) => {
+  const session = await setup(t);
+  const site = await createSite(session, session.admin);
+  const build = await inject(session, session.admin, 'POST', `/api/v1/websites/${site.id}/builds`, {
+    trigger: 'ai',
+  });
+  const buildId = (build.json() as { id: string }).id;
+  await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/builds/${buildId}/result`,
+    { status: 'ok' },
+    runnerHeaders(session),
+  );
+
+  const approval = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/approvals`,
+    {
+      build_id: buildId,
+    },
+  );
+  const token = (approval.json() as { url: string }).url.split('/').pop();
+  await session.ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/public/websites/${session.tenantId}/approvals/${token}/decision`,
+    payload: { decision: 'approve' },
+  });
+  await inject(session, session.admin, 'POST', `/api/v1/websites/${site.id}/releases`, {
+    build_id: buildId,
+  });
+
+  const nextBuild = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/builds`,
+    {
+      trigger: 'ai',
+    },
+  );
+  const nextId = (nextBuild.json() as { id: string }).id;
+  await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/builds/${nextId}/result`,
+    { status: 'ok' },
+    runnerHeaders(session),
+  );
+  const nextApproval = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/approvals`,
+    {
+      build_id: nextId,
+    },
+  );
+  const nextToken = (nextApproval.json() as { url: string }).url.split('/').pop();
+  await session.ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/public/websites/${session.tenantId}/approvals/${nextToken}/decision`,
+    payload: { decision: 'changes', comment: 'Bitte neues Bild.' },
+  });
+
+  const detail = await inject(session, session.admin, 'GET', `/api/v1/websites/${site.id}`);
+  assert.equal((detail.json() as { status: string }).status, 'live');
+
+  // An expired link that was never opened must not stay "open" in the counts.
+  session.ctx
+    .tenantDb(session.tenantId)
+    .prepare("update web_approvals set expires_at = ? where state = 'open'")
+    .run('2020-01-01T00:00:00.000Z');
+  const summary = await inject(session, session.admin, 'GET', '/api/v1/websites/summary');
+  assert.equal((summary.json() as { approvals_open: number }).approvals_open, 0);
+  const list = await inject(session, session.admin, 'GET', `/api/v1/websites/${site.id}/approvals`);
+  const states = (list.json() as { items: Array<{ state: string }> }).items.map(
+    (item) => item.state,
+  );
+  assert.ok(!states.includes('open'));
+});
+
+test('rotating approval tokens from one IP still hit the IP bucket', async (t) => {
+  const session = await setup(t);
+  let lastStatus = 0;
+  for (let index = 0; index < 121; index += 1) {
+    const response = await session.ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/public/websites/ten_demo/approvals/${`rot${index}`.padEnd(43, 'x')}`,
+      remoteAddress: '203.0.113.21',
+    });
+    lastStatus = response.statusCode;
+  }
+  assert.equal(lastStatus, 429);
+});

@@ -66,3 +66,22 @@ describe('website presentation rules', () => {
     assert.equal(canPublish('tenant_admin', build, []), false);
   });
 });
+
+describe('canPublish', () => {
+  const build = { id: 'bld_1', status: 'ok' as const };
+
+  it('allows a successful build when approval is not required', () => {
+    assert.equal(canPublish('tenant_admin', build, [], { requireApproval: false }), true);
+  });
+
+  it('blocks a build that already has a release', () => {
+    assert.equal(
+      canPublish('tenant_admin', build, [], { requireApproval: false, released: true }),
+      false,
+    );
+  });
+
+  it('still needs an approval when the setting is on', () => {
+    assert.equal(canPublish('tenant_admin', build, []), false);
+  });
+});

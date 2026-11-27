@@ -218,6 +218,7 @@ function parseWebsiteDetail(raw: unknown): WebsiteDetail {
     last_build: raw.last_build == null ? null : parseWebsiteBuildSummary(raw.last_build),
     release,
     open_approval: approval,
+    require_approval: raw.require_approval !== false,
   };
 }
 

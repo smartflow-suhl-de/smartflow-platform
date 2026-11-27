@@ -89,7 +89,10 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
     lastBuild === null
       ? null
       : (approvals.find((entry) => entry.build_id === lastBuild.id) ?? null);
-  const publishable = canPublish(role, lastBuild, approvals);
+  const publishable = canPublish(role, lastBuild, approvals, {
+    requireApproval: detail?.require_approval !== false,
+    released: detail?.release?.build_id === lastBuild?.id,
+  });
 
   async function handlePublish(): Promise<void> {
     if (!lastBuild) return;

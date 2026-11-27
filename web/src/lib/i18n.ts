@@ -1309,7 +1309,7 @@ const DE: Messages = {
     expiredBody:
       'Aus Sicherheitsgründen gilt jeder Freigabe-Link nur begrenzt. Bitte fordern Sie beim Team einen neuen Link an.',
     missingTitle: 'Freigabe nicht gefunden',
-    missingBody: 'Der Link ist unvollständig oder wurde zurückgezogen.',
+    missingBody: 'Der Link ist unvollständig oder nicht mehr gültig.',
     errorTitle: 'Freigabe nicht erreichbar',
   },
 };
@@ -1964,7 +1964,7 @@ const EN: Messages = {
     expiredBody:
       'For security, every approval link is time-limited. Please ask the team for a new link.',
     missingTitle: 'Approval not found',
-    missingBody: 'The link is incomplete or was withdrawn.',
+    missingBody: 'The link is incomplete or no longer valid.',
     errorTitle: 'Approval unavailable',
   },
 };

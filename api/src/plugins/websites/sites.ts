@@ -107,6 +107,13 @@ export function registerSites(runtime: Runtime): void {
     },
     async (request) => {
       const database = runtime.tenantDatabase(request);
+      // Expired links must not inflate the dashboard counts.
+      database
+        .prepare(
+          `update web_approvals set state = 'expired', decided_at = ?
+            where state = 'open' and expires_at < ?`,
+        )
+        .run(runtime.now().toISOString(), runtime.now().toISOString());
       const count = (sql: string, ...params: unknown[]) =>
         (database.prepare(sql).get(...params) as { count: number }).count;
       return {
@@ -182,6 +189,14 @@ export function registerSites(runtime: Runtime): void {
         fields.slug = 'Lowercase letters, digits and single hyphens, 2–48 characters.';
       }
       if (Object.keys(fields).length > 0) throw new FieldError(fields);
+      if (slug.length > 0) {
+        const taken = database
+          .prepare('select id from web_sites where slug = ? limit 1')
+          .get(slug) as { id: string } | undefined;
+        if (taken) {
+          throw new FieldError({ slug: 'This slug is already taken.' });
+        }
+      }
       if (slug.length === 0) slug = uniqueSlug(database, name);
 
       const timestamp = runtime.now().toISOString();
