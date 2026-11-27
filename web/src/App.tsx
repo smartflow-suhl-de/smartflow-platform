@@ -38,6 +38,7 @@ import {
 import { WebsiteDetailPage } from './pages/WebsiteDetail';
 import { WebsitesPage } from './pages/Websites';
 import { AgentPage } from './pages/Agent';
+import { EmailPage } from './pages/Email';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -476,7 +477,14 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
       auth.user.role === 'employee' ||
       auth.user.role === 'operator')
   ) {
-    content = <WebsitesPage search={search} locale={locale} messages={messages} />;
+    content = (
+      <WebsitesPage
+        search={search}
+        locale={locale}
+        messages={messages}
+        ownWorkspace={auth.activeTenant === null}
+      />
+    );
   } else if (
     pathname.startsWith('/websites/') &&
     (auth.user.role === 'tenant_admin' ||
@@ -493,6 +501,8 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     );
   } else if (pathname === '/agent' && auth.user.role === 'operator') {
     content = <AgentPage locale={locale} messages={messages} />;
+  } else if (pathname === '/email' && auth.user.role === 'operator') {
+    content = <EmailPage locale={locale} messages={messages} />;
   } else if (pathname === '/settings') {
     content = (
       <SettingsPage

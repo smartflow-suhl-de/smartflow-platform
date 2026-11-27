@@ -406,6 +406,7 @@ test('the plugin source lists what is registered', async (t) => {
   assert.deepEqual(result.items.map((item) => item.id).sort(), [
     'agent',
     'automation-discovery',
+    'email',
     'llm-providers',
     'tenants',
     'websites',
@@ -649,6 +650,87 @@ test('the runs list loads steps for the whole page', async (t) => {
   const items = (list.json() as { items: { run?: unknown; steps: unknown[] }[] }).items;
   assert.equal(items.length, 3);
   assert.ok(items.every((item) => item.steps.length === 1));
+});
+
+test('the run list is per account and searchable', async (t) => {
+  const ctx = await setup();
+  t.after(() => ctx.close());
+  const mine = await ctx.signIn();
+  await ask(ctx, mine, 'Wie viele Mandanten gibt es?');
+  await ask(ctx, mine, 'Welche Plugins laufen?');
+
+  // A second operator account must not see the first one's questions.
+  const other = await ctx.signIn(['zweiter', 'example.com'].join('@'));
+  const otherList = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/runs',
+    headers: { cookie: other },
+  });
+  assert.equal(otherList.statusCode, 200);
+  assert.equal((otherList.json() as { total: number }).total, 0);
+
+  const search = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/runs?q=plugins',
+    headers: { cookie: mine },
+  });
+  const found = search.json() as { total: number; items: { question: string }[] };
+  assert.equal(found.total, 1);
+  assert.equal(found.items[0]?.question, 'Welche Plugins laufen?');
+
+  // `%` is a literal, not "match everything".
+  const literal = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/runs?q=%25',
+    headers: { cookie: mine },
+  });
+  assert.equal((literal.json() as { total: number }).total, 0);
+
+  // The other account cannot open or delete a run by its id.
+  const listed = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/runs',
+    headers: { cookie: mine },
+  });
+  const runId = (listed.json() as { items: { id: string }[] }).items[0]?.id ?? '';
+  const foreignRead = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/agent/runs/${runId}`,
+    headers: { cookie: other },
+  });
+  assert.equal(foreignRead.statusCode, 404);
+  const foreignDelete = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/v1/agent/runs/${runId}`,
+    headers: { cookie: other },
+  });
+  assert.equal(foreignDelete.statusCode, 404);
+
+  const removed = await ctx.app.inject({
+    method: 'DELETE',
+    url: `/api/v1/agent/runs/${runId}`,
+    headers: { cookie: mine },
+  });
+  assert.equal(removed.statusCode, 204);
+  const steps = ctx.db
+    .prepare('select count(*) as count from agent_steps where run_id = ?')
+    .get(runId) as { count: number };
+  assert.equal(steps.count, 0, 'the steps cascade with the run');
+
+  const cleared = await ctx.app.inject({
+    method: 'DELETE',
+    url: '/api/v1/agent/runs',
+    headers: { cookie: mine },
+  });
+  assert.equal(cleared.statusCode, 200);
+  assert.equal((cleared.json() as { deleted: number }).deleted, 1);
+
+  const empty = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/runs',
+    headers: { cookie: mine },
+  });
+  assert.equal((empty.json() as { total: number }).total, 0);
 });
 
 /** Runs one source through the agent loop and returns what the model saw. */

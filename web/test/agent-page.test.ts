@@ -5,13 +5,23 @@ import { describe, it } from 'node:test';
 import './helpers/browser.ts';
 
 const { AgentPage, AnswerBody } = await import('../src/pages/Agent.tsx');
+const { ToastProvider } = await import('../src/components/Toast.tsx');
 const { getMessages } = await import('../src/lib/i18n.ts');
+
+/** The page shows toasts, so it needs the provider AppShell gives it in the app. */
+function renderPage(locale: 'de' | 'en'): string {
+  return renderToStaticMarkup(
+    createElement(
+      ToastProvider,
+      null,
+      createElement(AgentPage, { locale, messages: getMessages(locale) }),
+    ),
+  );
+}
 
 describe('agent page', () => {
   it('renders the title, the composer and three examples', () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentPage, { locale: 'de', messages: getMessages('de') }),
-    );
+    const html = renderPage('de');
 
     assert.ok(html.includes('Agent'));
     assert.ok(html.includes('Frag die Plattform'));
@@ -22,18 +32,22 @@ describe('agent page', () => {
   });
 
   it('does not claim the agent is ready before the status answered', () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentPage, { locale: 'de', messages: getMessages('de') }),
-    );
+    const html = renderPage('de');
 
     assert.ok(html.includes('disabled'), 'the composer waits for the status');
     assert.ok(!html.includes('Bereit'), 'no ready badge without a provider answer');
   });
 
+  it('keeps the stored history behind a button instead of loading it into the thread', () => {
+    const html = renderPage('de');
+
+    assert.ok(html.includes('sf-agent-empty'), 'the chat is the main window');
+    assert.ok(!html.includes('sf-agent-history'), 'the history panel stays closed');
+    assert.ok(html.includes('>Verlauf<'), 'the header offers the history button');
+  });
+
   it('renders the English example set for the English locale', () => {
-    const html = renderToStaticMarkup(
-      createElement(AgentPage, { locale: 'en', messages: getMessages('en') }),
-    );
+    const html = renderPage('en');
 
     assert.ok(html.includes('How many tenants are suspended?'));
     assert.ok(html.includes('What can I ask about?'));

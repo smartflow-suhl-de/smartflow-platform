@@ -89,8 +89,9 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
     lastBuild === null
       ? null
       : (approvals.find((entry) => entry.build_id === lastBuild.id) ?? null);
+  const ownSite = detail !== null && detail.client_id === null;
   const publishable = canPublish(role, lastBuild, approvals, {
-    requireApproval: detail?.require_approval !== false,
+    requireApproval: detail?.require_approval !== false && !ownSite,
     released: detail?.release?.build_id === lastBuild?.id,
   });
 
@@ -103,6 +104,22 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
       const release = await api.publishWebsite(siteId, lastBuild.id);
       setFeedback(messages.websites.publishDone(release.version));
       load();
+    } catch (err) {
+      setError(formatApiError(err, locale));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handlePreview(): Promise<void> {
+    if (!lastBuild) return;
+    setBusy('preview');
+    setError(null);
+    setFeedback(null);
+    try {
+      const link = await api.previewWebsite(siteId, lastBuild.id);
+      window.open(link.preview_url, '_blank', 'noreferrer');
+      setFeedback(messages.websites.previewCreated);
     } catch (err) {
       setError(formatApiError(err, locale));
     } finally {
@@ -246,6 +263,19 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
             <Button
               variant="secondary"
               disabled={busy !== null || !lastBuildOk}
+              title={
+                lastBuildOk ? messages.websites.previewHint : messages.websites.approvalNeedsBuild
+              }
+              onClick={() => void handlePreview()}
+            >
+              {busy === 'preview'
+                ? messages.websites.previewPreparing
+                : messages.websites.previewOpen}
+            </Button>
+            {ownSite ? null : (
+            <Button
+              variant="secondary"
+              disabled={busy !== null || !lastBuildOk}
               title={lastBuildOk ? undefined : messages.websites.approvalNeedsBuild}
               onClick={() => void handleRequestApproval()}
             >
@@ -253,11 +283,18 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
                 ? messages.websites.approvalRequesting
                 : messages.websites.approvalRequest}
             </Button>
-            {role === 'tenant_admin' ? (
+            )}
+            {role === 'tenant_admin' || role === 'operator' ? (
               <Button
                 variant="primary"
                 disabled={busy !== null || !publishable}
-                title={publishable ? undefined : messages.websites.publishBlocked}
+                title={
+                  publishable
+                    ? undefined
+                    : ownSite
+                      ? messages.websites.publishBlockedOwn
+                      : messages.websites.publishBlocked
+                }
                 onClick={() => void handlePublish()}
               >
                 {busy === 'publish'
@@ -299,6 +336,14 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
                   {copied ? messages.websites.copied : messages.websites.copyLink}
                 </Button>
               </div>
+              {approvalLink.preview_url ? (
+                <p className="sf-card-text">
+                  <a href={approvalLink.preview_url} target="_blank" rel="noreferrer">
+                    {messages.websites.previewOpen}
+                  </a>
+                  {` · ${messages.websites.addressHint}`}
+                </p>
+              ) : null}
             </div>
           </Card>
         ) : null}
@@ -325,9 +370,37 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
                 </div>
                 <div className="sf-kv-row">
                   <dt>{messages.websites.projectAstro}</dt>
+                  <dd>Astro {detail.astro_version}</dd>
+                </div>
+                <div className="sf-kv-row">
+                  <dt>{messages.websites.deployTargetLabel}</dt>
                   <dd>
-                    Astro {detail.astro_version}
-                    {detail.deploy_target ? ` · ${detail.deploy_target}` : ''}
+                    {detail.deploy_target === 'static'
+                      ? messages.websites.deployTargetLabels.static
+                      : messages.websites.deployTargetLabels.tailscale}
+                    {detail.internal_port !== null ? ` · :${detail.internal_port}` : ''}
+                  </dd>
+                </div>
+                <div className="sf-kv-row">
+                  <dt>{messages.websites.addressLabel}</dt>
+                  <dd>
+                    {detail.url ? (
+                      <>
+                        <a className="numeric" href={detail.url} target="_blank" rel="noreferrer">
+                          {detail.url}
+                        </a>{' '}
+                        <span className="label">
+                          ·{' '}
+                          {detail.deploy_target === 'static'
+                            ? messages.websites.addressStaticHint
+                            : messages.websites.addressHint}
+                        </span>
+                      </>
+                    ) : detail.internal_port !== null ? (
+                      <span className="label">{messages.websites.addressStaticHint}</span>
+                    ) : (
+                      <span className="label">{messages.websites.addressNone}</span>
+                    )}
                   </dd>
                 </div>
                 <div className="sf-kv-row">
@@ -430,45 +503,47 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
             </div>
           </Card>
 
-          <Card>
-            <CardHeader
-              title={messages.websites.detailApproval}
-              actions={
-                currentApproval ? (
-                  <Badge tone={approvalStateTone(currentApproval.state)}>
-                    {messages.websites.approvalStateLabels[currentApproval.state]}
-                  </Badge>
-                ) : undefined
-              }
-            />
-            <div className="sf-card-body">
-              {currentApproval ? (
-                <dl className="sf-kv-list">
-                  <div className="sf-kv-row">
-                    <dt>{messages.websites.approvalExpiresLabel}</dt>
-                    <dd className="numeric">
-                      {formatDateTime(currentApproval.expires_at, locale)}
-                    </dd>
-                  </div>
-                  <div className="sf-kv-row">
-                    <dt>{messages.websites.approvalRecipient}</dt>
-                    <dd>{currentApproval.recipient ?? messages.websites.projectNone}</dd>
-                  </div>
-                  {currentApproval.comment ? (
+          {ownSite ? null : (
+            <Card>
+              <CardHeader
+                title={messages.websites.detailApproval}
+                actions={
+                  currentApproval ? (
+                    <Badge tone={approvalStateTone(currentApproval.state)}>
+                      {messages.websites.approvalStateLabels[currentApproval.state]}
+                    </Badge>
+                  ) : undefined
+                }
+              />
+              <div className="sf-card-body">
+                {currentApproval ? (
+                  <dl className="sf-kv-list">
                     <div className="sf-kv-row">
-                      <dt>{messages.websites.approvalComment}</dt>
-                      <dd>{currentApproval.comment}</dd>
+                      <dt>{messages.websites.approvalExpiresLabel}</dt>
+                      <dd className="numeric">
+                        {formatDateTime(currentApproval.expires_at, locale)}
+                      </dd>
                     </div>
-                  ) : null}
-                </dl>
-              ) : (
-                <p className="sf-card-text">{messages.websites.approvalNone}</p>
-              )}
-              <p className="sf-card-text" style={{ marginTop: 'var(--spacing-md)' }}>
-                {messages.websites.approvalHint}
-              </p>
-            </div>
-          </Card>
+                    <div className="sf-kv-row">
+                      <dt>{messages.websites.approvalRecipient}</dt>
+                      <dd>{currentApproval.recipient ?? messages.websites.projectNone}</dd>
+                    </div>
+                    {currentApproval.comment ? (
+                      <div className="sf-kv-row">
+                        <dt>{messages.websites.approvalComment}</dt>
+                        <dd>{currentApproval.comment}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                ) : (
+                  <p className="sf-card-text">{messages.websites.approvalNone}</p>
+                )}
+                <p className="sf-card-text" style={{ marginTop: 'var(--spacing-md)' }}>
+                  {messages.websites.approvalHint}
+                </p>
+              </div>
+            </Card>
+          )}
 
           <Card>
             <CardHeader title={messages.websites.aiTitle} meta={messages.websites.aiHint} />

@@ -10,6 +10,9 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       'data/**',
+      // The site template is its own Astro package, copied into the build; the
+      // root lint config does not apply to it.
+      'templates/**',
       'api/src/kernel/plugin-registry.generated.ts',
     ],
   },

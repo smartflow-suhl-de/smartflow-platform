@@ -7,7 +7,7 @@ export interface ResolvedNavItem {
   plugin: string;
   label: string;
   path: string;
-  group: 'work' | 'management';
+  group: 'work' | 'tools' | 'management';
   icon: string;
   order: number;
   roles: Role[];
@@ -94,9 +94,9 @@ export function buildNavigation(
 
 export function groupNavigation(
   items: ResolvedNavItem[],
-): Array<{ group: 'work' | 'management'; items: ResolvedNavItem[] }> {
-  const groups: Array<{ group: 'work' | 'management'; items: ResolvedNavItem[] }> = [];
-  for (const groupName of ['work', 'management'] as const) {
+): Array<{ group: 'work' | 'tools' | 'management'; items: ResolvedNavItem[] }> {
+  const groups: Array<{ group: 'work' | 'tools' | 'management'; items: ResolvedNavItem[] }> = [];
+  for (const groupName of ['work', 'tools', 'management'] as const) {
     const matching = items.filter((item) => !item.utility && item.group === groupName);
     if (matching.length > 0) {
       groups.push({ group: groupName, items: matching });

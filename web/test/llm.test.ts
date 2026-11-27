@@ -213,6 +213,25 @@ describe('LLM API client', () => {
     setOutageHandler(null);
   });
 
+  it('lists consumer plugins with their needsLlm flag', async () => {
+    respond = () =>
+      jsonResponse(200, {
+        items: [
+          { id: 'agent', label: 'Agent', description: 'Reads sources', needsLlm: true },
+          { id: 'tenants', label: 'Tenants', description: 'Tenant admin', needsLlm: false },
+        ],
+      });
+
+    const plugins = await api.listLlmPlugins();
+
+    assert.equal(calls[0]?.url, '/api/v1/llm/plugins');
+    assert.equal(plugins.length, 2);
+    assert.equal(plugins[0]?.id, 'agent');
+    assert.equal(plugins[0]?.needsLlm, true);
+    assert.equal(plugins[1]?.id, 'tenants');
+    assert.equal(plugins[1]?.needsLlm, false);
+  });
+
   it('formats costs and token counts per locale', () => {
     assert.match(formatCost(4_120_000, 'de'), /4,12/);
     assert.equal(formatTokens(999, 'de'), '999');

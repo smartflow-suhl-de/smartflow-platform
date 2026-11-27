@@ -47,7 +47,7 @@ export interface NavEntry {
   plugin: string;
   label: string;
   path: string;
-  group: 'work' | 'management';
+  group: 'work' | 'tools' | 'management';
   icon: string;
   order: number;
   roles: Role[];
@@ -59,12 +59,92 @@ export interface NavResponse {
   items: NavEntry[];
 }
 
+/** Display order of the master-data fields; the edit mask iterates this. */
+export const TENANT_DETAIL_FIELDS = [
+  'legal_name',
+  'legal_form',
+  'customer_number',
+  'industry',
+  'street',
+  'address_extra',
+  'postal_code',
+  'city',
+  'country',
+  'contact_name',
+  'contact_role',
+  'contact_email',
+  'contact_phone',
+  'contact_mobile',
+  'email',
+  'phone',
+  'website',
+  'vat_id',
+  'tax_number',
+  'register_court',
+  'register_number',
+  'notes',
+] as const;
+
+export type TenantDetailField = (typeof TENANT_DETAIL_FIELDS)[number];
+
+/** Mirrors the API limits so the browser stops typing before a 422. */
+export const TENANT_DETAIL_MAX_LENGTH: Record<TenantDetailField, number> = {
+  legal_name: 160,
+  legal_form: 60,
+  customer_number: 40,
+  industry: 80,
+  street: 120,
+  address_extra: 120,
+  postal_code: 12,
+  city: 80,
+  country: 60,
+  contact_name: 120,
+  contact_role: 80,
+  contact_email: 160,
+  contact_phone: 40,
+  contact_mobile: 40,
+  email: 160,
+  phone: 40,
+  website: 160,
+  vat_id: 32,
+  tax_number: 32,
+  register_court: 80,
+  register_number: 60,
+  notes: 2000,
+};
+
+export interface TenantDetails {
+  legal_name: string | null;
+  legal_form: string | null;
+  customer_number: string | null;
+  industry: string | null;
+  street: string | null;
+  address_extra: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country: string | null;
+  contact_name: string | null;
+  contact_role: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  contact_mobile: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  vat_id: string | null;
+  tax_number: string | null;
+  register_court: string | null;
+  register_number: string | null;
+  notes: string | null;
+}
+
 export interface Tenant {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
   created_at: string;
+  details: TenantDetails;
 }
 
 export interface TenantStats {
@@ -79,7 +159,7 @@ export interface TenantListResponse {
   nextCursor: string | null;
 }
 
-// --- Automatisierungs-Scout -------------------------------------------------
+// --- Automatisierungs-Check -------------------------------------------------
 
 export type DiscoveryInviteStatus = 'open' | 'in_progress' | 'completed' | 'revoked' | 'expired';
 export type DiscoveryMode = 'short' | 'standard' | 'full';
@@ -236,6 +316,35 @@ export interface DiscoveryOverview {
   }>;
 }
 
+export interface LlmPluginConsumer {
+  id: string;
+  label: string;
+  description: string;
+  needsLlm: boolean;
+}
+
+export interface LlmPluginConsumersResponse {
+  items: LlmPluginConsumer[];
+}
+
+export type LlmLogLevel = 'info' | 'warn' | 'error';
+
+export interface LlmLogEntry {
+  id: string;
+  level: LlmLogLevel;
+  action: string;
+  providerId: string | null;
+  providerName: string | null;
+  message: string;
+  createdAt: string;
+}
+
+export interface LlmLogListResponse {
+  items: LlmLogEntry[];
+  total: number;
+  nextCursor: string | null;
+}
+
 export type LlmAuthStyle = 'bearer' | 'header' | 'none';
 export type LlmProviderStatus = 'active' | 'disabled';
 export type LlmModelStatus = 'active' | 'disabled';
@@ -267,6 +376,7 @@ export interface LlmProvider {
   retentionDays: number;
   allowedPlugins: string[] | null;
   status: LlmProviderStatus;
+  isDefault: boolean;
   lastTestAt: string | null;
   lastTestStatus: string | null;
   lastTestMs: number | null;
@@ -385,6 +495,7 @@ export interface LlmProviderInput {
   retentionDays?: number;
   allowedPlugins?: string[] | null;
   status?: LlmProviderStatus;
+  isDefault?: boolean;
 }
 
 export interface LlmModelInput {
@@ -461,6 +572,8 @@ export interface Website {
   deploy_target: string | null;
   domain: string | null;
   domain_state: string;
+  /** Internal port of the site listener; `null` until the delivery assigns one. */
+  internal_port: number | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -469,6 +582,8 @@ export interface Website {
 export interface WebsiteListItem extends Website {
   client_name: string | null;
   last_build: WebsiteBuildSummary | null;
+  /** Address on the tailnet, or `null` when no port is assigned. */
+  url: string | null;
 }
 
 export interface WebsiteDetail extends Website {
@@ -478,6 +593,7 @@ export interface WebsiteDetail extends Website {
   release: WebsiteReleaseSummary | null;
   open_approval: WebsiteOpenApproval | null;
   require_approval: boolean;
+  url: string | null;
 }
 
 export interface WebsitePage {
@@ -486,6 +602,8 @@ export interface WebsitePage {
   route: string;
   title: string;
   origin: WebsitePageOrigin;
+  /** Markdown written for this route; `null` while only a title exists. */
+  body_md: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -504,6 +622,8 @@ export interface WebsiteApproval {
 
 export interface WebsiteApprovalLink extends WebsiteApproval {
   url: string;
+  /** Built site with the approval token already appended, if the site has a port. */
+  preview_url: string | null;
 }
 
 export interface WebsiteSummary {
@@ -554,6 +674,11 @@ export interface PublicApproval {
   comment: string | null;
 }
 
+export interface AgentSettings {
+  providerId: string | null;
+  modelId: string | null;
+}
+
 export interface AgentSourceInfo {
   id: string;
   label: string;
@@ -563,6 +688,7 @@ export interface AgentSourceInfo {
 
 export interface AgentStatus {
   configured: boolean;
+  provider?: string | null;
   model: string | null;
   reachable: boolean;
   retentionDays: number;
@@ -602,4 +728,134 @@ export interface AgentRunListResponse {
   items: AgentRun[];
   total: number;
   nextCursor: string | null;
+}
+
+// --- Email plugin ----------------------------------------------------------
+
+export type EmailTlsMode = 'starttls' | 'tls';
+export type EmailDeliveryStatus = 'queued' | 'sending' | 'sent' | 'failed';
+
+export interface EmailSender {
+  name: string;
+  address: string;
+  reply_to: string | null;
+}
+
+export interface EmailTransportView {
+  host: string;
+  port: number;
+  tls_mode: EmailTlsMode;
+  username: string;
+  password_set: boolean;
+}
+
+export interface EmailMailboxView extends EmailTransportView {
+  address: string;
+  configured: boolean;
+}
+
+export interface EmailRetentionView {
+  days: number;
+  min_days: number;
+  max_days: number;
+  presets: number[];
+  scope: string;
+  pending_rows: number;
+  last_run_at: string | null;
+  next_run_at: string;
+}
+
+export interface EmailSettings {
+  status: 'configured' | 'unconfigured';
+  sender: EmailSender;
+  transport: EmailTransportView;
+  mailbox: EmailMailboxView;
+  retention: EmailRetentionView;
+  updated_at: string | null;
+}
+
+export interface EmailSettingsInput {
+  sender: { name: string; address: string; reply_to: string | null };
+  transport: {
+    host: string;
+    port: number;
+    tls_mode: EmailTlsMode;
+    username: string;
+    password?: string | null;
+  };
+  mailbox?: {
+    host: string;
+    port: number;
+    tls_mode: EmailTlsMode;
+    username: string;
+    password?: string | null;
+    address: string;
+  };
+  retention: { days: number };
+  confirm_shortening?: boolean;
+}
+
+export interface EmailRetentionEffect {
+  shortened: boolean;
+  deleted: number;
+  remaining: number;
+}
+
+export interface EmailSettingsSaved extends EmailSettings {
+  retention_effect: EmailRetentionEffect;
+}
+
+export interface EmailOutboxItem {
+  id: string;
+  to_address: string | null;
+  subject: string | null;
+  status: EmailDeliveryStatus;
+  attempts: number;
+  created_at: string;
+  sent_at: string | null;
+  last_error_code: string | null;
+  permanent_failure: boolean;
+}
+
+export interface EmailOutboxDetail extends EmailOutboxItem {
+  text_body: string | null;
+  html_body: string | null;
+  reply_to: string | null;
+  next_attempt_at: string;
+  redacted_at: string | null;
+}
+
+export interface EmailInboxItem {
+  id: string;
+  from_address: string;
+  from_name: string | null;
+  subject: string;
+  snippet: string;
+  received_at: string;
+  unread: boolean;
+  attachment_count: number;
+}
+
+export interface EmailInboxDetail extends EmailInboxItem {
+  message_id: string | null;
+  text_body: string | null;
+  html_body: string | null;
+  retained_until: string;
+}
+
+export interface EmailListResponse<T> {
+  items: T[];
+  total: number;
+  nextCursor: string | null;
+}
+
+export interface EmailInboxStatus {
+  connected: boolean;
+  address: string;
+  last_sync_at: string | null;
+  last_error_code: string | null;
+  uid_validity: number | null;
+  syncing: boolean;
+  unread: number;
+  stored: number;
 }

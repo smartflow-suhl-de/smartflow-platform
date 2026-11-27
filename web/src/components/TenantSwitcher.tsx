@@ -34,7 +34,9 @@ export function TenantSwitcher({
           >
             <CloseIcon size={12} />
           </button>
-        ) : null}
+        ) : (
+          <span className="sf-tenant-switcher-state">{messages.tenantSwitcher.noTenantShort}</span>
+        )}
       </div>
 
       {activeTenant ? (
@@ -44,7 +46,6 @@ export function TenantSwitcher({
           onClick={onOpenModal}
           title={messages.tenantSwitcher.switchTenant}
         >
-          <BuildingIcon size={14} />
           <span className="sf-tenant-switcher-name" title={activeTenant.name}>
             {activeTenant.name}
           </span>
@@ -57,8 +58,6 @@ export function TenantSwitcher({
           onClick={onOpenModal}
           title={messages.tenantSwitcher.chooseTenant}
         >
-          <BuildingIcon size={14} />
-          <span className="sf-tenant-switcher-name">{messages.tenantSwitcher.noTenant}</span>
           <span className="sf-tenant-switcher-action">{messages.tenantSwitcher.chooseTenant}</span>
         </button>
       )}

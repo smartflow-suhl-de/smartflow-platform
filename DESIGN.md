@@ -257,7 +257,7 @@ Rahmen sind immer 1 px und kommen aus `line`; stärkere Rahmen (`line-strong`) n
 - **Hover / Focus:** Farbwechsel in 150 ms, kein Verschieben, keine Schatten. Fokus ist ein 2-px-Kobalt-Ring mit 2 px Abstand; deaktiviert 50 % Deckkraft ohne Pointer.
 
 ### Chips / Badges
-- **Style:** 2 px Radius, 1-px-Rahmen in 30 % der Tonfarbe, Fläche in 8 % derselben Farbe, Text in Vollton. Schrift Martian Mono 12 px, Großbuchstaben, 0.06 em.
+- **Style:** 2 px Radius, 1-px-Rahmen in 30 % der Tonfarbe, Fläche in 8 % derselben Farbe, Text in Vollton. Schrift Schibsted Grotesk 12 px, Gewicht 600, Großbuchstaben, 0.04 em (Badges sind Beschriftung, keine Messwerte — Metering bleibt Mono).
 - **State:** Tonwerte `good`, `warn`, `bad`, `neutral`, `accent`. Zustandswörter bleiben im Fließtext normal geschrieben; das Badge nutzt Großbuchstaben.
 
 ### Cards / Containers

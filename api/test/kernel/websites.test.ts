@@ -111,6 +111,21 @@ async function createSite(session: Session, cookie: string, name = 'Hotel Zum An
   };
 }
 
+/** A client project: only a website that belongs to a customer wants an approval. */
+async function createClientSite(session: Session, cookie: string, name = 'Hotel Zum Anker') {
+  const client = await inject(session, cookie, 'POST', '/api/v1/websites/clients', {
+    name: 'Stadtmarketing Suhl',
+  });
+  assert.equal(client.statusCode, 201, client.payload);
+  const clientId = (client.json() as { id: string }).id;
+  const response = await inject(session, cookie, 'POST', '/api/v1/websites', {
+    name,
+    client_id: clientId,
+  });
+  assert.equal(response.statusCode, 201, response.payload);
+  return response.json() as { id: string; status: string };
+}
+
 function runnerHeaders(session: Session): Record<string, string> {
   return {
     'x-internal-token': session.ctx.internalToken,
@@ -137,17 +152,30 @@ test('without a session every website route answers 401', async (t) => {
   }
 });
 
-test('an operator without a tenant is refused, an employee may not publish or configure', async (t) => {
+test('an operator without a tenant works in the own website area, an employee may not publish or configure', async (t) => {
   const session = await setup(t);
   const site = await createSite(session, session.admin);
 
-  const operator = await inject(session, await session.ctx.signIn(), 'GET', '/api/v1/websites');
-  assert.equal(operator.statusCode, 403);
-  assert.equal((operator.json() as { error: { code: string } }).error.code, 'forbidden');
-  assert.equal(
-    (operator.json() as { error: { message: string } }).error.message,
-    'Select a tenant first.',
+  // No tenant selected: the operator is in the own workspace, not a 403. That
+  // area is separate from every customer database.
+  const operatorCookie = await session.ctx.signIn();
+  const list = await inject(session, operatorCookie, 'GET', '/api/v1/websites');
+  assert.equal(list.statusCode, 200);
+  assert.equal((list.json() as { total: number }).total, 0);
+
+  const own = await inject(session, operatorCookie, 'POST', '/api/v1/websites', {
+    name: 'Eigene Seite',
+  });
+  assert.equal(own.statusCode, 201, own.payload);
+
+  // A customer's site never shows up there.
+  const ownDetail = await inject(
+    session,
+    operatorCookie,
+    'GET',
+    `/api/v1/websites/${site.id}`,
   );
+  assert.equal(ownDetail.statusCode, 404);
 
   const forbidden: Array<['POST' | 'PUT' | 'PATCH', string, unknown]> = [
     ['POST', `/api/v1/websites/${site.id}/releases`, { build_id: 'bld_x' }],
@@ -310,7 +338,7 @@ test('the list paginates with a stable keyset cursor', async (t) => {
 
 test('a build must be finished and approved before it can go live', async (t) => {
   const session = await setup(t);
-  const site = await createSite(session, session.admin);
+  const site = await createClientSite(session, session.admin);
 
   const build = await inject(session, session.admin, 'POST', `/api/v1/websites/${site.id}/builds`, {
     trigger: 'ai',
@@ -413,9 +441,36 @@ test('a build must be finished and approved before it can go live', async (t) =>
   assert.equal(deletion.statusCode, 409, 'a published website is not deleted');
 });
 
-test('a changed approval blocks publishing until the client approves again', async (t) => {
+test('an own website publishes without a client approval', async (t) => {
   const session = await setup(t);
   const site = await createSite(session, session.admin);
+
+  const build = await inject(session, session.admin, 'POST', `/api/v1/websites/${site.id}/builds`, {});
+  assert.equal(build.statusCode, 202, build.payload);
+  const buildId = (build.json() as { id: string }).id;
+  await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/builds/${buildId}/result`,
+    { status: 'ok' },
+    runnerHeaders(session),
+  );
+
+  const release = await inject(
+    session,
+    session.admin,
+    'POST',
+    `/api/v1/websites/${site.id}/releases`,
+    { build_id: buildId },
+  );
+  assert.equal(release.statusCode, 201, release.payload);
+  assert.equal((release.json() as { version: string }).version, 'v1');
+});
+
+test('a changed approval blocks publishing until the client approves again', async (t) => {
+  const session = await setup(t);
+  const site = await createClientSite(session, session.admin);
 
   const build = await inject(
     session,
@@ -903,13 +958,10 @@ test('an operator with an active tenant can access and manage websites for that 
 
   const operatorCookie = await session.ctx.signIn();
 
-  // Without selection -> 403 Select a tenant first.
+  // Without selection the own workspace is active: an empty list, not a 403.
   const before = await inject(session, operatorCookie, 'GET', '/api/v1/websites');
-  assert.equal(before.statusCode, 403);
-  assert.equal(
-    (before.json() as { error: { message: string } }).error.message,
-    'Select a tenant first.',
-  );
+  assert.equal(before.statusCode, 200);
+  assert.equal((before.json() as { total: number }).total, 0);
 
   // Operator selects tenant
   const chooseRes = await session.ctx.app.inject({
@@ -947,7 +999,7 @@ test('an operator with an active tenant can access and manage websites for that 
   });
   assert.equal(settings.statusCode, 200);
 
-  // Clearing selection revokes access again
+  // Clearing selection returns to the own area, which holds no customer site.
   await session.ctx.app.inject({
     method: 'POST',
     url: '/api/v1/auth/tenant',
@@ -955,11 +1007,8 @@ test('an operator with an active tenant can access and manage websites for that 
     payload: { tenantId: null },
   });
   const after = await inject(session, operatorCookie, 'GET', '/api/v1/websites');
-  assert.equal(after.statusCode, 403);
-  assert.equal(
-    (after.json() as { error: { message: string } }).error.message,
-    'Select a tenant first.',
-  );
+  assert.equal(after.statusCode, 200);
+  assert.equal((after.json() as { total: number }).total, 0);
 });
 
 test('a tenant_admin of another tenant never sees websites of the chosen tenant', async (t) => {

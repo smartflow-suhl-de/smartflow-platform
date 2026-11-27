@@ -53,6 +53,30 @@ const sampleTenant: Tenant = {
   slug: 'acme',
   status: 'active',
   created_at: '2026-11-20T10:00:00Z',
+  details: {
+    legal_name: null,
+    legal_form: null,
+    customer_number: null,
+    industry: null,
+    street: null,
+    address_extra: null,
+    postal_code: null,
+    city: null,
+    country: null,
+    contact_name: null,
+    contact_role: null,
+    contact_email: null,
+    contact_phone: null,
+    contact_mobile: null,
+    email: null,
+    phone: null,
+    website: null,
+    vat_id: null,
+    tax_number: null,
+    register_court: null,
+    register_number: null,
+    notes: null,
+  },
 };
 
 describe('tenant switcher api and parsing', () => {
@@ -141,7 +165,7 @@ describe('tenant switcher component rendering', () => {
     );
 
     assert.ok(html.includes(messages.tenantSwitcher.contextLabel));
-    assert.ok(html.includes(messages.tenantSwitcher.noTenant));
+    assert.ok(html.includes(messages.tenantSwitcher.noTenantShort));
     assert.ok(html.includes(messages.tenantSwitcher.chooseTenant));
     // Clear button must not be rendered when no tenant is active
     assert.ok(!html.includes(messages.tenantSwitcher.clearContextAria));

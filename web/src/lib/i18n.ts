@@ -1,6 +1,7 @@
 import { ApiError } from './api';
 import type {
   Role,
+  TenantDetailField,
   TenantStatus,
   WebsiteApprovalState,
   WebsiteBuildStatus,
@@ -68,6 +69,7 @@ export interface Messages {
   roles: Record<Role, string>;
   navGroups: {
     work: string;
+    tools: string;
     management: string;
   };
   navItems: {
@@ -195,12 +197,34 @@ export interface Messages {
     confirmSuspendTitle: (name: string) => string;
     confirmSuspendBody: string;
     confirmSuspendButton: string;
+    actionEdit: string;
+    nameEditLabel: string;
+    slugEditLabel: string;
+    slugEditHint: string;
+    editTitle: (name: string) => string;
+    editHint: string;
+    detailsHint: string;
+    detailLabels: Record<TenantDetailField, string>;
+    sectionCompany: string;
+    sectionAddress: string;
+    sectionContact: string;
+    sectionContactCompany: string;
+    sectionTax: string;
+    sectionNotes: string;
+    notesPlaceholder: string;
+    countryDefault: string;
+    save: string;
+    saving: string;
+    savedSuccess: (name: string) => string;
+    detailsEmpty: string;
+    noContact: string;
   };
   tenantSwitcher: {
     title: string;
     description: string;
     contextLabel: string;
     noTenant: string;
+    noTenantShort: string;
     chooseTenant: string;
     switchTenant: string;
     clearContext: string;
@@ -267,6 +291,17 @@ export interface Messages {
     usageCost: string;
     usageWhen: string;
     usageEmpty: string;
+    logsTitle: string;
+    logsEmpty: string;
+    logsLevel: string;
+    logsAction: string;
+    logsMessage: string;
+    logsAllLevels: string;
+    logsLevelInfo: string;
+    logsLevelWarn: string;
+    logsLevelError: string;
+    logsRefresh: string;
+    logsLoadMore: string;
     newTitle: string;
     newDescription: string;
     editTitle: string;
@@ -296,6 +331,8 @@ export interface Messages {
     dailyLabel: string;
     monthlyLabel: string;
     retentionLabel: string;
+    advancedSettings: string;
+    resetToAllPlugins: string;
     allowedLabel: string;
     allowedHint: string;
     testButton: string;
@@ -309,6 +346,9 @@ export interface Messages {
     modelsMeta: (count: number) => string;
     addModel: string;
     refreshModels: string;
+    filterModelsPlaceholder: string;
+    filterModelsCount: (shown: number, total: number) => string;
+    filterModelsEmpty: string;
     noModels: string;
     modelKeyLabel: string;
     modelLabelLabel: string;
@@ -342,6 +382,85 @@ export interface Messages {
     keyNotSet: string;
     loaded: string;
     errorsLabel: string;
+  };
+  email: {
+    title: string;
+    description: string;
+    tabs: { inbox: string; outbox: string; settings: string };
+    configured: string;
+    unconfigured: string;
+    testMail: string;
+    testSent: string;
+    sync: string;
+    syncing: string;
+    synced: (added: number) => string;
+    inboxTitle: string;
+    inboxMeta: (total: number, unread: number) => string;
+    unreadOnly: string;
+    searchPlaceholder: string;
+    emptyInboxTitle: string;
+    emptyInboxDescription: string;
+    emptyInboxAction: string;
+    emptyListTitle: string;
+    emptyListDescription: string;
+    markUnread: string;
+    markRead: string;
+    attachments: (count: number) => string;
+    showHtml: string;
+    showText: string;
+    htmlBlocked: string;
+    composeTitle: string;
+    composeMeta: string;
+    to: string;
+    subject: string;
+    body: string;
+    send: string;
+    queued: string;
+    outboxTitle: string;
+    outboxMeta: (total: number) => string;
+    filterAll: string;
+    statusLabels: { queued: string; sending: string; sent: string; failed: string };
+    retry: string;
+    retried: string;
+    attempts: (count: number) => string;
+    permanentFailure: string;
+    colTo: string;
+    colSubject: string;
+    colStatus: string;
+    colDate: string;
+    colAction: string;
+    emptyOutboxTitle: string;
+    emptyOutboxDescription: string;
+    senderTitle: string;
+    senderName: string;
+    senderAddress: string;
+    replyTo: string;
+    optional: string;
+    transportTitle: string;
+    host: string;
+    port: string;
+    tls: string;
+    username: string;
+    password: string;
+    passwordSet: string;
+    passwordKeep: string;
+    mailboxTitle: string;
+    mailboxAddress: string;
+    mailboxHint: string;
+    retentionTitle: string;
+    retentionDays: string;
+    retentionHint: (min: number, max: number) => string;
+    retentionPending: (count: number) => string;
+    runRetention: string;
+    retentionRunDone: (deleted: number) => string;
+    retentionShortenTitle: string;
+    retentionShortenBody: (from: number, to: number) => string;
+    save: string;
+    saved: string;
+    updatedAt: (date: string) => string;
+    errorNotConfigured: string;
+    errorSync: string;
+    loadError: string;
   };
   notFound: {
     title: string;
@@ -388,6 +507,29 @@ export interface Messages {
     errorTitle: string;
     history: string;
     clearHistory: string;
+    historyTitle: string;
+    historyDescription: string;
+    historySearchLabel: string;
+    historySearchPlaceholder: string;
+    historyEmptyTitle: string;
+    historyEmptyDescription: string;
+    historyNoMatch: string;
+    historySummary: (shown: number, total: number) => string;
+    historyLoadMore: string;
+    historyOpen: string;
+    historyBack: string;
+    historyLoading: string;
+    historyDelete: string;
+    historyDeleteTitle: string;
+    historyDeleteBody: string;
+    historyDeleted: string;
+    historyClearTitle: string;
+    historyClearBody: string;
+    historyCleared: (count: number) => string;
+    historyRetention: (days: number) => string;
+    historyContinue: string;
+    historyRestored: string;
+    historyResult: string;
   };
   settingsPage: {
     title: string;
@@ -449,16 +591,22 @@ export interface Messages {
     createTitle: string;
     customerLabel: string;
     customerPlaceholder: string;
+    customerHint: string;
+    customerFromTenant: string;
     emailLabel: string;
     emailPlaceholder: string;
+    emailHint: string;
     localeLabel: string;
+    localeHint: string;
     modeLabel: string;
+    modeHint: string;
     modeShort: string;
     modeStandard: string;
     modeFull: string;
     expiryLabel: string;
     expiryHint: string;
     tenantLabel: string;
+    tenantHint: string;
     tenantNone: string;
     createSubmit: string;
     creating: string;
@@ -573,6 +721,7 @@ export interface Messages {
   websites: {
     title: string;
     description: string;
+    ownWorkspaceNote: string;
     newAction: string;
     kpiTotal: string;
     kpiTotalHint: (own: number, client: number) => string;
@@ -658,9 +807,21 @@ export interface Messages {
     copyLink: string;
     copied: string;
     copyFailed: string;
+    addressLabel: string;
+    addressNone: string;
+    addressHint: string;
+    addressStaticHint: string;
+    deployTargetLabel: string;
+    deployTargetLabels: Record<'tailscale' | 'static', string>;
+    openSite: string;
+    previewOpen: string;
+    previewHint: string;
+    previewPreparing: string;
+    previewCreated: string;
     publishAction: string;
     publishing: string;
     publishBlocked: string;
+    publishBlockedOwn: string;
     publishDone: (version: string) => string;
     aiTitle: string;
     aiHint: string;
@@ -730,6 +891,7 @@ const DE: Messages = {
   },
   navGroups: {
     work: 'Arbeit',
+    tools: 'Tools',
     management: 'Verwaltung',
   },
   navItems: {
@@ -739,7 +901,7 @@ const DE: Messages = {
     tenantsCreate: 'Mandant anlegen',
     settings: 'Einstellungen',
     help: 'Hilfe',
-    agent: 'Agent',
+    agent: 'Chat',
   },
   shell: {
     navAria: 'Navigation',
@@ -871,12 +1033,57 @@ const DE: Messages = {
     confirmSuspendBody:
       'Der Zugriff auf die Mandantendatenbank wird im Kernel sofort mit 403 blockiert. Der Vorgang lässt sich jederzeit rückgängig machen.',
     confirmSuspendButton: 'Mandant sperren',
+    actionEdit: 'Bearbeiten',
+    nameEditLabel: 'Anzeigename',
+    slugEditLabel: 'Kürzel',
+    slugEditHint: 'Nur Kleinbuchstaben, Ziffern und Bindestriche (2–48 Zeichen).',
+    editTitle: (name) => `Mandant bearbeiten · ${name}`,
+    editHint: 'Leere Felder werden gelöscht, nicht gespeichert.',
+    detailsHint: 'Firma, Anschrift und Ansprechpartner des Mandanten.',
+    detailLabels: {
+      legal_name: 'Vollständige Firmierung',
+      legal_form: 'Rechtsform',
+      customer_number: 'Kundennummer',
+      industry: 'Branche',
+      street: 'Straße und Hausnummer',
+      address_extra: 'Adresszusatz',
+      postal_code: 'Postleitzahl',
+      city: 'Ort',
+      country: 'Land',
+      contact_name: 'Name',
+      contact_role: 'Funktion',
+      contact_email: 'E-Mail',
+      contact_phone: 'Telefon',
+      contact_mobile: 'Mobil',
+      email: 'Allgemeine E-Mail',
+      phone: 'Telefon (Zentrale)',
+      website: 'Website',
+      vat_id: 'USt-IdNr.',
+      tax_number: 'Steuernummer',
+      register_court: 'Registergericht',
+      register_number: 'Handelsregisternummer',
+      notes: 'Notizen',
+    },
+    sectionCompany: 'Firma',
+    sectionAddress: 'Anschrift',
+    sectionContact: 'Ansprechpartner',
+    sectionContactCompany: 'Kontakt Firma',
+    sectionTax: 'Steuer & Register',
+    sectionNotes: 'Notizen',
+    notesPlaceholder: 'Interne Hinweise zum Mandanten …',
+    countryDefault: 'Deutschland',
+    save: 'Änderungen speichern',
+    saving: 'Wird gespeichert …',
+    savedSuccess: (name) => `Mandant ${name} gespeichert.`,
+    detailsEmpty: 'Noch keine Stammdaten erfasst.',
+    noContact: 'Kein Ansprechpartner hinterlegt',
   },
   tenantSwitcher: {
     title: 'Mandantenkontext wählen',
     description: 'Wählen Sie einen aktiven Mandanten aus, um in dessen Kontext zu arbeiten.',
     contextLabel: 'Mandantenkontext',
     noTenant: 'Kein Mandant gewählt',
+    noTenantShort: 'Keiner',
     chooseTenant: 'Mandant wählen …',
     switchTenant: 'Mandant wechseln …',
     clearContext: 'Kontext aufheben',
@@ -896,9 +1103,9 @@ const DE: Messages = {
     nextPage: 'Weiter',
   },
   llm: {
-    title: 'KI-Anbieter',
+    title: 'LLM-Provider',
     description:
-      'Provider und Modelle zentral verwalten. Plugins fragen einen Zweck an, nie einen Schlüssel.',
+      'OpenAI-kompatible LLM-Provider, Modelle und Freigaben zentral verwalten.',
     addProvider: 'Provider verbinden',
     providersTitle: 'Provider',
     providersMeta: (shown, total) => `${shown} von ${total}`,
@@ -947,6 +1154,17 @@ const DE: Messages = {
     usageCost: 'Kosten',
     usageWhen: 'Zeit',
     usageEmpty: 'Noch keine Aufrufe.',
+    logsTitle: 'Plugin-Logs',
+    logsEmpty: 'Noch keine Einträge im LLM-Plugin protokolliert.',
+    logsLevel: 'Level',
+    logsAction: 'Aktion',
+    logsMessage: 'Meldung',
+    logsAllLevels: 'Alle Level',
+    logsLevelInfo: 'Info',
+    logsLevelWarn: 'Warnung',
+    logsLevelError: 'Fehler',
+    logsRefresh: 'Aktualisieren',
+    logsLoadMore: 'Weitere laden',
     newTitle: 'Provider verbinden',
     newDescription:
       'OpenAI-kompatibel: vLLM, LiteLLM, Ollama, OpenRouter oder ein eigenes Gateway.',
@@ -977,8 +1195,10 @@ const DE: Messages = {
     dailyLabel: 'Tageslimit Tokens (0 = aus)',
     monthlyLabel: 'Monatsbudget Euro (0 = aus)',
     retentionLabel: 'Aufbewahrung (Tage)',
+    advancedSettings: 'Erweiterte Einstellungen',
+    resetToAllPlugins: 'Alle Plugins freigeben',
     allowedLabel: 'Freigegeben für',
-    allowedHint: 'Kommagetrennte Plugin-IDs; leer = alle aktiven Plugins.',
+    allowedHint: 'Plugin-Freigabe per Dropdown auswählen; leer = alle aktiven Plugins.',
     testButton: 'Testen',
     testing: 'Teste …',
     testOk: (ms, models) => `Erreichbar · ${ms} ms · ${models} Modelle`,
@@ -990,6 +1210,9 @@ const DE: Messages = {
     modelsMeta: (count) => `${count} Modelle`,
     addModel: 'Modell hinzufügen',
     refreshModels: 'Modelle laden',
+    filterModelsPlaceholder: 'Modelle filtern (z. B. gpt-4o, claude, qwen) …',
+    filterModelsCount: (shown, total) => `${shown} von ${total} Modellen`,
+    filterModelsEmpty: 'Kein passendes Modell gefunden.',
     noModels:
       'Noch kein Modell. Laden Sie die Liste des Anbieters oder legen Sie eines manuell an.',
     modelKeyLabel: 'Modell-ID',
@@ -1011,8 +1234,9 @@ const DE: Messages = {
     statusLabel: 'Status',
     saveSettings: 'Einstellungen speichern',
     deleteProvider: 'Provider löschen',
-    deleteProviderConfirm: 'Provider und Konfiguration löschen?',
-    backToList: 'Zurück zu KI-Anbieter',
+    deleteProviderConfirm:
+      'Provider mit allen Modellen und der Konfiguration löschen? Zwecke, die diese Modelle nutzen, bleiben danach ohne Modell.',
+    backToList: 'Zurück zu LLM-Provider',
     notFoundTitle: 'Provider nicht gefunden',
     notFoundDescription: 'Der Provider existiert nicht mehr.',
     factBaseUrl: 'Basis-URL',
@@ -1025,12 +1249,99 @@ const DE: Messages = {
     loaded: 'Modelle geladen.',
     errorsLabel: 'Fehler',
   },
+  email: {
+    title: 'E-Mail',
+    description: 'Globaler Absender, Postausgang und lesendes Postfach an einer Stelle.',
+    tabs: { inbox: 'Postfach', outbox: 'Postausgang', settings: 'Einstellungen' },
+    configured: 'Eingerichtet',
+    unconfigured: 'Nicht eingerichtet',
+    testMail: 'Testnachricht',
+    testSent: 'Testnachricht in den Postausgang gelegt.',
+    sync: 'Jetzt synchronisieren',
+    syncing: 'Synchronisiert …',
+    synced: (added) => `${added} neue Nachricht${added === 1 ? '' : 'en'} eingelesen.`,
+    inboxTitle: 'Postfach',
+    inboxMeta: (total, unread) => `${total} Nachrichten · ${unread} ungelesen`,
+    unreadOnly: 'Nur ungelesen',
+    searchPlaceholder: 'Absender, Betreff oder Text suchen …',
+    emptyInboxTitle: 'Noch kein Postfach verbunden',
+    emptyInboxDescription:
+      'Hinterlegen Sie IMAP-Zugang und Adresse in den Einstellungen. Gelesen wird nur INBOX, ohne Server-Flags zu ändern.',
+    emptyInboxAction: 'Einstellungen öffnen',
+    emptyListTitle: 'Keine Nachrichten',
+    emptyListDescription: 'Für den aktuellen Filter ist nichts vorhanden.',
+    markUnread: 'Als ungelesen',
+    markRead: 'Als gelesen',
+    attachments: (count) => `${count} Anhang${count === 1 ? '' : 'änge'}`,
+    showHtml: 'HTML anzeigen',
+    showText: 'Text anzeigen',
+    htmlBlocked: 'Skripte und externe Bilder sind blockiert.',
+    composeTitle: 'Neue Nachricht',
+    composeMeta: 'Versand über den globalen Absender. Kein eigenes Von-Feld.',
+    to: 'Empfänger',
+    subject: 'Betreff',
+    body: 'Text',
+    send: 'Senden',
+    queued: 'In den Postausgang gelegt.',
+    outboxTitle: 'Postausgang',
+    outboxMeta: (total) => `${total} Nachrichten`,
+    filterAll: 'Alle',
+    statusLabels: {
+      queued: 'In Warteschlange',
+      sending: 'Wird gesendet',
+      sent: 'Gesendet',
+      failed: 'Fehlgeschlagen',
+    },
+    retry: 'Erneut versuchen',
+    retried: 'Erneut eingereiht.',
+    attempts: (count) => `${count} Versuch${count === 1 ? '' : 'e'}`,
+    permanentFailure: 'Endgültig fehlgeschlagen',
+    colTo: 'Empfänger',
+    colSubject: 'Betreff',
+    colStatus: 'Status',
+    colDate: 'Angelegt',
+    colAction: 'Aktion',
+    emptyOutboxTitle: 'Keine Nachrichten im Postausgang',
+    emptyOutboxDescription: 'Gesendete und wartende Nachrichten erscheinen hier.',
+    senderTitle: 'Absender',
+    senderName: 'Anzeigename',
+    senderAddress: 'Absenderadresse',
+    replyTo: 'Antwort an',
+    optional: 'optional',
+    transportTitle: 'SMTP-Transport',
+    host: 'Host',
+    port: 'Port',
+    tls: 'Verschlüsselung',
+    username: 'Benutzername',
+    password: 'Passwort',
+    passwordSet: 'Passwort gesetzt',
+    passwordKeep: 'Leer lassen, um das gespeicherte Passwort zu behalten.',
+    mailboxTitle: 'Postfach (IMAP, lesend)',
+    mailboxAddress: 'Postfachadresse',
+    mailboxHint:
+      'Nur INBOX, nur lesend. Nachrichten werden kopiert; der Server behält Flags und Originale.',
+    retentionTitle: 'Aufbewahrung',
+    retentionDays: 'Tage',
+    retentionHint: (min, max) => `Erlaubt sind ${min} bis ${max} Tage, global für Ausgang und Postfach.`,
+    retentionPending: (count) => `${count} Nachrichten warten noch auf das Löschen.`,
+    runRetention: 'Jetzt bereinigen',
+    retentionRunDone: (deleted) => `${deleted} Nachrichten bereinigt.`,
+    retentionShortenTitle: 'Aufbewahrung verkürzen?',
+    retentionShortenBody: (from, to) =>
+      `Die Frist sinkt von ${from} auf ${to} Tage. Alle älteren Nachrichten und Inhalte werden sofort gelöscht. Das lässt sich nicht rückgängig machen.`,
+    save: 'Speichern',
+    saved: 'Gespeichert.',
+    updatedAt: (date) => `Zuletzt geändert: ${date}`,
+    errorNotConfigured: 'SMTP ist noch nicht vollständig eingerichtet.',
+    errorSync: 'Das Postfach konnte nicht gelesen werden.',
+    loadError: 'Die E-Mail-Daten konnten nicht geladen werden.',
+  },
   agent: {
-    title: 'Agent',
+    title: 'Chat',
     description: 'Fragt die Plattform nach ihrem Zustand — liest nur, ändert nichts.',
     placeholder: 'Frag die Plattform …',
     textareaLabel: 'Frage an den Agenten',
-    hint: 'Enter sendet · Shift+Enter neue Zeile · liest nur',
+    hint: 'Enter sendet · Shift+Enter neue Zeile · Lesender Zugriff',
     send: 'Senden',
     thinking: 'Der Agent liest die Datenquellen …',
     examples: 'Beispiele',
@@ -1068,6 +1379,35 @@ const DE: Messages = {
     errorTitle: 'Die Frage konnte nicht beantwortet werden.',
     history: 'Verlauf',
     clearHistory: 'Verlauf leeren',
+    historyTitle: 'Verlauf',
+    historyDescription:
+      'Gespeicherte Fragen und Antworten. Einträge lassen sich wieder öffnen, einzeln löschen oder als Ausgangspunkt weiterführen.',
+    historySearchLabel: 'Verlauf durchsuchen',
+    historySearchPlaceholder: 'Frage oder Antwort suchen',
+    historyEmptyTitle: 'Noch kein Verlauf',
+    historyEmptyDescription:
+      'Sobald Sie eine Frage stellen, erscheint sie hier und bleibt über Sitzungen hinweg abrufbar.',
+    historyNoMatch: 'Keine Einträge passen zur Suche.',
+    historySummary: (shown, total) =>
+      total === shown ? `${total} Einträge` : `${shown} von ${total} Einträgen`,
+    historyLoadMore: 'Weitere laden',
+    historyOpen: 'Öffnen',
+    historyBack: 'Zurück zum Verlauf',
+    historyLoading: 'Verlauf wird geladen …',
+    historyDelete: 'Eintrag löschen',
+    historyDeleteTitle: 'Frage löschen?',
+    historyDeleteBody:
+      'Nur dieser Eintrag wird dauerhaft entfernt. Frage, Antwort und Datenquellen sind danach nicht mehr abrufbar.',
+    historyDeleted: 'Eintrag gelöscht.',
+    historyClearTitle: 'Gesamten Verlauf löschen?',
+    historyClearBody:
+      'Alle gespeicherten Fragen und Antworten dieses Kontos werden dauerhaft entfernt. Das lässt sich nicht zurücknehmen.',
+    historyCleared: (count) =>
+      count === 1 ? '1 Eintrag gelöscht.' : `${count} Einträge gelöscht.`,
+    historyRetention: (days) => `Einträge werden nach ${days} Tagen automatisch entfernt.`,
+    historyContinue: 'Weiterfragen',
+    historyRestored: 'Verlauf geladen.',
+    historyResult: 'Erneut geöffnet',
   },
   notFound: {
     title: 'Seite nicht gefunden',
@@ -1142,22 +1482,34 @@ const DE: Messages = {
     openApiLink: 'OpenAPI-Spezifikation öffnen',
   },
   discovery: {
-    title: 'Automatisierungs-Scout',
+    title: 'Automatisierungs-Check',
     description:
       'Einmal-Link pro Kunde, KI-Interview ohne Anmeldung und eine priorisierte Auswertung für das Erstgespräch.',
     createTitle: 'Neue Einladung',
     customerLabel: 'Kunde',
     customerPlaceholder: 'Firma oder Ansprechpartner',
+    customerHint:
+      'Firma oder Name des Ansprechpartners. Der Eintrag erscheint im Interview und in der Einladungsliste.',
+    customerFromTenant:
+      'Der Mandantenname gilt als Kunde – Kundenname und E-Mail werden nicht benötigt.',
     emailLabel: 'E-Mail des Ansprechpartners (optional)',
     emailPlaceholder: 'name@firma.de',
+    emailHint:
+      'Nur als Kontaktnotiz gespeichert. In diesem Stand wird keine E-Mail versendet – den Link geben Sie selbst weiter.',
     localeLabel: 'Sprache des Interviews',
+    localeHint: 'Sprache, in der der Kunde Landkarte, Fragen und Auswertung sieht.',
     modeLabel: 'Umfang',
+    modeHint:
+      'Bestimmt, wie viele Themen das Interview abfragt. Mehr Themen ergeben eine genauere Auswertung, dauern aber länger.',
     modeShort: 'Kurzcheck (nur Landkarte)',
     modeStandard: 'Standard (Landkarte + 3 Themen)',
     modeFull: 'Voll (Landkarte + 5 Themen)',
     expiryLabel: 'Gültigkeit in Tagen',
-    expiryHint: '1 bis 30 Tage. Standard sind 14 Tage.',
+    expiryHint:
+      '1 bis 30 Tage, Standard 14. Nach Ablauf ist der Link gesperrt; ein neuer Link lässt sich jederzeit erzeugen.',
     tenantLabel: 'Mandant (optional)',
+    tenantHint:
+      'Ordnet die Einladung einem Kundenkonto zu. Ohne Auswahl bleibt sie auf Plattformebene.',
     tenantNone: 'Kein Mandantenbezug',
     createSubmit: 'Einladung anlegen',
     creating: 'Wird angelegt …',
@@ -1283,6 +1635,8 @@ const DE: Messages = {
     title: 'Webseiten',
     description:
       'Eigene Seiten und Kundenprojekte an einer Stelle: Entwurf, Astro-Build, Vorschau, Freigabe und Livegang.',
+    ownWorkspaceNote:
+      'Kein Mandant gewählt: Sie arbeiten im eigenen Website-Bereich. Diese Seiten gehören Ihnen, nicht einem Kunden.',
     newAction: 'Neue Website',
     kpiTotal: 'Webseiten',
     kpiTotalHint: (own, client) => `${own} eigene · ${client} Kunden`,
@@ -1366,7 +1720,7 @@ const DE: Messages = {
     buildDuration: (ms) => `${(ms / 1000).toFixed(1)} s`,
     buildAction: 'Build starten',
     buildStarting: 'Wird gestartet …',
-    buildQueued: 'Build eingereiht. Ein Runner arbeitet ihn ab.',
+    buildQueued: 'Build eingereiht. Er läuft im Hintergrund.',
     detailApproval: 'Freigabe',
     approvalNone: 'Keine Freigabe angefordert.',
     approvalHint:
@@ -1389,10 +1743,26 @@ const DE: Messages = {
     copyLink: 'Kopieren',
     copied: 'Kopiert',
     copyFailed: 'Kopieren nicht möglich. Markieren Sie den Link von Hand.',
+    addressLabel: 'Adresse',
+    addressNone: 'Noch kein Port vergeben.',
+    addressHint: 'Nur im Tailnet erreichbar · kein öffentlicher Zugang',
+    addressStaticHint: 'Nur intern ausgeliefert · kein Tailnet-Zugang',
+    deployTargetLabel: 'Auslieferung',
+    deployTargetLabels: {
+      tailscale: 'Tailnet-Port',
+      static: 'Nur intern',
+    },
+    openSite: 'Öffnen',
+    previewOpen: 'Vorschau öffnen',
+    previewHint:
+      'Zeigt den neuesten Build für zwei Stunden · nur für das Team, ohne Veröffentlichung.',
+    previewPreparing: 'Vorschau wird erstellt …',
+    previewCreated: 'Vorschau geöffnet. Der Link gilt zwei Stunden und zeigt genau diesen Build.',
     publishAction: 'Veröffentlichen',
     publishing: 'Wird veröffentlicht …',
     publishBlocked:
       'Veröffentlichen braucht einen erfolgreichen Build und die Freigabe des Kunden.',
+    publishBlockedOwn: 'Veröffentlichen braucht einen erfolgreichen Build.',
     publishDone: (version) => `${version} ist live.`,
     aiTitle: 'KI-Entwurf',
     aiHint: 'Brief an einen Runner',
@@ -1469,6 +1839,7 @@ const EN: Messages = {
   },
   navGroups: {
     work: 'Work',
+    tools: 'Tools',
     management: 'Management',
   },
   navItems: {
@@ -1478,7 +1849,7 @@ const EN: Messages = {
     tenantsCreate: 'Create tenant',
     settings: 'Settings',
     help: 'Help',
-    agent: 'Agent',
+    agent: 'Chat',
   },
   shell: {
     navAria: 'Navigation',
@@ -1605,12 +1976,57 @@ const EN: Messages = {
     confirmSuspendBody:
       'Database access for this tenant will immediately return HTTP 403. You can resume the tenant at any time.',
     confirmSuspendButton: 'Suspend tenant',
+    actionEdit: 'Edit',
+    nameEditLabel: 'Display name',
+    slugEditLabel: 'Slug',
+    slugEditHint: 'Lowercase letters, digits and hyphens only (2–48 characters).',
+    editTitle: (name) => `Edit tenant · ${name}`,
+    editHint: 'Empty fields are cleared, not stored.',
+    detailsHint: 'Company, address and contact person of the tenant.',
+    detailLabels: {
+      legal_name: 'Full legal name',
+      legal_form: 'Legal form',
+      customer_number: 'Customer number',
+      industry: 'Industry',
+      street: 'Street and number',
+      address_extra: 'Address line 2',
+      postal_code: 'Postal code',
+      city: 'City',
+      country: 'Country',
+      contact_name: 'Name',
+      contact_role: 'Role',
+      contact_email: 'Email',
+      contact_phone: 'Phone',
+      contact_mobile: 'Mobile',
+      email: 'General email',
+      phone: 'Phone (main)',
+      website: 'Website',
+      vat_id: 'VAT ID',
+      tax_number: 'Tax number',
+      register_court: 'Register court',
+      register_number: 'Register number',
+      notes: 'Notes',
+    },
+    sectionCompany: 'Company',
+    sectionAddress: 'Address',
+    sectionContact: 'Contact person',
+    sectionContactCompany: 'Company contact',
+    sectionTax: 'Tax & register',
+    sectionNotes: 'Notes',
+    notesPlaceholder: 'Internal notes about this tenant …',
+    countryDefault: 'Germany',
+    save: 'Save changes',
+    saving: 'Saving …',
+    savedSuccess: (name) => `Tenant ${name} saved.`,
+    detailsEmpty: 'No master data recorded yet.',
+    noContact: 'No contact person on file',
   },
   tenantSwitcher: {
     title: 'Select tenant context',
     description: 'Choose an active tenant to work within their context.',
     contextLabel: 'Tenant context',
     noTenant: 'No tenant selected',
+    noTenantShort: 'None',
     chooseTenant: 'Select tenant …',
     switchTenant: 'Switch tenant …',
     clearContext: 'Clear context',
@@ -1630,9 +2046,9 @@ const EN: Messages = {
     nextPage: 'Next',
   },
   llm: {
-    title: 'AI providers',
+    title: 'LLM providers',
     description:
-      'Manage providers and models in one place. Plugins ask for a purpose, never for a key.',
+      'Manage OpenAI-compatible LLM providers, models and plugin access in one place.',
     addProvider: 'Connect provider',
     providersTitle: 'Providers',
     providersMeta: (shown, total) => `${shown} of ${total}`,
@@ -1680,6 +2096,17 @@ const EN: Messages = {
     usageCost: 'Cost',
     usageWhen: 'Time',
     usageEmpty: 'No calls yet.',
+    logsTitle: 'Plugin logs',
+    logsEmpty: 'No LLM plugin log entries yet.',
+    logsLevel: 'Level',
+    logsAction: 'Action',
+    logsMessage: 'Message',
+    logsAllLevels: 'All levels',
+    logsLevelInfo: 'Info',
+    logsLevelWarn: 'Warning',
+    logsLevelError: 'Error',
+    logsRefresh: 'Refresh',
+    logsLoadMore: 'Load more',
     newTitle: 'Connect provider',
     newDescription: 'OpenAI-compatible: vLLM, LiteLLM, Ollama, OpenRouter or a custom gateway.',
     editTitle: 'Edit provider',
@@ -1709,8 +2136,10 @@ const EN: Messages = {
     dailyLabel: 'Daily token limit (0 = off)',
     monthlyLabel: 'Monthly budget in euro (0 = off)',
     retentionLabel: 'Retention (days)',
+    advancedSettings: 'Advanced settings',
+    resetToAllPlugins: 'Allow all plugins',
     allowedLabel: 'Allowed for',
-    allowedHint: 'Comma-separated plugin ids; empty = every active plugin.',
+    allowedHint: 'Select plugin access via dropdown; empty = every active plugin.',
     testButton: 'Test',
     testing: 'Testing …',
     testOk: (ms, models) => `Reachable · ${ms} ms · ${models} models`,
@@ -1722,6 +2151,9 @@ const EN: Messages = {
     modelsMeta: (count) => `${count} models`,
     addModel: 'Add model',
     refreshModels: 'Load models',
+    filterModelsPlaceholder: 'Filter models (e.g. gpt-4o, claude, qwen) …',
+    filterModelsCount: (shown, total) => `${shown} of ${total} models`,
+    filterModelsEmpty: 'No matching models found.',
     noModels: 'No model yet. Load the provider list or add one manually.',
     modelKeyLabel: 'Model id',
     modelLabelLabel: 'Display name',
@@ -1742,8 +2174,9 @@ const EN: Messages = {
     statusLabel: 'Status',
     saveSettings: 'Save settings',
     deleteProvider: 'Delete provider',
-    deleteProviderConfirm: 'Delete the provider and its configuration?',
-    backToList: 'Back to AI providers',
+    deleteProviderConfirm:
+      'Delete the provider with all its models and configuration? Purposes that use these models will be left without one.',
+    backToList: 'Back to LLM providers',
     notFoundTitle: 'Provider not found',
     notFoundDescription: 'This provider no longer exists.',
     factBaseUrl: 'Base URL',
@@ -1755,6 +2188,93 @@ const EN: Messages = {
     keyNotSet: 'No key',
     loaded: 'Models loaded.',
     errorsLabel: 'Errors',
+  },
+  email: {
+    title: 'Email',
+    description: 'One global sender, the outbox and a read-only mailbox in one place.',
+    tabs: { inbox: 'Inbox', outbox: 'Outbox', settings: 'Settings' },
+    configured: 'Configured',
+    unconfigured: 'Not configured',
+    testMail: 'Send test',
+    testSent: 'Test message queued.',
+    sync: 'Sync now',
+    syncing: 'Syncing …',
+    synced: (added) => `${added} new message${added === 1 ? '' : 's'} stored.`,
+    inboxTitle: 'Inbox',
+    inboxMeta: (total, unread) => `${total} messages · ${unread} unread`,
+    unreadOnly: 'Unread only',
+    searchPlaceholder: 'Search sender, subject or text …',
+    emptyInboxTitle: 'No mailbox connected',
+    emptyInboxDescription:
+      'Add IMAP credentials and the address in the settings. Only INBOX is read and server flags are never changed.',
+    emptyInboxAction: 'Open settings',
+    emptyListTitle: 'No messages',
+    emptyListDescription: 'Nothing matches the current filter.',
+    markUnread: 'Mark unread',
+    markRead: 'Mark read',
+    attachments: (count) => `${count} attachment${count === 1 ? '' : 's'}`,
+    showHtml: 'Show HTML',
+    showText: 'Show text',
+    htmlBlocked: 'Scripts and external images are blocked.',
+    composeTitle: 'New message',
+    composeMeta: 'Sent through the global sender. There is no custom From field.',
+    to: 'Recipient',
+    subject: 'Subject',
+    body: 'Text',
+    send: 'Send',
+    queued: 'Queued in the outbox.',
+    outboxTitle: 'Outbox',
+    outboxMeta: (total) => `${total} messages`,
+    filterAll: 'All',
+    statusLabels: {
+      queued: 'Queued',
+      sending: 'Sending',
+      sent: 'Sent',
+      failed: 'Failed',
+    },
+    retry: 'Try again',
+    retried: 'Queued again.',
+    attempts: (count) => `${count} attempt${count === 1 ? '' : 's'}`,
+    permanentFailure: 'Permanent failure',
+    colTo: 'Recipient',
+    colSubject: 'Subject',
+    colStatus: 'Status',
+    colDate: 'Created',
+    colAction: 'Action',
+    emptyOutboxTitle: 'The outbox is empty',
+    emptyOutboxDescription: 'Sent and waiting messages appear here.',
+    senderTitle: 'Sender',
+    senderName: 'Display name',
+    senderAddress: 'Sender address',
+    replyTo: 'Reply to',
+    optional: 'optional',
+    transportTitle: 'SMTP transport',
+    host: 'Host',
+    port: 'Port',
+    tls: 'Encryption',
+    username: 'Username',
+    password: 'Password',
+    passwordSet: 'Password set',
+    passwordKeep: 'Leave empty to keep the stored password.',
+    mailboxTitle: 'Mailbox (IMAP, read-only)',
+    mailboxAddress: 'Mailbox address',
+    mailboxHint:
+      'Only INBOX, read-only. Messages are copied; the server keeps flags and originals.',
+    retentionTitle: 'Retention',
+    retentionDays: 'Days',
+    retentionHint: (min, max) => `Allowed are ${min} to ${max} days, global for outbox and inbox.`,
+    retentionPending: (count) => `${count} messages are still waiting to be deleted.`,
+    runRetention: 'Clean up now',
+    retentionRunDone: (deleted) => `${deleted} messages cleaned up.`,
+    retentionShortenTitle: 'Shorten the retention?',
+    retentionShortenBody: (from, to) =>
+      `The window drops from ${from} to ${to} days. Everything older is deleted immediately. This cannot be undone.`,
+    save: 'Save',
+    saved: 'Saved.',
+    updatedAt: (date) => `Last changed: ${date}`,
+    errorNotConfigured: 'SMTP is not fully configured yet.',
+    errorSync: 'The mailbox could not be read.',
+    loadError: 'The email data could not be loaded.',
   },
   agent: {
     title: 'Agent',
@@ -1799,6 +2319,35 @@ const EN: Messages = {
     errorTitle: 'The question could not be answered.',
     history: 'History',
     clearHistory: 'Clear history',
+    historyTitle: 'History',
+    historyDescription:
+      'Saved questions and answers. Entries can be reopened, deleted one at a time, or continued as a starting point.',
+    historySearchLabel: 'Search history',
+    historySearchPlaceholder: 'Search question or answer',
+    historyEmptyTitle: 'No history yet',
+    historyEmptyDescription:
+      'As soon as you ask a question it appears here and stays available across sessions.',
+    historyNoMatch: 'No entries match the search.',
+    historySummary: (shown, total) =>
+      total === shown ? `${total} entries` : `${shown} of ${total} entries`,
+    historyLoadMore: 'Load more',
+    historyOpen: 'Open',
+    historyBack: 'Back to history',
+    historyLoading: 'Loading history …',
+    historyDelete: 'Delete entry',
+    historyDeleteTitle: 'Delete this question?',
+    historyDeleteBody:
+      'Only this entry is removed for good. Its question, answer, and sources are no longer retrievable.',
+    historyDeleted: 'Entry deleted.',
+    historyClearTitle: 'Delete the whole history?',
+    historyClearBody:
+      'Every saved question and answer of this account is removed for good. This cannot be undone.',
+    historyCleared: (count) =>
+      count === 1 ? '1 entry deleted.' : `${count} entries deleted.`,
+    historyRetention: (days) => `Entries are removed automatically after ${days} days.`,
+    historyContinue: 'Ask again',
+    historyRestored: 'History loaded.',
+    historyResult: 'Reopened',
   },
   notFound: {
     title: 'Page not found',
@@ -1872,22 +2421,34 @@ const EN: Messages = {
     openApiLink: 'Open OpenAPI specification',
   },
   discovery: {
-    title: 'Automation scout',
+    title: 'Automation check',
     description:
       'One link per customer, an AI interview without sign-in and a prioritised assessment for the first call.',
     createTitle: 'New invitation',
     customerLabel: 'Customer',
     customerPlaceholder: 'Company or contact',
+    customerHint:
+      'Company or contact name. It appears in the interview and in the invitation list.',
+    customerFromTenant:
+      'The tenant name is used as the customer – no customer name or email is needed.',
     emailLabel: 'Contact email (optional)',
     emailPlaceholder: 'name@company.com',
+    emailHint:
+      'Stored as a contact note only. This build sends no email – you pass the link on yourself.',
     localeLabel: 'Interview language',
+    localeHint: 'Language the customer sees for the map, questions and assessment.',
     modeLabel: 'Scope',
+    modeHint:
+      'Sets how many topics the interview covers. More topics make the assessment more precise but take longer.',
     modeShort: 'Short check (map only)',
     modeStandard: 'Standard (map + 3 topics)',
     modeFull: 'Full (map + 5 topics)',
     expiryLabel: 'Valid for days',
-    expiryHint: '1 to 30 days. The default is 14.',
+    expiryHint:
+      '1 to 30 days, 14 by default. The link is locked afterwards; a new link can be created at any time.',
     tenantLabel: 'Tenant (optional)',
+    tenantHint:
+      'Assigns the invitation to a customer account. Without a selection it stays at platform level.',
     tenantNone: 'No tenant',
     createSubmit: 'Create invitation',
     creating: 'Creating …',
@@ -2010,6 +2571,8 @@ const EN: Messages = {
     title: 'Websites',
     description:
       'Own sites and client projects in one place: draft, Astro build, preview, approval and go-live.',
+    ownWorkspaceNote:
+      'No tenant selected: you are working in your own website area. These sites belong to you, not to a client.',
     newAction: 'New website',
     kpiTotal: 'Websites',
     kpiTotalHint: (own, client) => `${own} own · ${client} clients`,
@@ -2093,7 +2656,7 @@ const EN: Messages = {
     buildDuration: (ms) => `${(ms / 1000).toFixed(1)} s`,
     buildAction: 'Start build',
     buildStarting: 'Starting …',
-    buildQueued: 'Build queued. A runner will process it.',
+    buildQueued: 'Build queued. It runs in the background.',
     detailApproval: 'Approval',
     approvalNone: 'No approval requested.',
     approvalHint:
@@ -2116,9 +2679,24 @@ const EN: Messages = {
     copyLink: 'Copy',
     copied: 'Copied',
     copyFailed: 'Copy failed. Select the link and copy it manually.',
+    addressLabel: 'Address',
+    addressNone: 'No port assigned yet.',
+    addressHint: 'Reachable on the tailnet only · no public access',
+    addressStaticHint: 'Served internally only · no tailnet access',
+    deployTargetLabel: 'Delivery',
+    deployTargetLabels: {
+      tailscale: 'Tailnet port',
+      static: 'Internal only',
+    },
+    openSite: 'Open',
+    previewOpen: 'Open preview',
+    previewHint: 'Shows the newest build for two hours · staff only, without publishing.',
+    previewPreparing: 'Creating preview …',
+    previewCreated: 'Preview opened. The link is valid for two hours and shows exactly this build.',
     publishAction: 'Publish',
     publishing: 'Publishing …',
     publishBlocked: 'Publishing needs a successful build and the client approval.',
+    publishBlockedOwn: 'Publishing needs a successful build.',
     publishDone: (version) => `${version} is live.`,
     aiTitle: 'AI draft',
     aiHint: 'brief for a runner',

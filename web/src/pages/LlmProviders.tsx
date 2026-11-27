@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
+import { HelpTip } from '../components/HelpTip';
 import { SparklesIcon } from '../components/icons';
 import {
   Badge,
@@ -12,6 +20,7 @@ import {
   KpiTile,
   PageHeader,
 } from '../components/ui';
+import { useToast } from '../components/useToast';
 import { ApiError, api, isAbortError } from '../lib/api';
 import {
   formatApiError,
@@ -23,16 +32,64 @@ import {
 import { AppLink, navigate } from '../lib/router';
 import type {
   LlmAuthStyle,
+  LlmLogEntry,
+  LlmLogLevel,
   LlmModel,
   LlmModelInput,
+  LlmPluginConsumer,
   LlmProvider,
   LlmProviderInput,
-  LlmProviderTestResult,
-  LlmPurpose,
   LlmUsageSummary,
 } from '../lib/types';
 
 const PAGE_SIZE = 25;
+
+/**
+ * Provider templates that connect through a browser login. A template never
+ * prefills the manual form: the backend runs the provider's device flow and
+ * creates the provider with a sealed key, so no secret is typed or copied.
+ */
+interface ProviderTemplate {
+  id: string;
+  label: string;
+  /** Shown under the title: what the browser login does. */
+  note: { de: string; en: string };
+  docs: string;
+}
+
+const PROVIDER_TEMPLATES: ProviderTemplate[] = [
+  {
+    id: 'martllm',
+    label: 'MartLLM',
+    note: {
+      de: 'Per Browser-Login verbinden: Link öffnen, anmelden, Verbindung bestätigen. Der Key wird automatisch versiegelt gespeichert.',
+      en: 'Connect via browser login: open the link, sign in, approve the connection. The key is stored sealed automatically.',
+    },
+    docs: 'https://martllm.com/de/docs',
+  },
+];
+
+/** A stored URL the operator may want to open: shown as a real link, never as raw text. */
+function ExternalLink({
+  href,
+  children,
+  className,
+}: {
+  href: string;
+  children?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={className ?? 'numeric sf-text-link'}
+    >
+      {children ?? href}
+    </a>
+  );
+}
 
 export function formatCost(costMicros: number, locale: Locale): string {
   const euros = costMicros / 1_000_000;
@@ -66,33 +123,27 @@ export interface LlmProvidersPageProps {
   messages: Messages;
 }
 
-type ListTab = 'providers' | 'purposes' | 'usage';
+type ListTab = 'providers' | 'usage' | 'logs';
 
 export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
+  const showToast = useToast();
   const [tab, setTab] = useState<ListTab>('providers');
   const [providers, setProviders] = useState<LlmProvider[]>([]);
-  const [total, setTotal] = useState(0);
-  const [purposes, setPurposes] = useState<LlmPurpose[]>([]);
   const [summary, setSummary] = useState<LlmUsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [newPurpose, setNewPurpose] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    if (reloadNonce === 0) setLoading(true);
     setError(null);
     Promise.all([
       api.listLlmProviders({ limit: PAGE_SIZE }, controller.signal),
-      api.listLlmPurposes(controller.signal),
       api.llmUsageSummary(30, controller.signal),
     ])
-      .then(([providerPage, purposeList, usageSummary]) => {
+      .then(([providerPage, usageSummary]) => {
         setProviders(providerPage.items);
-        setTotal(providerPage.total);
-        setPurposes(purposeList);
         setSummary(usageSummary);
         setLoading(false);
       })
@@ -102,23 +153,15 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
         setLoading(false);
       });
     return () => controller.abort();
-  }, [reloadNonce, locale]);
+  }, [locale, reloadNonce]);
 
-  const refresh = useCallback(() => setReloadNonce((value) => value + 1), []);
-
-  async function handleAddPurpose(event: FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    const name = newPurpose.trim();
-    if (name.length === 0) return;
-    setError(null);
-    setFeedback(null);
+  async function makeDefaultProvider(provider: LlmProvider): Promise<void> {
     try {
-      await api.createLlmPurpose({ purpose: name });
-      setNewPurpose('');
-      setFeedback(messages.llm.saved);
-      refresh();
+      await api.updateLlmProvider(provider.id, { isDefault: true });
+      showToast(messages.llm.saved);
+      setReloadNonce((value) => value + 1);
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -163,11 +206,6 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
       </div>
 
       <div className="sf-stack">
-        {feedback ? (
-          <div className="sf-alert sf-alert-good" role="status">
-            <span>{feedback}</span>
-          </div>
-        ) : null}
         {error ? (
           <div className="sf-alert sf-alert-bad" role="alert">
             <span>{error}</span>
@@ -184,16 +222,7 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
                 className={tab === 'providers' ? 'sf-tab sf-tab-active' : 'sf-tab'}
               >
                 <span>{messages.llm.providersTitle}</span>
-                <span className="sf-tab-count">{total}</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={tab === 'purposes'}
-                onClick={() => setTab('purposes')}
-                className={tab === 'purposes' ? 'sf-tab sf-tab-active' : 'sf-tab'}
-              >
-                <span>{messages.llm.purposesTitle}</span>
-                <span className="sf-tab-count">{purposes.length}</span>
+                <span className="sf-tab-count">{loading ? '—' : providers.length}</span>
               </button>
               <button
                 type="button"
@@ -202,6 +231,17 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
                 className={tab === 'usage' ? 'sf-tab sf-tab-active' : 'sf-tab'}
               >
                 <span>{messages.llm.usageTitle}</span>
+                <span className="sf-tab-count">
+                  {loading || !summary ? '—' : summary.calls}
+                </span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={tab === 'logs'}
+                onClick={() => setTab('logs')}
+                className={tab === 'logs' ? 'sf-tab sf-tab-active' : 'sf-tab'}
+              >
+                <span>{messages.llm.logsTitle}</span>
               </button>
             </div>
           </div>
@@ -242,6 +282,9 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
                         {messages.llm.colLastTest}
                       </th>
                       <th scope="col" className="label">
+                        {messages.llm.defaultLabel}
+                      </th>
+                      <th scope="col" className="label">
                         {messages.llm.colStatus}
                       </th>
                     </tr>
@@ -253,7 +296,9 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
                           <AppLink to={`/llm/${provider.id}`} className="sf-tenant-name">
                             {provider.name}
                           </AppLink>
-                          <div className="numeric sf-tenant-slug">{provider.baseUrl}</div>
+                          <div className="sf-tenant-slug">
+                            <ExternalLink href={provider.baseUrl} />
+                          </div>
                         </td>
                         <td>
                           <Badge tone={provider.preset === 'custom' ? 'accent' : 'neutral'}>
@@ -278,6 +323,19 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
                           </span>
                         </td>
                         <td>
+                          {provider.isDefault || providers.length === 1 ? (
+                            <Badge tone="accent">{messages.llm.defaultLabel}</Badge>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void makeDefaultProvider(provider)}
+                            >
+                              {messages.llm.makeDefault}
+                            </Button>
+                          )}
+                        </td>
+                        <td>
                           <Badge tone={provider.status === 'active' ? 'good' : 'neutral'}>
                             {provider.status === 'active'
                               ? messages.llm.statusActive
@@ -290,91 +348,182 @@ export function LlmProvidersPage({ locale, messages }: LlmProvidersPageProps) {
                 </table>
               </div>
             )
-          ) : tab === 'purposes' ? (
-            <div>
-              <div className="sf-card-body">
-                <p className="sf-card-text">{messages.llm.purposesMeta}</p>
-                <form className="sf-form-grid" onSubmit={handleAddPurpose}>
-                  <Field label={messages.llm.purposeLabel} htmlFor="sf-llm-purpose-name">
-                    <Input
-                      id="sf-llm-purpose-name"
-                      value={newPurpose}
-                      onChange={(event) => setNewPurpose(event.target.value)}
-                      placeholder={messages.llm.purposePlaceholder}
-                      maxLength={80}
-                    />
-                  </Field>
-                  <Button
-                    type="submit"
-                    variant="secondary"
-                    disabled={newPurpose.trim().length === 0}
-                  >
-                    {messages.llm.addPurpose}
-                  </Button>
-                </form>
-              </div>
-              {purposes.length === 0 ? (
-                <EmptyState
-                  title={messages.llm.purposesTitle}
-                  description={messages.llm.purposesMeta}
-                />
-              ) : (
-                <div className="sf-table-wrap">
-                  <table className="sf-table">
-                    <thead>
-                      <tr>
-                        <th scope="col" className="label">
-                          {messages.llm.purposeLabel}
-                        </th>
-                        <th scope="col" className="label">
-                          {messages.llm.modelLabel}
-                        </th>
-                        <th scope="col" className="label">
-                          {messages.llm.fallbackLabel}
-                        </th>
-                        <th scope="col" className="label">
-                          {messages.llm.callsLabel}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {purposes.map((purpose) => (
-                        <tr key={purpose.purpose}>
-                          <td>
-                            <span className="numeric">{purpose.purpose}</span>
-                          </td>
-                          <td>
-                            {purpose.model ? (
-                              <div>
-                                <div>{purpose.model.modelKey}</div>
-                                <div className="numeric sf-tenant-slug">
-                                  {purpose.model.providerName}
-                                </div>
-                              </div>
-                            ) : (
-                              <Badge tone="warn">{messages.llm.unmapped}</Badge>
-                            )}
-                          </td>
-                          <td>
-                            <span className="numeric">
-                              {purpose.fallbackModel?.modelKey ?? '—'}
-                            </span>
-                          </td>
-                          <td>
-                            <span className="numeric">{purpose.calls30d}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          ) : (
+          ) : tab === 'usage' ? (
             <UsageTable locale={locale} messages={messages} summary={summary} />
+          ) : (
+            <PluginLogsTable locale={locale} messages={messages} />
           )}
         </Card>
       </div>
+    </div>
+  );
+}
+
+function PluginLogsTable({ locale, messages }: { locale: Locale; messages: Messages }) {
+  const [items, setItems] = useState<LlmLogEntry[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [levelFilter, setLevelFilter] = useState<'' | LlmLogLevel>('');
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (reloadNonce === 0) setLoading(true);
+    setError(null);
+    api
+      .listLlmLogs(
+        {
+          limit: PAGE_SIZE,
+          ...(levelFilter ? { level: levelFilter } : {}),
+        },
+        controller.signal,
+      )
+      .then((page) => {
+        setItems(page.items);
+        setNextCursor(page.nextCursor);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (isAbortError(err)) return;
+        setError(formatApiError(err, locale));
+        setLoading(false);
+      });
+    return () => controller.abort();
+  }, [levelFilter, reloadNonce, locale]);
+
+  async function handleLoadMore(): Promise<void> {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.listLlmLogs({
+        limit: PAGE_SIZE,
+        cursor: nextCursor,
+        ...(levelFilter ? { level: levelFilter } : {}),
+      });
+      setItems((prev) => [...prev, ...page.items]);
+      setNextCursor(page.nextCursor);
+    } catch (err) {
+      setError(formatApiError(err, locale));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  return (
+    <div>
+      <div
+        className="sf-card-body"
+        style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}
+      >
+        <select
+          className="sf-input"
+          aria-label={messages.llm.logsLevel}
+          value={levelFilter}
+          onChange={(event) => {
+            const val = event.target.value;
+            setLevelFilter(val === 'info' || val === 'warn' || val === 'error' ? val : '');
+          }}
+          style={{ maxWidth: 180 }}
+        >
+          <option value="">{messages.llm.logsAllLevels}</option>
+          <option value="info">{messages.llm.logsLevelInfo}</option>
+          <option value="warn">{messages.llm.logsLevelWarn}</option>
+          <option value="error">{messages.llm.logsLevelError}</option>
+        </select>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setReloadNonce((value) => value + 1)}
+          disabled={loading}
+        >
+          {messages.llm.logsRefresh}
+        </Button>
+      </div>
+
+      {error ? (
+        <div className="sf-card-body">
+          <div className="sf-alert sf-alert-bad" role="alert">
+            <span>{error}</span>
+          </div>
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="sf-card-body">
+          <span className="numeric">{messages.common.loadingPlatform}</span>
+        </div>
+      ) : items.length === 0 ? (
+        <EmptyState title={messages.llm.logsTitle} description={messages.llm.logsEmpty} />
+      ) : (
+        <div className="sf-table-wrap">
+          <table className="sf-table">
+            <thead>
+              <tr>
+                <th scope="col" className="label">
+                  {messages.llm.usageWhen}
+                </th>
+                <th scope="col" className="label">
+                  {messages.llm.logsLevel}
+                </th>
+                <th scope="col" className="label">
+                  {messages.llm.logsAction}
+                </th>
+                <th scope="col" className="label">
+                  {messages.llm.colProvider}
+                </th>
+                <th scope="col" className="label">
+                  {messages.llm.logsMessage}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((entry) => (
+                <tr key={entry.id}>
+                  <td>
+                    <span className="numeric">{formatDateTime(entry.createdAt, locale)}</span>
+                  </td>
+                  <td>
+                    <Badge
+                      tone={
+                        entry.level === 'error'
+                          ? 'bad'
+                          : entry.level === 'warn'
+                            ? 'warn'
+                            : 'neutral'
+                      }
+                    >
+                      {entry.level === 'error'
+                        ? messages.llm.logsLevelError
+                        : entry.level === 'warn'
+                          ? messages.llm.logsLevelWarn
+                          : messages.llm.logsLevelInfo}
+                    </Badge>
+                  </td>
+                  <td>
+                    <span className="numeric">{entry.action}</span>
+                  </td>
+                  <td>{entry.providerName ?? entry.providerId ?? '—'}</td>
+                  <td>{entry.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {nextCursor ? (
+            <div className="sf-card-body">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleLoadMore()}
+                disabled={loadingMore}
+              >
+                {messages.llm.logsLoadMore}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -442,13 +591,267 @@ function UsageTable({
 
 // --- Form ------------------------------------------------------------------
 
-const PRESETS: Array<{ id: string; baseUrl: string }> = [
-  { id: 'openai', baseUrl: 'https://api.openai.com/v1' },
-  { id: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
-  { id: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
-  { id: 'vllm', baseUrl: 'http://127.0.0.1:8000/v1' },
-  { id: 'litellm', baseUrl: 'http://127.0.0.1:4000/v1' },
+function LlmField({
+  label,
+  hint,
+  error,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="sf-field">
+      <div className="sf-llm-field-head">
+        <label className="label" htmlFor={htmlFor}>
+          {label}
+        </label>
+        {hint ? <HelpTip text={hint} /> : null}
+      </div>
+      {children}
+      {error ? (
+        <div className="sf-field-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PresetPills({
+  options,
+  value,
+  onSelect,
+}: {
+  options: Array<{ label: string; value: string }>;
+  value: string;
+  onSelect: (next: string) => void;
+}) {
+  return (
+    <div className="sf-preset-row">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          className="sf-preset-pill"
+          aria-pressed={value === option.value}
+          onClick={() => onSelect(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const FALLBACK_PLUGINS: LlmPluginConsumer[] = [
+  { id: 'agent', label: 'Agent', description: '', needsLlm: true },
+  { id: 'automation-discovery', label: 'Automatisierungs-Check', description: '', needsLlm: true },
+  { id: 'websites', label: 'Webseiten', description: '', needsLlm: true },
+  { id: 'tenants', label: 'Mandanten', description: '', needsLlm: false },
 ];
+
+function PluginAccessDropdown({
+  id,
+  plugins,
+  selected,
+  allLabel,
+  resetLabel,
+  onChange,
+}: {
+  id: string;
+  plugins: LlmPluginConsumer[];
+  selected: string[];
+  allLabel: string;
+  resetLabel: string;
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent): void {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  function togglePlugin(pluginId: string): void {
+    if (selected.includes(pluginId)) {
+      onChange(selected.filter((item) => item !== pluginId));
+    } else {
+      onChange([...selected, pluginId]);
+    }
+  }
+
+  const labelById = new Map(plugins.map((p) => [p.id, p.label]));
+  const summaryText =
+    selected.length === 0
+      ? allLabel
+      : selected.map((pluginId) => labelById.get(pluginId) ?? pluginId).join(', ');
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative' }}>
+      <button
+        id={id}
+        type="button"
+        className="sf-input"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          width: '100%',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {summaryText}
+        </span>
+        <span aria-hidden="true" style={{ fontSize: 11, opacity: 0.7 }}>
+          {open ? '▴' : '▾'}
+        </span>
+      </button>
+
+      {open ? (
+        <div
+          role="listbox"
+          aria-multiselectable="true"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: 0,
+            right: 0,
+            zIndex: 30,
+            background: 'var(--color-paper-raised)',
+            border: '1px solid var(--color-line-strong)',
+            borderRadius: 6,
+            padding: 6,
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            maxHeight: 260,
+            overflowY: 'auto',
+          }}
+        >
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: selected.length === 0 ? 600 : 400,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={selected.length === 0}
+              onChange={() => onChange([])}
+            />
+            <span>{allLabel}</span>
+          </label>
+          <div style={{ borderTop: '1px solid var(--color-line)', margin: '4px 0' }} />
+          {plugins.map((plugin) => {
+            const checked = selected.includes(plugin.id);
+            return (
+              <label
+                key={plugin.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => togglePlugin(plugin.id)}
+                />
+                <span>
+                  {plugin.label}{' '}
+                  <span style={{ opacity: 0.65, fontSize: 12 }}>
+                    ({plugin.id}){plugin.needsLlm ? ' · KI' : ''}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {selected.length > 0 ? (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            marginTop: 8,
+            alignItems: 'center',
+          }}
+        >
+          {selected.map((pluginId) => {
+            const label = labelById.get(pluginId) ?? pluginId;
+            return (
+              <span
+                key={pluginId}
+                className="sf-badge sf-badge-neutral"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <span>{label}</span>
+                <button
+                  type="button"
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: 0,
+                    fontSize: 13,
+                    lineHeight: 1,
+                    color: 'inherit',
+                  }}
+                  aria-label={`${label} entfernen`}
+                  onClick={() => onChange(selected.filter((item) => item !== pluginId))}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange([])}>
+            {resetLabel}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export interface LlmProviderFormPageProps {
   locale: Locale;
@@ -457,31 +860,109 @@ export interface LlmProviderFormPageProps {
 }
 
 export function LlmProviderFormPage({ locale, messages, providerId }: LlmProviderFormPageProps) {
+  const showToast = useToast();
   const editing = Boolean(providerId);
   const [name, setName] = useState('');
-  const [preset, setPreset] = useState('custom');
+  const [preset, setPreset] = useState('openai');
   const [baseUrl, setBaseUrl] = useState('');
   const [chatPath, setChatPath] = useState('/chat/completions');
-  const [apiVersion, setApiVersion] = useState('');
-  const [authStyle, setAuthStyle] = useState<LlmAuthStyle>('bearer');
-  const [authHeader, setAuthHeader] = useState('Authorization');
   const [apiKey, setApiKey] = useState('');
-  const [extraHeaders, setExtraHeaders] = useState('');
   const [timeoutSeconds, setTimeoutSeconds] = useState('30');
   const [retries, setRetries] = useState('1');
   const [rate, setRate] = useState('60');
   const [daily, setDaily] = useState('0');
   const [monthly, setMonthly] = useState('0');
   const [retention, setRetention] = useState('90');
-  const [allowed, setAllowed] = useState('');
+  const [allowedPlugins, setAllowedPlugins] = useState<string[]>([]);
+  const [availablePlugins, setAvailablePlugins] = useState<LlmPluginConsumer[]>(FALLBACK_PLUGINS);
   const [status, setStatus] = useState<'active' | 'disabled'>('active');
   const [keySet, setKeySet] = useState(false);
   const [loading, setLoading] = useState(editing);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState<LlmProviderTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string | undefined>>({});
+  const [martLink, setMartLink] = useState<{
+    deviceCode: string;
+    verificationUrl: string;
+    linkCode: string;
+    interval: number;
+  } | null>(null);
+  const [martStarting, setMartStarting] = useState(false);
+
+  useEffect(() => {
+    if (!martLink) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void api
+        .pollMartLlmLink(martLink.deviceCode, name.trim() || undefined)
+        .then((res) => {
+          if (cancelled) return;
+          if (res.status === 'approved') {
+            setMartLink(null);
+            showToast(
+              locale === 'de'
+                ? 'MartLLM erfolgreich verbunden.'
+                : 'MartLLM connected successfully.',
+              { tone: 'good' },
+            );
+            navigate(`/llm/${res.provider.id}`);
+          } else if (res.status === 'denied') {
+            setMartLink(null);
+            setError(
+              locale === 'de'
+                ? 'Anmeldung bei MartLLM im Browser abgelehnt.'
+                : 'MartLLM browser login was denied.',
+            );
+          } else if (res.status === 'expired') {
+            setMartLink(null);
+            setError(
+              locale === 'de'
+                ? 'MartLLM-Anmeldelink ist abgelaufen. Bitte erneut starten.'
+                : 'MartLLM login link expired. Please start again.',
+            );
+          }
+        })
+        .catch(() => {
+          // transient poll errors are retried on next interval
+        });
+    }, Math.max(2, martLink.interval) * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [martLink, name, locale, showToast]);
+
+  async function handleStartMartLlm(): Promise<void> {
+    setMartStarting(true);
+    setError(null);
+    try {
+      const started = await api.startMartLlmLink();
+      setMartLink({
+        deviceCode: started.deviceCode,
+        verificationUrl: started.verificationUrl,
+        linkCode: started.linkCode,
+        interval: started.interval,
+      });
+    } catch (err) {
+      setError(formatApiError(err, locale));
+    } finally {
+      setMartStarting(false);
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    api
+      .listLlmPlugins(controller.signal)
+      .then((items) => {
+        if (items.length > 0) setAvailablePlugins(items);
+      })
+      .catch(() => {
+        // Fallback list stays active when plugin discovery is unavailable.
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (!providerId) return;
@@ -490,12 +971,9 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
       .getLlmProvider(providerId, controller.signal)
       .then((provider) => {
         setName(provider.name);
-        setPreset(provider.preset);
+        setPreset(provider.preset || 'openai');
         setBaseUrl(provider.baseUrl);
-        setChatPath(provider.chatPath);
-        setApiVersion(provider.apiVersion ?? '');
-        setAuthStyle(provider.authStyle);
-        setAuthHeader(provider.authHeader ?? 'Authorization');
+        setChatPath(provider.chatPath || '/chat/completions');
         setKeySet(provider.keySet);
         setTimeoutSeconds(String(Math.round(provider.timeoutMs / 1000)));
         setRetries(String(provider.maxRetries));
@@ -503,7 +981,7 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
         setDaily(String(provider.dailyTokenLimit));
         setMonthly(String(provider.monthlyBudgetMicros / 1_000_000));
         setRetention(String(provider.retentionDays));
-        setAllowed(provider.allowedPlugins ? provider.allowedPlugins.join(', ') : '');
+        setAllowedPlugins(provider.allowedPlugins ?? []);
         setStatus(provider.status);
         setLoading(false);
       })
@@ -515,28 +993,13 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
     return () => controller.abort();
   }, [providerId, locale]);
 
-  function parsedHeaders(): Record<string, string> | undefined {
-    const text = extraHeaders.trim();
-    if (text.length === 0) return undefined;
-    try {
-      const value = JSON.parse(text) as unknown;
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-      const headers: Record<string, string> = {};
-      for (const [key, item] of Object.entries(value)) {
-        if (typeof item === 'string') headers[key] = item;
-      }
-      return headers;
-    } catch {
-      return undefined;
-    }
-  }
-
   function buildInput(): LlmProviderInput {
+    const authStyle: LlmAuthStyle = apiKey.trim() || (editing && keySet) ? 'bearer' : 'none';
     const input: LlmProviderInput = {
       name: name.trim(),
-      preset,
+      preset: preset.trim() || 'openai',
       baseUrl: baseUrl.trim(),
-      chatPath: chatPath.trim(),
+      chatPath: chatPath.trim() || '/chat/completions',
       authStyle,
       timeoutMs: numberOrZero(timeoutSeconds) * 1000,
       maxRetries: numberOrZero(retries),
@@ -544,17 +1007,10 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
       dailyTokenLimit: numberOrZero(daily),
       monthlyBudgetMicros: Math.round(Number.parseFloat(monthly) * 1_000_000) || 0,
       retentionDays: numberOrZero(retention),
-      allowedPlugins: allowed
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean),
+      allowedPlugins: allowedPlugins.length > 0 ? allowedPlugins : null,
       status,
     };
-    if (apiVersion.trim()) input.apiVersion = apiVersion.trim();
-    if (authStyle === 'header') input.authHeader = authHeader.trim();
     if (apiKey.trim()) input.apiKey = apiKey.trim();
-    const headers = parsedHeaders();
-    if (headers) input.extraHeaders = headers;
     return input;
   }
 
@@ -563,30 +1019,23 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
     setSaving(true);
     setError(null);
     setFieldErrors({});
-    if (extraHeaders.trim().length > 0 && parsedHeaders() === undefined) {
-      setFieldErrors({ extraHeaders: messages.llm.invalidJson });
-      setError(messages.llm.invalidJson);
-      setSaving(false);
-      return;
-    }
     try {
       const input = buildInput();
       if (providerId) {
         await api.updateLlmProvider(providerId, input);
+        showToast(messages.llm.saved);
         navigate(`/llm/${providerId}`);
       } else {
         const created = await api.createLlmProvider(input);
+        showToast(messages.llm.saved);
         navigate(`/llm/${created.id}`);
       }
     } catch (err) {
       setFieldErrors({
         name: errorField(err, 'name'),
         baseUrl: errorField(err, 'baseUrl'),
-        chatPath: errorField(err, 'chatPath'),
         apiKey: errorField(err, 'apiKey'),
-        extraHeaders: errorField(err, 'extraHeaders'),
         allowedPlugins: errorField(err, 'allowedPlugins'),
-        authHeader: errorField(err, 'authHeader'),
       });
       setError(formatApiError(err, locale));
     } finally {
@@ -597,15 +1046,19 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
   async function handleTest(): Promise<void> {
     setTesting(true);
     setError(null);
-    setTest(null);
     try {
       const input = buildInput();
       const result = providerId
         ? await api.testLlmProvider({ ...input, providerId })
         : await api.testLlmProvider(input);
-      setTest(result);
+      showToast(
+        result.ok
+          ? messages.llm.testOk(result.latencyMs, result.models?.length ?? 0)
+          : `${messages.llm.testFailed}${result.message ? ` — ${result.message}` : ''}`,
+        { tone: result.ok ? 'good' : 'bad' },
+      );
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     } finally {
       setTesting(false);
     }
@@ -618,6 +1071,10 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
       </div>
     );
   }
+
+  const aiPlugins = availablePlugins.filter((p) => p.needsLlm);
+  const otherPlugins = availablePlugins.filter((p) => !p.needsLlm);
+  const orderedPlugins = [...aiPlugins, ...otherPlugins];
 
   return (
     <div>
@@ -638,18 +1095,105 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
           </div>
         ) : null}
 
+        {!editing ? (
+          <Card>
+            <CardHeader
+              title={locale === 'de' ? 'Provider-Templates' : 'Provider templates'}
+              meta={
+                locale === 'de'
+                  ? 'Browser-Anmeldung: kein API-Key zum Kopieren.'
+                  : 'Browser login: no API key to copy.'
+              }
+            />
+            <div className="sf-card-body">
+              {martLink ? (
+                <div className="sf-stack" style={{ gap: 10 }}>
+                  <div>
+                    {locale === 'de'
+                      ? '1. Öffne den Link im Browser, melde dich bei MartLLM an und bestätige die Verbindung:'
+                      : '1. Open the link in your browser, sign in to MartLLM and approve the connection:'}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                    <a
+                      href={martLink.verificationUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="sf-btn sf-btn-primary"
+                    >
+                      {locale === 'de' ? 'MartLLM im Browser öffnen' : 'Open MartLLM in browser'}
+                    </a>
+                    {martLink.linkCode ? (
+                      <span className="numeric" style={{ fontSize: 15, fontWeight: 600 }}>
+                        Code: {martLink.linkCode}
+                      </span>
+                    ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => setMartLink(null)}>
+                      {locale === 'de' ? 'Abbrechen' : 'Cancel'}
+                    </Button>
+                  </div>
+                  <div style={{ fontSize: 12 }}>
+                    <ExternalLink href={martLink.verificationUrl} />
+                  </div>
+                  <div style={{ fontSize: 13, opacity: 0.8 }}>
+                    {locale === 'de'
+                      ? 'Warte auf Bestätigung im Browser… der Provider wird danach automatisch angelegt.'
+                      : 'Waiting for browser approval… the provider will be created automatically.'}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="sf-template-grid">
+                    {PROVIDER_TEMPLATES.map((template) => (
+                      <div key={template.id} className="sf-template-card">
+                        <span className="sf-template-name">{template.label}</span>
+                        <span className="sf-template-note">{template.note[locale]}</span>
+                        <div className="sf-template-actions">
+                          <Button
+                            type="button"
+                            variant="primary"
+                            onClick={() => void handleStartMartLlm()}
+                            disabled={martStarting}
+                          >
+                            {martStarting
+                              ? locale === 'de'
+                                ? 'Verbindungslink wird erzeugt…'
+                                : 'Creating login link…'
+                              : locale === 'de'
+                                ? 'Mit MartLLM verbinden'
+                                : 'Connect with MartLLM'}
+                          </Button>
+                          <ExternalLink href={template.docs} className="sf-text-link">
+                            {locale === 'de' ? 'Anleitung' : 'Docs'}
+                          </ExternalLink>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="sf-template-hint">
+                    {locale === 'de'
+                      ? 'Templates verbinden per Browser-Login. Einen Provider mit API-Key legst du unten im Formular an.'
+                      : 'Templates connect through a browser login. A provider with an API key is created in the form below.'}
+                  </p>
+                </>
+              )}
+            </div>
+          </Card>
+        ) : null}
+
         <Card>
-          <CardHeader title={messages.llm.newTitle} />
+          <CardHeader title={editing ? messages.llm.editTitle : messages.llm.newTitle} />
           <div className="sf-card-body">
-            <form onSubmit={handleSubmit}>
-              <div className="sf-form-grid">
-                <Field
+            <form onSubmit={handleSubmit} autoComplete="off">
+              <div className="sf-llm-grid-2">
+                <LlmField
                   label={messages.llm.nameLabel}
                   error={fieldErrors.name}
                   htmlFor="sf-llm-name"
                 >
                   <Input
                     id="sf-llm-name"
+                    name="llm-provider-name"
+                    autoComplete="off"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
                     placeholder={messages.llm.namePlaceholder}
@@ -657,30 +1201,9 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
                     maxLength={80}
                     required
                   />
-                </Field>
+                </LlmField>
 
-                <Field label={messages.llm.presetLabel} htmlFor="sf-llm-preset">
-                  <select
-                    id="sf-llm-preset"
-                    className="sf-input"
-                    value={preset}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      setPreset(next);
-                      const candidate = PRESETS.find((item) => item.id === next);
-                      if (candidate) setBaseUrl(candidate.baseUrl);
-                    }}
-                  >
-                    <option value="custom">{messages.llm.presetCustom}</option>
-                    {PRESETS.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.id}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <Field
+                <LlmField
                   label={messages.llm.baseUrlLabel}
                   hint={messages.llm.baseUrlHint}
                   error={fieldErrors.baseUrl}
@@ -688,227 +1211,259 @@ export function LlmProviderFormPage({ locale, messages, providerId }: LlmProvide
                 >
                   <Input
                     id="sf-llm-base-url"
+                    name="llm-provider-base-url"
+                    autoComplete="off"
                     value={baseUrl}
                     onChange={(event) => setBaseUrl(event.target.value)}
-                    placeholder="https://llm.example/v1"
+                    placeholder="https://api.openai.com/v1"
                     invalid={Boolean(fieldErrors.baseUrl)}
                     maxLength={500}
                     required
                   />
-                </Field>
+                </LlmField>
 
-                <Field
-                  label={messages.llm.chatPathLabel}
-                  hint={messages.llm.chatPathHint}
-                  error={fieldErrors.chatPath}
-                  htmlFor="sf-llm-chat-path"
+                <LlmField
+                  label={messages.llm.apiKeyLabel}
+                  hint={keySet ? messages.llm.apiKeyKeep : messages.llm.apiKeyHint}
+                  error={fieldErrors.apiKey}
+                  htmlFor="sf-llm-api-key"
                 >
                   <Input
-                    id="sf-llm-chat-path"
-                    value={chatPath}
-                    onChange={(event) => setChatPath(event.target.value)}
-                    maxLength={200}
+                    id="sf-llm-api-key"
+                    name="llm-provider-api-key"
+                    type="password"
+                    autoComplete="new-password"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={keySet ? '••••••••' : 'sk-…'}
+                    invalid={Boolean(fieldErrors.apiKey)}
                   />
-                </Field>
+                </LlmField>
 
-                <Field label={messages.llm.apiVersionLabel} htmlFor="sf-llm-api-version">
-                  <Input
-                    id="sf-llm-api-version"
-                    value={apiVersion}
-                    onChange={(event) => setApiVersion(event.target.value)}
-                    placeholder="2024-10-21"
-                    maxLength={50}
-                  />
-                </Field>
-
-                <Field label={messages.llm.authStyleLabel} htmlFor="sf-llm-auth-style">
-                  <select
-                    id="sf-llm-auth-style"
-                    className="sf-input"
-                    value={authStyle}
-                    onChange={(event) => setAuthStyle(event.target.value as LlmAuthStyle)}
-                  >
-                    <option value="bearer">{messages.llm.authBearer}</option>
-                    <option value="header">{messages.llm.authHeader}</option>
-                    <option value="none">{messages.llm.authNone}</option>
-                  </select>
-                </Field>
-
-                {authStyle === 'header' ? (
-                  <Field
-                    label={messages.llm.authHeaderLabel}
-                    error={fieldErrors.authHeader}
-                    htmlFor="sf-llm-auth-header"
-                  >
-                    <Input
-                      id="sf-llm-auth-header"
-                      value={authHeader}
-                      onChange={(event) => setAuthHeader(event.target.value)}
-                      placeholder="api-key"
-                      invalid={Boolean(fieldErrors.authHeader)}
-                    />
-                  </Field>
-                ) : null}
-
-                {authStyle !== 'none' ? (
-                  <Field
-                    label={messages.llm.apiKeyLabel}
-                    hint={keySet ? messages.llm.apiKeyKeep : messages.llm.apiKeyHint}
-                    error={fieldErrors.apiKey}
-                    htmlFor="sf-llm-api-key"
-                  >
-                    <Input
-                      id="sf-llm-api-key"
-                      type="password"
-                      autoComplete="off"
-                      value={apiKey}
-                      onChange={(event) => setApiKey(event.target.value)}
-                      placeholder={keySet ? '••••••••' : 'sk-…'}
-                      invalid={Boolean(fieldErrors.apiKey)}
-                    />
-                  </Field>
-                ) : null}
-
-                <Field label={messages.llm.timeoutLabel} htmlFor="sf-llm-timeout">
-                  <Input
-                    id="sf-llm-timeout"
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={timeoutSeconds}
-                    onChange={(event) => setTimeoutSeconds(event.target.value)}
-                  />
-                </Field>
-
-                <Field label={messages.llm.retriesLabel} htmlFor="sf-llm-retries">
-                  <Input
-                    id="sf-llm-retries"
-                    type="number"
-                    min={0}
-                    max={3}
-                    value={retries}
-                    onChange={(event) => setRetries(event.target.value)}
-                  />
-                </Field>
-
-                <Field label={messages.llm.rateLabel} htmlFor="sf-llm-rate">
-                  <Input
-                    id="sf-llm-rate"
-                    type="number"
-                    min={1}
-                    max={600}
-                    value={rate}
-                    onChange={(event) => setRate(event.target.value)}
-                  />
-                </Field>
-
-                <Field label={messages.llm.dailyLabel} htmlFor="sf-llm-daily">
-                  <Input
-                    id="sf-llm-daily"
-                    type="number"
-                    min={0}
-                    value={daily}
-                    onChange={(event) => setDaily(event.target.value)}
-                  />
-                </Field>
-
-                <Field label={messages.llm.monthlyLabel} htmlFor="sf-llm-monthly">
-                  <Input
-                    id="sf-llm-monthly"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={monthly}
-                    onChange={(event) => setMonthly(event.target.value)}
-                  />
-                </Field>
-
-                <Field label={messages.llm.retentionLabel} htmlFor="sf-llm-retention">
-                  <Input
-                    id="sf-llm-retention"
-                    type="number"
-                    min={1}
-                    max={365}
-                    value={retention}
-                    onChange={(event) => setRetention(event.target.value)}
-                  />
-                </Field>
-
-                <Field
+                <LlmField
                   label={messages.llm.allowedLabel}
                   hint={messages.llm.allowedHint}
                   error={fieldErrors.allowedPlugins}
                   htmlFor="sf-llm-allowed"
                 >
-                  <Input
+                  <PluginAccessDropdown
                     id="sf-llm-allowed"
-                    value={allowed}
-                    onChange={(event) => setAllowed(event.target.value)}
-                    placeholder="agent, email"
-                    invalid={Boolean(fieldErrors.allowedPlugins)}
+                    plugins={orderedPlugins}
+                    selected={allowedPlugins}
+                    allLabel={messages.llm.allPlugins}
+                    resetLabel={messages.llm.resetToAllPlugins}
+                    onChange={setAllowedPlugins}
                   />
-                </Field>
+                </LlmField>
 
                 {editing ? (
-                  <Field label={messages.llm.statusLabel} htmlFor="sf-llm-status">
-                    <select
-                      id="sf-llm-status"
-                      className="sf-input"
-                      value={status}
-                      onChange={(event) =>
-                        setStatus(event.target.value === 'disabled' ? 'disabled' : 'active')
-                      }
+                  <LlmField label={messages.llm.statusLabel} htmlFor="sf-llm-status">
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        minHeight: 38,
+                      }}
                     >
-                      <option value="active">{messages.llm.statusActive}</option>
-                      <option value="disabled">{messages.llm.statusDisabled}</option>
-                    </select>
-                  </Field>
+                      <button
+                        id="sf-llm-status"
+                        type="button"
+                        role="switch"
+                        aria-checked={status === 'active'}
+                        onClick={() =>
+                          setStatus((current) => (current === 'active' ? 'disabled' : 'active'))
+                        }
+                        style={{
+                          position: 'relative',
+                          width: 44,
+                          height: 24,
+                          borderRadius: 999,
+                          border: '1px solid var(--color-line-strong)',
+                          background:
+                            status === 'active' ? 'var(--color-good)' : 'var(--color-line)',
+                          cursor: 'pointer',
+                          padding: 0,
+                          transition: 'background 150ms ease',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            position: 'absolute',
+                            top: 2,
+                            left: status === 'active' ? 22 : 2,
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            background: '#ffffff',
+                            transition: 'left 150ms ease',
+                            boxShadow: '0 1px 2px rgba(0, 0, 0, 0.25)',
+                          }}
+                        />
+                      </button>
+                      <span style={{ fontSize: 14 }}>
+                        {status === 'active'
+                          ? messages.llm.statusActive
+                          : messages.llm.statusDisabled}
+                      </span>
+                    </div>
+                  </LlmField>
                 ) : null}
               </div>
 
-              <div className="sf-form-grid" style={{ marginTop: 12 }}>
-                <Field
-                  label={messages.llm.extraHeadersLabel}
-                  hint={messages.llm.extraHeadersHint}
-                  error={fieldErrors.extraHeaders}
-                  htmlFor="sf-llm-extra-headers"
-                >
-                  <textarea
-                    id="sf-llm-extra-headers"
-                    className="sf-input"
-                    rows={3}
-                    value={extraHeaders}
-                    onChange={(event) => setExtraHeaders(event.target.value)}
-                    placeholder='{"X-Organization": "smartflow"}'
-                    aria-invalid={Boolean(fieldErrors.extraHeaders) || undefined}
-                  />
-                </Field>
-              </div>
+              <details className="sf-llm-advanced">
+                <summary>{messages.llm.advancedSettings}</summary>
+                <div className="sf-llm-grid-3">
+                  <LlmField label={messages.llm.timeoutLabel} htmlFor="sf-llm-timeout">
+                    <Input
+                      id="sf-llm-timeout"
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={timeoutSeconds}
+                      onChange={(event) => setTimeoutSeconds(event.target.value)}
+                    />
+                    <PresetPills
+                      value={timeoutSeconds}
+                      onSelect={setTimeoutSeconds}
+                      options={[
+                        { label: '10 s', value: '10' },
+                        { label: '30 s', value: '30' },
+                        { label: '60 s', value: '60' },
+                        { label: '90 s', value: '90' },
+                      ]}
+                    />
+                  </LlmField>
 
-              {test ? (
-                <div
-                  className={test.ok ? 'sf-alert sf-alert-good' : 'sf-alert sf-alert-bad'}
-                  role="status"
-                  style={{ marginTop: 12 }}
-                >
-                  <span>
-                    {test.ok
-                      ? messages.llm.testOk(test.latencyMs, test.models?.length ?? 0)
-                      : messages.llm.testFailed}
-                  </span>
+                  <LlmField label={messages.llm.retriesLabel} htmlFor="sf-llm-retries">
+                    <Input
+                      id="sf-llm-retries"
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={retries}
+                      onChange={(event) => setRetries(event.target.value)}
+                    />
+                    <PresetPills
+                      value={retries}
+                      onSelect={setRetries}
+                      options={[
+                        { label: '0', value: '0' },
+                        { label: '1', value: '1' },
+                        { label: '2', value: '2' },
+                        { label: '3', value: '3' },
+                        { label: '4', value: '4' },
+                        { label: '5', value: '5' },
+                      ]}
+                    />
+                  </LlmField>
+
+                  <LlmField label={messages.llm.rateLabel} htmlFor="sf-llm-rate">
+                    <Input
+                      id="sf-llm-rate"
+                      type="number"
+                      min={1}
+                      max={600}
+                      value={rate}
+                      onChange={(event) => setRate(event.target.value)}
+                    />
+                    <PresetPills
+                      value={rate}
+                      onSelect={setRate}
+                      options={[
+                        { label: '30', value: '30' },
+                        { label: '60', value: '60' },
+                        { label: '120', value: '120' },
+                        { label: '300', value: '300' },
+                      ]}
+                    />
+                  </LlmField>
+
+                  <LlmField label={messages.llm.dailyLabel} htmlFor="sf-llm-daily">
+                    <Input
+                      id="sf-llm-daily"
+                      type="number"
+                      min={0}
+                      value={daily}
+                      onChange={(event) => setDaily(event.target.value)}
+                    />
+                    <PresetPills
+                      value={daily}
+                      onSelect={setDaily}
+                      options={[
+                        { label: 'Aus', value: '0' },
+                        { label: '100k', value: '100000' },
+                        { label: '500k', value: '500000' },
+                        { label: '1M', value: '1000000' },
+                      ]}
+                    />
+                  </LlmField>
+
+                  <LlmField label={messages.llm.monthlyLabel} htmlFor="sf-llm-monthly">
+                    <Input
+                      id="sf-llm-monthly"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={monthly}
+                      onChange={(event) => setMonthly(event.target.value)}
+                    />
+                    <PresetPills
+                      value={monthly}
+                      onSelect={setMonthly}
+                      options={[
+                        { label: 'Aus', value: '0' },
+                        { label: '10 €', value: '10' },
+                        { label: '25 €', value: '25' },
+                        { label: '50 €', value: '50' },
+                        { label: '100 €', value: '100' },
+                      ]}
+                    />
+                  </LlmField>
+
+                  <LlmField label={messages.llm.retentionLabel} htmlFor="sf-llm-retention">
+                    <Input
+                      id="sf-llm-retention"
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={retention}
+                      onChange={(event) => setRetention(event.target.value)}
+                    />
+                    <PresetPills
+                      value={retention}
+                      onSelect={setRetention}
+                      options={[
+                        { label: '30 T', value: '30' },
+                        { label: '90 T', value: '90' },
+                        { label: '180 T', value: '180' },
+                        { label: '365 T', value: '365' },
+                      ]}
+                    />
+                  </LlmField>
                 </div>
-              ) : null}
+              </details>
 
-              <div className="sf-foot-actions" style={{ marginTop: 12 }}>
-                <Button variant="secondary" onClick={handleTest} disabled={testing || saving}>
-                  {testing ? messages.llm.testing : messages.llm.testButton}
-                </Button>
-                <span className="numeric sf-field-hint">{messages.llm.testNoPrompt}</span>
+              <div className="sf-foot-actions" style={{ marginTop: 16 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <Button
+                    variant="secondary"
+                    onClick={handleTest}
+                    disabled={
+                      testing || saving || name.trim().length === 0 || baseUrl.trim().length === 0
+                    }
+                  >
+                    {testing ? messages.llm.testing : messages.llm.testButton}
+                  </Button>
+                  <HelpTip text={messages.llm.testNoPrompt} />
+                </div>
                 <div style={{ marginLeft: 'auto' }}>
                   <Button
                     type="submit"
                     variant="primary"
-                    disabled={saving || name.trim().length === 0}
+                    disabled={saving || name.trim().length === 0 || baseUrl.trim().length === 0}
                   >
                     {saving ? messages.llm.saving : messages.llm.saveProvider}
                   </Button>
@@ -935,33 +1490,31 @@ export function LlmProviderDetailPage({
   messages,
   providerId,
 }: LlmProviderDetailPageProps) {
+  const showToast = useToast();
   const [provider, setProvider] = useState<LlmProvider | null>(null);
   const [models, setModels] = useState<LlmModel[]>([]);
-  const [purposes, setPurposes] = useState<LlmPurpose[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [testing, setTesting] = useState(false);
   const [newModelKey, setNewModelKey] = useState('');
   const [newModelLabel, setNewModelLabel] = useState('');
   const [candidates, setCandidates] = useState<Array<{ modelKey: string }>>([]);
+  const [candidateFilter, setCandidateFilter] = useState('');
   const [pendingDeleteModel, setPendingDeleteModel] = useState<LlmModel | null>(null);
   const [pendingDeleteProvider, setPendingDeleteProvider] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
+    if (reloadNonce === 0) setLoading(true);
     setError(null);
     Promise.all([
       api.getLlmProvider(providerId, controller.signal),
       api.listLlmModels(providerId, controller.signal),
-      api.listLlmPurposes(controller.signal),
     ])
-      .then(([providerResult, modelList, purposeList]) => {
+      .then(([providerResult, modelList]) => {
         setProvider(providerResult);
         setModels(modelList);
-        setPurposes(purposeList);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -977,17 +1530,17 @@ export function LlmProviderDetailPage({
   async function handleTest(): Promise<void> {
     setTesting(true);
     setError(null);
-    setFeedback(null);
     try {
       const result = await api.testStoredLlmProvider(providerId);
-      setFeedback(
+      showToast(
         result.ok
           ? messages.llm.testOk(result.latencyMs, result.models?.length ?? 0)
           : `${messages.llm.testFailed}${result.message ? ` — ${result.message}` : ''}`,
+        { tone: result.ok ? 'good' : 'bad' },
       );
       refresh();
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     } finally {
       setTesting(false);
     }
@@ -998,29 +1551,27 @@ export function LlmProviderDetailPage({
     const key = newModelKey.trim();
     if (key.length === 0) return;
     setError(null);
-    setFeedback(null);
     try {
       const input: LlmModelInput = { modelKey: key };
       if (newModelLabel.trim()) input.label = newModelLabel.trim();
       await api.createLlmModel(providerId, input);
       setNewModelKey('');
       setNewModelLabel('');
-      setFeedback(messages.llm.saved);
+      showToast(messages.llm.saved);
       refresh();
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
   async function handleRefreshModels(): Promise<void> {
     setError(null);
-    setFeedback(null);
     try {
       const discovered = await api.refreshLlmModels(providerId);
       setCandidates(discovered);
-      setFeedback(messages.llm.loaded);
+      showToast(messages.llm.loaded);
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -1029,9 +1580,10 @@ export function LlmProviderDetailPage({
     try {
       await api.createLlmModel(providerId, { modelKey, source: 'discovered' });
       setCandidates((current) => current.filter((item) => item.modelKey !== modelKey));
+      showToast(messages.llm.saved);
       refresh();
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -1046,7 +1598,7 @@ export function LlmProviderDetailPage({
       });
       refresh();
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -1054,21 +1606,10 @@ export function LlmProviderDetailPage({
     setError(null);
     try {
       await api.updateLlmModel(model.id, { isDefault: true });
+      showToast(messages.llm.saved);
       refresh();
     } catch (err) {
-      setError(formatApiError(err, locale));
-    }
-  }
-
-  async function assign(purpose: LlmPurpose, modelId: string): Promise<void> {
-    setError(null);
-    setFeedback(null);
-    try {
-      await api.updateLlmPurpose(purpose.purpose, { modelId: modelId === '' ? null : modelId });
-      setFeedback(messages.llm.saved);
-      refresh();
-    } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -1079,10 +1620,10 @@ export function LlmProviderDetailPage({
     setError(null);
     try {
       await api.deleteLlmModel(target.id);
-      setFeedback(messages.llm.saved);
+      showToast(messages.llm.saved);
       refresh();
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -1091,9 +1632,10 @@ export function LlmProviderDetailPage({
     setError(null);
     try {
       await api.deleteLlmProvider(providerId);
+      showToast(messages.llm.saved);
       navigate('/llm');
     } catch (err) {
-      setError(formatApiError(err, locale));
+      showToast(formatApiError(err, locale), { tone: 'bad' });
     }
   }
 
@@ -1148,11 +1690,6 @@ export function LlmProviderDetailPage({
       />
 
       <div className="sf-stack">
-        {feedback ? (
-          <div className="sf-alert sf-alert-good" role="status">
-            <span>{feedback}</span>
-          </div>
-        ) : null}
         {error ? (
           <div className="sf-alert sf-alert-bad" role="alert">
             <span>{error}</span>
@@ -1164,7 +1701,9 @@ export function LlmProviderDetailPage({
             <div className="sf-kv-list">
               <div className="sf-kv-row">
                 <span className="label">{messages.llm.factBaseUrl}</span>
-                <span className="numeric">{provider.baseUrl}</span>
+                <span>
+                  <ExternalLink href={provider.baseUrl} />
+                </span>
               </div>
               <div className="sf-kv-row">
                 <span className="label">{messages.llm.factAuth}</span>
@@ -1205,6 +1744,30 @@ export function LlmProviderDetailPage({
                       } ms`
                     : messages.llm.neverTested}
                 </span>
+              </div>
+              <div className="sf-kv-row">
+                <span className="label">{messages.llm.defaultLabel}</span>
+                {provider.isDefault ? (
+                  <Badge tone="accent">{messages.llm.defaultLabel}</Badge>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      void api
+                        .updateLlmProvider(provider.id, { isDefault: true })
+                        .then(() => {
+                          showToast(messages.llm.saved);
+                          refresh();
+                        })
+                        .catch((err: unknown) => {
+                          showToast(formatApiError(err, locale), { tone: 'bad' });
+                        });
+                    }}
+                  >
+                    {messages.llm.makeDefault}
+                  </Button>
+                )}
               </div>
               <div className="sf-kv-row">
                 <span className="label">{messages.llm.statusLabel}</span>
@@ -1293,7 +1856,7 @@ export function LlmProviderDetailPage({
                         <span className="numeric">{model.contextWindow ?? '—'}</span>
                       </td>
                       <td>
-                        {model.isDefault ? (
+                        {model.isDefault || models.length === 1 ? (
                           <Badge tone="accent">{messages.llm.defaultLabel}</Badge>
                         ) : (
                           <Button variant="ghost" size="sm" onClick={() => void makeDefault(model)}>
@@ -1316,24 +1879,73 @@ export function LlmProviderDetailPage({
               </table>
             </div>
           )}
-          {candidates.length > 0 ? (
-            <div className="sf-card-body">
-              <div className="sf-kv-list">
-                {candidates.map((candidate) => (
-                  <div className="sf-kv-row" key={candidate.modelKey}>
-                    <span className="numeric">{candidate.modelKey}</span>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void handleAddCandidate(candidate.modelKey)}
+          {candidates.length > 0
+            ? (() => {
+                const terms = candidateFilter
+                  .trim()
+                  .toLowerCase()
+                  .split(/\s+/)
+                  .filter(Boolean);
+                const filteredCandidates =
+                  terms.length === 0
+                    ? candidates
+                    : candidates.filter((candidate) => {
+                        const haystack = candidate.modelKey.toLowerCase();
+                        return terms.every((term) => haystack.includes(term));
+                      });
+                return (
+                  <div className="sf-card-body">
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 12,
+                        marginBottom: 12,
+                        flexWrap: 'wrap',
+                      }}
                     >
-                      {messages.llm.addModel}
-                    </Button>
+                      <div style={{ flex: '1 1 260px' }}>
+                        <Input
+                          id="sf-llm-candidate-filter"
+                          type="search"
+                          aria-label={messages.llm.filterModelsPlaceholder}
+                          value={candidateFilter}
+                          onChange={(event) => setCandidateFilter(event.target.value)}
+                          placeholder={messages.llm.filterModelsPlaceholder}
+                        />
+                      </div>
+                      <span className="numeric sf-field-hint">
+                        {messages.llm.filterModelsCount(
+                          filteredCandidates.length,
+                          candidates.length,
+                        )}
+                      </span>
+                    </div>
+                    {filteredCandidates.length === 0 ? (
+                      <p className="sf-field-hint">{messages.llm.filterModelsEmpty}</p>
+                    ) : (
+                      <div
+                        className="sf-kv-list"
+                        style={{ maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}
+                      >
+                        {filteredCandidates.map((candidate) => (
+                          <div className="sf-kv-row" key={candidate.modelKey}>
+                            <span className="numeric">{candidate.modelKey}</span>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => void handleAddCandidate(candidate.modelKey)}
+                            >
+                              {messages.llm.addModel}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
+                );
+              })()
+            : null}
           <div className="sf-card-body">
             <form className="sf-form-grid" onSubmit={handleAddModel}>
               <Field label={messages.llm.modelKeyLabel} htmlFor="sf-llm-model-key">
@@ -1358,51 +1970,6 @@ export function LlmProviderDetailPage({
                 {messages.llm.addModel}
               </Button>
             </form>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader
-            title={messages.llm.purposesTitle}
-            meta={messages.llm.purposesMeta}
-            actions={
-              <AppLink to="/llm" className="sf-text-link">
-                {messages.llm.purposesTitle}
-              </AppLink>
-            }
-          />
-          <div className="sf-card-body">
-            <div className="sf-kv-list">
-              {purposes.map((purpose) => {
-                const assigned = purpose.model?.providerId === provider.id;
-                return (
-                  <div className="sf-kv-row" key={purpose.purpose}>
-                    <span className="numeric">{purpose.purpose}</span>
-                    <select
-                      className="sf-input"
-                      aria-label={`${purpose.purpose} ${messages.llm.modelLabel}`}
-                      value={assigned ? (purpose.model?.id ?? '') : ''}
-                      onChange={(event) => void assign(purpose, event.target.value)}
-                      style={{ maxWidth: 280 }}
-                    >
-                      <option value="">{messages.llm.unmapped}</option>
-                      {models.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.modelKey}
-                        </option>
-                      ))}
-                    </select>
-                    <Badge tone={assigned ? 'good' : purpose.model ? 'neutral' : 'warn'}>
-                      {assigned
-                        ? (purpose.model?.modelKey ?? '—')
-                        : purpose.model
-                          ? `${purpose.model.providerName} · ${purpose.model.modelKey}`
-                          : messages.llm.unmapped}
-                    </Badge>
-                  </div>
-                );
-              })}
-            </div>
           </div>
         </Card>
       </div>

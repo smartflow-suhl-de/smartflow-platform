@@ -55,12 +55,12 @@ describe('website presentation rules', () => {
     );
   });
 
-  it('lets only a tenant admin publish an approved build', () => {
+  it('lets the team publish an approved build', () => {
     const build = { id: 'bld_1', status: 'ok' as const };
     const approved = [approval({ state: 'approved' })];
     assert.equal(canPublish('tenant_admin', build, approved), true);
+    assert.equal(canPublish('operator', build, approved), true, 'the operator runs the platform');
     assert.equal(canPublish('employee', build, approved), false);
-    assert.equal(canPublish('operator', build, approved), false);
     assert.equal(canPublish('tenant_admin', { id: 'bld_1', status: 'failed' }, approved), false);
     assert.equal(canPublish('tenant_admin', null, approved), false);
     assert.equal(canPublish('tenant_admin', build, []), false);

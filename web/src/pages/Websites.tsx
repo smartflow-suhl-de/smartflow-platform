@@ -31,9 +31,11 @@ export interface WebsitesPageProps {
   search: string;
   locale: Locale;
   messages: Messages;
+  /** No tenant chosen: the list shows the operator's own website area. */
+  ownWorkspace?: boolean;
 }
 
-export function WebsitesPage({ search, locale, messages }: WebsitesPageProps) {
+export function WebsitesPage({ search, locale, messages, ownWorkspace = false }: WebsitesPageProps) {
   const [filter, setFilter] = useState<OwnerFilter>('all');
   const [query, setQuery] = useState('');
   const [cursorStack, setCursorStack] = useState<string[]>([]);
@@ -173,6 +175,12 @@ export function WebsitesPage({ search, locale, messages }: WebsitesPageProps) {
           </Button>
         }
       />
+
+      {ownWorkspace ? (
+        <div className="sf-alert sf-alert-info" role="status">
+          <span>{messages.websites.ownWorkspaceNote}</span>
+        </div>
+      ) : null}
 
       <div className="sf-kpi-grid">
         <KpiTile

@@ -537,6 +537,60 @@ test('an invite can reference an existing tenant only', async (t) => {
   assert.equal((valid.json() as { invite: { tenantId: string } }).invite.tenantId, tenant.id);
 });
 
+test('a tenant invite takes the tenant name and needs no customer data or email', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const tenantResponse = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/tenants',
+    headers: { cookie },
+    payload: { name: 'Nordwind Logistik GmbH' },
+  });
+  const tenant = tenantResponse.json() as { id: string; name: string };
+
+  const response = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/discovery/invites',
+    headers: { cookie },
+    payload: { tenantId: tenant.id, locale: 'de' },
+  });
+  assert.equal(response.statusCode, 201, response.payload);
+  const invite = (response.json() as {
+    invite: { customerName: string; contactEmail: string | null; tenantId: string };
+  }).invite;
+  assert.equal(invite.customerName, tenant.name);
+  assert.equal(invite.contactEmail, null);
+  assert.equal(invite.tenantId, tenant.id);
+
+  // A contact address sent with a tenant invite is ignored, not stored.
+  const withEmail = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/discovery/invites',
+    headers: { cookie },
+    payload: { tenantId: tenant.id, contactEmail: 'kunde@firma.de' },
+  });
+  assert.equal(withEmail.statusCode, 201, withEmail.payload);
+  assert.equal(
+    (withEmail.json() as { invite: { contactEmail: string | null } }).invite.contactEmail,
+    null,
+  );
+
+  // Without a tenant and without a name the request stays invalid.
+  const missing = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/discovery/invites',
+    headers: { cookie },
+    payload: { locale: 'de' },
+  });
+  assert.equal(missing.statusCode, 422);
+  assert.equal(
+    (missing.json() as { error?: { fields?: { customerName?: string } } }).error?.fields
+      ?.customerName !== undefined,
+    true,
+  );
+});
+
 test('the full interview completes and stores exactly one validated report', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());

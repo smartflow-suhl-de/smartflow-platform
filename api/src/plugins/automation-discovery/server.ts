@@ -1,5 +1,5 @@
 /**
- * Automatisierungs-Scout: an operator creates a one-time link, the customer
+ * Automatisierungs-Check: an operator creates a one-time link, the customer
  * walks through an AI-guided interview without a login, and the operator gets
  * a structured, schema-validated assessment.
  *
@@ -322,7 +322,6 @@ const contactBody = {
 const inviteBody = {
   type: 'object',
   additionalProperties: false,
-  required: ['customerName'],
   properties: {
     customerName: { type: 'string', minLength: 2, maxLength: 120 },
     contactEmail: { type: 'string', maxLength: 200 },
@@ -1466,7 +1465,7 @@ export function register(ctx: PluginContext): void {
     },
     async (request, reply) => {
       const body = request.body as {
-        customerName: string;
+        customerName?: string;
         contactEmail?: string;
         locale?: Locale;
         mode?: Mode;
@@ -1474,14 +1473,19 @@ export function register(ctx: PluginContext): void {
         tenantId?: string;
       };
       const errors: Record<string, string> = {};
-      const customerName = body.customerName.trim();
+      const tenant = body.tenantId
+        ? ctx
+            .tenants()
+            .find((entry) => entry.id === body.tenantId && entry.own !== true)
+        : undefined;
+      if (body.tenantId && !tenant) errors.tenantId = 'Unknown tenant.';
+      // An invitation for a tenant carries no customer data: the tenant name
+      // is the customer. Without a tenant the name stays required.
+      const customerName = tenant ? tenant.name.trim().slice(0, 120) : (body.customerName ?? '').trim();
       if (customerName.length < 2) errors.customerName = 'Please enter a name.';
-      const contactEmail = body.contactEmail?.trim() ?? null;
+      const contactEmail = tenant ? null : (body.contactEmail?.trim() ?? null);
       if (contactEmail && !isEmail(contactEmail)) {
         errors.contactEmail = 'Please enter a valid email address.';
-      }
-      if (body.tenantId && !ctx.tenants().some((tenant) => tenant.id === body.tenantId)) {
-        errors.tenantId = 'Unknown tenant.';
       }
       if (Object.keys(errors).length > 0) {
         throw new AppError('validation_failed', 'Please check the highlighted fields.', 422, {

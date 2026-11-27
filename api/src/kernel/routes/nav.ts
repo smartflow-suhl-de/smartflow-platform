@@ -27,7 +27,7 @@ const navSchema = {
           plugin: { type: 'string' },
           label: { type: 'string' },
           path: { type: 'string' },
-          group: { type: 'string', enum: ['work', 'management'] },
+          group: { type: 'string', enum: ['work', 'tools', 'management'] },
           icon: { type: 'string' },
           order: { type: 'integer' },
           roles: { type: 'array', items: { type: 'string' } },

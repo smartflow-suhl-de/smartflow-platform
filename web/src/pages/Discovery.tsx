@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { HelpTip } from '../components/HelpTip';
 import {
   Badge,
   Button,
@@ -6,7 +7,6 @@ import {
   CardHeader,
   ConfirmModal,
   EmptyState,
-  Field,
   Input,
   KpiTile,
   PageHeader,
@@ -75,6 +75,39 @@ function statusLabel(m: Messages, status: DiscoveryInviteStatus): string {
     default:
       return status;
   }
+}
+
+function DiscoveryField({
+  label,
+  hint,
+  error,
+  htmlFor,
+  wide,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  htmlFor?: string;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`sf-field${wide ? ' sf-form-span' : ''}`}>
+      <div className="sf-llm-field-head">
+        <label className="label" htmlFor={htmlFor}>
+          {label}
+        </label>
+        {hint ? <HelpTip text={hint} /> : null}
+      </div>
+      {children}
+      {error ? (
+        <div className="sf-field-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function DiscoveryPage({ inviteId, search, locale, messages }: DiscoveryPageProps) {
@@ -160,12 +193,15 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
     setCreating(true);
     try {
       const result = await api.createDiscoveryInvite({
-        customerName: customerName.trim(),
-        ...(contactEmail.trim() ? { contactEmail: contactEmail.trim() } : {}),
+        ...(tenantId
+          ? { tenantId }
+          : {
+              customerName: customerName.trim(),
+              ...(contactEmail.trim() ? { contactEmail: contactEmail.trim() } : {}),
+            }),
         locale: inviteLocale,
         mode,
         expiresInDays,
-        ...(tenantId ? { tenantId } : {}),
       });
       setCreated(result);
       setCustomerName('');
@@ -215,20 +251,13 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
   }
 
   const counts = overview?.counts;
+  const selectedTenant = tenants.find((tenant) => tenant.id === tenantId) ?? null;
   const start = cursorStack.length * PAGE_SIZE + 1;
   const shown = list?.items.length ?? 0;
 
   return (
     <>
-      <PageHeader
-        title={m.discovery.title}
-        description={m.discovery.description}
-        actions={
-          <Button variant="secondary" onClick={refresh} disabled={loading}>
-            {m.common.retry}
-          </Button>
-        }
-      />
+      <PageHeader title={m.discovery.title} description={m.discovery.description} />
 
       <div className="sf-kpi-grid">
         <KpiTile
@@ -256,100 +285,122 @@ function DiscoveryList({ search, locale, messages }: Omit<DiscoveryPageProps, 'i
       <Card>
         <CardHeader title={m.discovery.createTitle} meta={m.discovery.linkNote} />
         <div className="sf-card-body sf-stack">
-          <form onSubmit={(event) => void handleCreate(event)} className="sf-form-grid">
-            <Field
-              label={m.discovery.customerLabel}
-              htmlFor="discovery-customer"
-              error={fieldErrors.customerName}
-            >
-              <Input
-                id="discovery-customer"
-                value={customerName}
-                maxLength={120}
-                onChange={(event) => setCustomerName(event.target.value)}
-                placeholder={m.discovery.customerPlaceholder}
-                invalid={Boolean(fieldErrors.customerName)}
-              />
-            </Field>
-            <Field
-              label={m.discovery.emailLabel}
-              htmlFor="discovery-email"
-              error={fieldErrors.contactEmail}
-            >
-              <Input
-                id="discovery-email"
-                type="email"
-                value={contactEmail}
-                onChange={(event) => setContactEmail(event.target.value)}
-                placeholder={m.discovery.emailPlaceholder}
-                invalid={Boolean(fieldErrors.contactEmail)}
-              />
-            </Field>
-            <Field label={m.discovery.localeLabel} htmlFor="discovery-locale">
-              <select
-                id="discovery-locale"
-                className="sf-input"
-                value={inviteLocale}
-                onChange={(event) => setInviteLocale(event.target.value === 'en' ? 'en' : 'de')}
+          <form onSubmit={(event) => void handleCreate(event)}>
+            <div className="sf-form-grid-2">
+              <DiscoveryField
+                label={m.discovery.tenantLabel}
+                hint={m.discovery.tenantHint}
+                htmlFor="discovery-tenant"
+                error={fieldErrors.tenantId}
+                wide
               >
-                <option value="de">Deutsch</option>
-                <option value="en">English</option>
-              </select>
-            </Field>
-            <Field label={m.discovery.modeLabel} htmlFor="discovery-mode">
-              <select
-                id="discovery-mode"
-                className="sf-input"
-                value={mode}
-                onChange={(event) => setMode(event.target.value as DiscoveryMode)}
+                <select
+                  id="discovery-tenant"
+                  className="sf-input"
+                  value={tenantId}
+                  onChange={(event) => setTenantId(event.target.value)}
+                >
+                  <option value="">{m.discovery.tenantNone}</option>
+                  {tenants.map((tenant) => (
+                    <option key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </option>
+                  ))}
+                </select>
+                {selectedTenant ? (
+                  <p className="sf-field-hint">{m.discovery.customerFromTenant}</p>
+                ) : null}
+              </DiscoveryField>
+              {selectedTenant ? null : (
+                <>
+                  <DiscoveryField
+                    label={m.discovery.customerLabel}
+                    hint={m.discovery.customerHint}
+                    htmlFor="discovery-customer"
+                    error={fieldErrors.customerName}
+                  >
+                    <Input
+                      id="discovery-customer"
+                      value={customerName}
+                      maxLength={120}
+                      onChange={(event) => setCustomerName(event.target.value)}
+                      placeholder={m.discovery.customerPlaceholder}
+                      invalid={Boolean(fieldErrors.customerName)}
+                    />
+                  </DiscoveryField>
+                  <DiscoveryField
+                    label={m.discovery.emailLabel}
+                    hint={m.discovery.emailHint}
+                    htmlFor="discovery-email"
+                    error={fieldErrors.contactEmail}
+                  >
+                    <Input
+                      id="discovery-email"
+                      type="email"
+                      value={contactEmail}
+                      onChange={(event) => setContactEmail(event.target.value)}
+                      placeholder={m.discovery.emailPlaceholder}
+                      invalid={Boolean(fieldErrors.contactEmail)}
+                    />
+                  </DiscoveryField>
+                </>
+              )}
+              <DiscoveryField
+                label={m.discovery.localeLabel}
+                hint={m.discovery.localeHint}
+                htmlFor="discovery-locale"
               >
-                <option value="short">{m.discovery.modeShort}</option>
-                <option value="standard">{m.discovery.modeStandard}</option>
-                <option value="full">{m.discovery.modeFull}</option>
-              </select>
-            </Field>
-            <Field
-              label={m.discovery.expiryLabel}
-              htmlFor="discovery-expiry"
-              hint={m.discovery.expiryHint}
-              error={fieldErrors.expiresInDays}
-            >
-              <Input
-                id="discovery-expiry"
-                type="number"
-                min={1}
-                max={30}
-                value={expiresInDays}
-                onChange={(event) =>
-                  setExpiresInDays(Number.parseInt(event.target.value, 10) || 14)
-                }
-                invalid={Boolean(fieldErrors.expiresInDays)}
-              />
-            </Field>
-            <Field
-              label={m.discovery.tenantLabel}
-              htmlFor="discovery-tenant"
-              error={fieldErrors.tenantId}
-            >
-              <select
-                id="discovery-tenant"
-                className="sf-input"
-                value={tenantId}
-                onChange={(event) => setTenantId(event.target.value)}
+                <select
+                  id="discovery-locale"
+                  className="sf-input"
+                  value={inviteLocale}
+                  onChange={(event) => setInviteLocale(event.target.value === 'en' ? 'en' : 'de')}
+                >
+                  <option value="de">Deutsch</option>
+                  <option value="en">English</option>
+                </select>
+              </DiscoveryField>
+              <DiscoveryField
+                label={m.discovery.modeLabel}
+                hint={m.discovery.modeHint}
+                htmlFor="discovery-mode"
               >
-                <option value="">{m.discovery.tenantNone}</option>
-                {tenants.map((tenant) => (
-                  <option key={tenant.id} value={tenant.id}>
-                    {tenant.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <div className="sf-toolbar" style={{ alignItems: 'flex-end' }}>
+                <select
+                  id="discovery-mode"
+                  className="sf-input"
+                  value={mode}
+                  onChange={(event) => setMode(event.target.value as DiscoveryMode)}
+                >
+                  <option value="short">{m.discovery.modeShort}</option>
+                  <option value="standard">{m.discovery.modeStandard}</option>
+                  <option value="full">{m.discovery.modeFull}</option>
+                </select>
+              </DiscoveryField>
+              <DiscoveryField
+                label={m.discovery.expiryLabel}
+                hint={m.discovery.expiryHint}
+                htmlFor="discovery-expiry"
+                error={fieldErrors.expiresInDays}
+              >
+                <Input
+                  id="discovery-expiry"
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={expiresInDays}
+                  onChange={(event) =>
+                    setExpiresInDays(Number.parseInt(event.target.value, 10) || 14)
+                  }
+                  invalid={Boolean(fieldErrors.expiresInDays)}
+                />
+              </DiscoveryField>
+            </div>
+
+            <div className="sf-foot-actions sf-form-foot">
               <Button
                 type="submit"
                 variant="primary"
-                disabled={creating || customerName.trim().length < 2}
+                disabled={creating || (!tenantId && customerName.trim().length < 2)}
               >
                 {creating ? m.discovery.creating : m.discovery.createSubmit}
               </Button>

@@ -161,6 +161,14 @@ export function CompassIcon(props: IconProps) {
   );
 }
 
+export function MessageSquareIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </Svg>
+  );
+}
+
 export function SparklesIcon(props: IconProps) {
   return (
     <Svg {...props}>
@@ -189,6 +197,15 @@ export function CircleHelpIcon(props: IconProps) {
   );
 }
 
+export function MailIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2" y="4" width="20" height="16" rx="2" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </Svg>
+  );
+}
+
 export function GlobeIcon(props: IconProps) {
   return (
     <Svg {...props}>
@@ -212,12 +229,19 @@ export function navIconByName(name: string, size = 15) {
       return <SettingsIcon size={size} />;
     case 'sparkles':
       return <SparklesIcon size={size} />;
+    case 'message':
+    case 'chat':
+      return <MessageSquareIcon size={size} />;
     case 'circle-help':
       return <CircleHelpIcon size={size} />;
     case 'compass':
       return <CompassIcon size={size} />;
     case 'globe':
       return <GlobeIcon size={size} />;
+    case 'mail':
+    case 'inbox':
+    case 'envelope':
+      return <MailIcon size={size} />;
     default:
       return <PuzzleIcon size={size} />;
   }

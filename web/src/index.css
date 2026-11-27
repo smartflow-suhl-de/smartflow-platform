@@ -430,11 +430,11 @@ input:-webkit-autofill:active {
   border: 1px solid var(--color-line);
   background: var(--color-paper-raised);
   color: var(--color-ink-soft);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.3;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -1510,6 +1510,33 @@ input:-webkit-autofill:active {
   gap: var(--spacing-md);
 }
 
+/* Two-column field grid for plugin forms (LLM providers, Automation check). */
+.sf-form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-lg) var(--spacing-md);
+  align-items: start;
+}
+
+@media (min-width: 720px) {
+  .sf-form-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* A field that uses the full width of the two-column field grid. */
+.sf-form-span {
+  grid-column: 1 / -1;
+}
+
+/* Submit row at the bottom of a field grid: hairline, button right. */
+.sf-form-foot {
+  justify-content: flex-end;
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-line);
+}
+
 @media (min-width: 640px) {
   .sf-form-grid {
     grid-template-columns: minmax(0, 1fr) 220px auto;
@@ -1751,6 +1778,56 @@ input:-webkit-autofill:active {
   border-bottom-right-radius: var(--radius);
 }
 
+/* Master-data mask: two columns on desktop, one on narrow screens. */
+.sf-modal-wide {
+  max-width: 760px;
+}
+
+.sf-modal-body-scroll {
+  max-height: min(70vh, 640px);
+  overflow-y: auto;
+}
+
+.sf-detail-section + .sf-detail-section {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-line);
+}
+
+.sf-detail-title {
+  margin: 0 0 var(--spacing-sm);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.sf-form-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--spacing-md);
+}
+
+@media (min-width: 640px) {
+  .sf-form-2col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.sf-textarea {
+  height: auto;
+  min-height: 96px;
+  padding: var(--spacing-sm) var(--spacing-md);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.sf-tenant-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-ink-muted);
+}
+
 .sf-palette {
   position: fixed;
   top: 12vh;
@@ -1911,8 +1988,7 @@ input:-webkit-autofill:active {
 
 .sf-agent-column {
   width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
+  margin: 0;
 }
 
 .sf-agent-model {
@@ -1923,15 +1999,63 @@ input:-webkit-autofill:active {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-badge);
   background: var(--color-surface);
-  font-size: 11px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
   color: var(--color-ink-muted);
 }
 
 .sf-agent-empty {
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 32px 0 24px;
+  padding: 8px 0 24px;
+}
+
+.sf-agent-settings {
+  padding: 8px 0 24px;
+}
+
+.sf-agent-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.sf-agent-settings-active {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 10px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-paper-raised);
+}
+
+.sf-agent-settings-active-val {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.sf-agent-settings-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-line);
+}
+
+.sf-agent-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-left: auto;
 }
 
 .sf-agent-composer {
@@ -1998,6 +2122,124 @@ input:-webkit-autofill:active {
 .sf-agent-bar .sf-btn {
   flex: none;
   margin-left: auto;
+}
+
+.sf-agent-working-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-ink-soft);
+}
+
+.sf-agent-pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-cobalt);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-cobalt) 55%, transparent);
+  animation: sf-agent-pulse 1.5s ease-out infinite;
+  flex: none;
+}
+
+.sf-agent-btn-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.sf-agent-btn-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: sf-agent-dot 1.2s ease-in-out infinite;
+}
+
+.sf-agent-btn-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.sf-agent-btn-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+.sf-agent-thinking {
+  margin-top: var(--spacing-md);
+  border: 1px solid color-mix(in srgb, var(--color-cobalt) 35%, var(--color-line));
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.sf-agent-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-lg);
+  border-bottom: 1px solid var(--color-line);
+}
+
+.sf-agent-thinking-label {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-muted);
+}
+
+.sf-agent-thinking-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px var(--spacing-lg);
+}
+
+.sf-agent-shimmer {
+  height: 11px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--color-paper-raised) 0%,
+    color-mix(in srgb, var(--color-cobalt) 22%, var(--color-paper-raised)) 50%,
+    var(--color-paper-raised) 100%
+  );
+  background-size: 220% 100%;
+  animation: sf-agent-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes sf-agent-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-cobalt) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes sf-agent-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes sf-agent-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
 }
 
 .sf-agent-examples {
@@ -2087,8 +2329,8 @@ input:-webkit-autofill:active {
 }
 
 .sf-agent-notice {
-  max-width: 760px;
-  margin: 0 auto var(--spacing-xl);
+  width: 100%;
+  margin: 0 0 var(--spacing-xl);
   padding: var(--spacing-lg);
   border: 1px solid var(--color-line);
   border-left: 3px solid var(--color-warn);
@@ -2119,8 +2361,8 @@ input:-webkit-autofill:active {
 
 .sf-agent-alert,
 .sf-agent-error {
-  margin: 0 auto var(--spacing-lg);
-  max-width: 760px;
+  margin: 0 0 var(--spacing-lg);
+  width: 100%;
 }
 
 .sf-agent-thread {
@@ -2138,22 +2380,25 @@ input:-webkit-autofill:active {
 
 .sf-agent-question {
   align-self: flex-end;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
   max-width: 560px;
-  padding: 10px 14px 12px;
+  padding: 10px 14px;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-card);
   background: var(--color-paper-raised);
 }
 
 .sf-agent-clock {
-  display: block;
-  margin-bottom: 4px;
+  order: 2;
+  flex: none;
   font-size: 10px;
   color: var(--color-ink-muted);
-  text-align: right;
 }
 
 .sf-agent-question p {
+  order: 1;
   margin: 0;
   font-size: 15px;
   white-space: pre-wrap;
@@ -2194,13 +2439,59 @@ input:-webkit-autofill:active {
   margin: 0 0 10px;
 }
 
-.sf-agent-answer-body ul {
+.sf-agent-answer-body h3,
+.sf-agent-answer-body h4,
+.sf-agent-answer-body h5 {
+  margin: 12px 0 6px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.sf-agent-answer-body h3 {
+  font-size: 16px;
+}
+
+.sf-agent-answer-body h4 {
+  font-size: 15px;
+}
+
+.sf-agent-answer-body h5 {
+  font-size: 14px;
+}
+
+.sf-agent-answer-body ul,
+.sf-agent-answer-body ol {
   margin: 0 0 10px;
   padding-left: 18px;
 }
 
 .sf-agent-answer-body li {
   margin-bottom: 3px;
+}
+
+.sf-agent-answer-body code {
+  padding: 1px 5px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-raised);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.sf-agent-answer-body pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius);
+  background: var(--color-paper-raised);
+}
+
+.sf-agent-answer-body pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .sf-agent-truncated {
@@ -2336,6 +2627,154 @@ input:-webkit-autofill:active {
   margin-top: var(--spacing-sm);
 }
 
+/* --- Chat history ------------------------------------------------------ */
+
+.sf-agent-history-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.sf-agent-history-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.sf-agent-history-search {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.sf-agent-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.sf-agent-history-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+.sf-agent-history-row:last-child {
+  border-bottom: 0;
+}
+
+.sf-agent-history-row:hover {
+  background: var(--color-paper-raised);
+}
+
+.sf-agent-history-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.sf-agent-history-question {
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-agent-history-question:hover {
+  color: var(--color-cobalt);
+  text-decoration: underline;
+}
+
+.sf-agent-history-question:focus-visible {
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sf-agent-history-preview {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+}
+
+.sf-agent-history-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--color-ink-muted);
+}
+
+.sf-agent-history-model {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  padding: 0 6px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-badge);
+}
+
+.sf-agent-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.sf-agent-history-empty {
+  margin: 0;
+  padding: var(--spacing-lg) 14px;
+  text-align: center;
+  color: var(--color-ink-muted);
+  font-size: 13px;
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-card);
+}
+
+.sf-agent-history-empty-title {
+  margin: 0 0 4px;
+  color: var(--color-ink);
+  font-weight: 550;
+}
+
+.sf-agent-history-empty p:last-child {
+  margin-bottom: 0;
+}
+
+.sf-agent-history-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
 /* --- Tenant Switcher ---------------------------------------------------- */
 
 .sf-tenant-switcher {
@@ -2344,6 +2783,8 @@ input:-webkit-autofill:active {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-card);
   background: var(--color-surface);
+  container-type: inline-size;
+  container-name: sf-tenant-switcher;
 }
 
 .sf-tenant-switcher-head {
@@ -2351,6 +2792,7 @@ input:-webkit-autofill:active {
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-xs);
+  min-height: 18px;
   margin-bottom: var(--spacing-xs);
 }
 
@@ -2358,6 +2800,14 @@ input:-webkit-autofill:active {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--color-ink-muted);
+}
+
+.sf-tenant-switcher-state {
+  flex: none;
+  font-size: 10px;
+  line-height: 18px;
+  letter-spacing: 0.04em;
   color: var(--color-ink-muted);
 }
 
@@ -2388,15 +2838,18 @@ input:-webkit-autofill:active {
 .sf-tenant-switcher-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   width: 100%;
-  padding: 4px 6px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 4px 8px;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-sm);
   background: var(--color-paper);
   color: var(--color-ink);
   font-size: 12px;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   transition:
     border-color 0.15s ease,
@@ -2418,25 +2871,54 @@ input:-webkit-autofill:active {
   border-style: dashed;
 }
 
+.sf-tenant-switcher-name,
+.sf-tenant-switcher-slug,
+.sf-tenant-switcher-action {
+  /* Gleiche Zeilenhöhe für alle drei: 12 px Name und 11 px Beiwerk sitzen so
+     optisch auf einer Linie statt um ein Pixel zu springen. */
+  line-height: 16px;
+  align-self: center;
+}
+
 .sf-tenant-switcher-name {
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+  text-align: center;
 }
 
 .sf-tenant-switcher-slug {
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: 11px;
   color: var(--color-ink-muted);
-  flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Der Name ist die Identität; in der schmalen Seitenleiste weicht der Slug. */
+@container sf-tenant-switcher (max-width: 300px) {
+  .sf-tenant-switcher-slug {
+    display: none;
+  }
 }
 
 .sf-tenant-switcher-action {
-  font-size: 11px;
+  /* Gleiche Schriftgröße wie der Name, damit beide auf derselben Grundlinie
+     sitzen; die Farbe trennt Aktion und Zustand. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 16px;
   color: var(--color-cobalt);
   font-weight: 500;
-  flex: none;
 }
 
 /* Topbar Tenant Button */
@@ -2459,7 +2941,7 @@ input:-webkit-autofill:active {
   color: var(--color-ink-soft);
   font-size: 12px;
   cursor: pointer;
-  max-width: 200px;
+  max-width: 260px;
 }
 
 .sf-topbar-tenant-btn:hover {
@@ -2486,7 +2968,9 @@ input:-webkit-autofill:active {
 
 /* Switcher Modal */
 .sf-switcher-modal {
-  max-width: 540px;
+  /* Der Mandantenkontext trägt Firmenname, Slug und Aktion nebeneinander;
+     die Standardbreite bricht den Namen zu früh um. */
+  max-width: 760px;
 }
 
 .sf-modal-desc {
@@ -2501,7 +2985,7 @@ input:-webkit-autofill:active {
 
 .sf-switcher-body {
   padding: var(--spacing-md) var(--spacing-lg);
-  max-height: 340px;
+  max-height: 420px;
   overflow-y: auto;
 }
 
@@ -2535,4 +3019,390 @@ input:-webkit-autofill:active {
 .sf-switcher-actions {
   display: flex;
   gap: var(--spacing-xs);
+}
+
+/* --- LLM Provider Form Polish --------------------------------------------- */
+
+.sf-llm-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-lg) var(--spacing-md);
+  align-items: start;
+}
+
+@media (min-width: 720px) {
+  .sf-llm-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.sf-llm-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-lg) var(--spacing-md);
+  align-items: start;
+}
+
+@media (min-width: 640px) {
+  .sf-llm-grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .sf-llm-grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.sf-llm-field-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sf-help-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--color-ink-muted);
+  cursor: help;
+  flex-shrink: 0;
+  transition: color 120ms ease;
+}
+
+.sf-help-tip:hover,
+.sf-help-tip:focus-visible {
+  color: var(--color-ink);
+  outline: none;
+}
+
+.sf-help-tip-bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  width: max-content;
+  max-width: 260px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-line-strong);
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-transform: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  z-index: 40;
+}
+
+.sf-help-tip:hover .sf-help-tip-bubble,
+.sf-help-tip:focus-visible .sf-help-tip-bubble {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.sf-llm-advanced {
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-paper-raised) 50%, transparent);
+}
+
+.sf-llm-advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+  color: var(--color-ink);
+}
+
+.sf-llm-advanced[open] summary {
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--color-line);
+}
+
+.sf-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.sf-preset-pill {
+  appearance: none;
+  border: 1px solid var(--color-line);
+  background: transparent;
+  color: var(--color-ink-soft);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  line-height: 1.6;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.sf-preset-pill:hover {
+  border-color: var(--color-line-strong);
+  color: var(--color-ink);
+}
+
+.sf-preset-pill[aria-pressed='true'] {
+  border-color: var(--color-cobalt);
+  background: color-mix(in srgb, var(--color-cobalt) 14%, transparent);
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+/* --- Provider templates -------------------------------------------------- */
+
+/* One card per browser-login template. A card holds its own connect button, so
+ * the card itself is not interactive and the keyboard path stays unambiguous. */
+.sf-template-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--spacing-sm);
+}
+
+@media (min-width: 640px) {
+  .sf-template-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .sf-template-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.sf-template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.sf-template-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sf-template-note {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+  line-height: 1.45;
+}
+
+.sf-template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  align-items: center;
+  margin-top: 6px;
+}
+
+.sf-template-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+/* --- Email plugin ------------------------------------------------------- */
+
+.sf-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
+.sf-textarea {
+  min-height: 120px;
+  padding: var(--spacing-sm);
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.sf-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+.sf-link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--color-cobalt);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-link-button:hover {
+  text-decoration: underline;
+}
+
+.sf-email-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: var(--spacing-lg);
+  align-items: start;
+}
+
+@media (max-width: 1000px) {
+  .sf-email-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sf-email-list {
+  max-height: 560px;
+  overflow-y: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+}
+
+.sf-email-row {
+  display: block;
+  width: 100%;
+  padding: var(--spacing-md);
+  border: 0;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sf-email-row:last-child {
+  border-bottom: 0;
+}
+
+.sf-email-row:hover {
+  background: var(--color-paper-raised);
+}
+
+.sf-email-row-active {
+  background: var(--color-paper-raised);
+  box-shadow: inset 3px 0 0 var(--color-cobalt);
+}
+
+.sf-email-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.sf-email-from {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-email-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-cobalt);
+  flex: none;
+}
+
+.sf-email-date {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+
+.sf-email-subject {
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--color-ink);
+}
+
+.sf-email-snippet {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--color-ink-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.sf-email-detail {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-card);
+  padding: var(--spacing-lg);
+  min-height: 200px;
+  background: var(--color-surface);
+}
+
+.sf-email-detail-inline {
+  margin-top: var(--spacing-md);
+}
+
+.sf-email-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.sf-email-body-actions {
+  margin-bottom: var(--spacing-sm);
+}
+
+.sf-email-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-ink-soft);
+}
+
+.sf-email-html {
+  width: 100%;
+  min-height: 360px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: #fff;
 }

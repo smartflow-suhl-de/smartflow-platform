@@ -12,6 +12,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   FieldError,
+  OWN_WORKSPACE_ID,
+  OWN_WORKSPACE_NAME,
+  OWN_WORKSPACE_SLUG,
   type AgentDataSource,
   type AuthMe,
   type HealthResponse,
@@ -352,6 +355,18 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
 
   /** Opens a verified tenant database and applies every tenant migration once. */
   const tenantDb = (tenantId: string): Db => {
+    // The operator's own workspace is a database without a tenant row: same file
+    // layout, same migrations and cache, but no status or directory entry.
+    if (tenantId === OWN_WORKSPACE_ID) {
+      const cachedOwn = tenantCache.get(OWN_WORKSPACE_ID);
+      if (cachedOwn) return cachedOwn;
+      const openedOwn = openDatabase(tenantDatabaseFile(config.dataDir, OWN_WORKSPACE_ID));
+      for (const [pluginId, migrations] of tenantMigrations) {
+        migrate(openedOwn, migrations, `tenant:${pluginId}`);
+      }
+      tenantCache.set(OWN_WORKSPACE_ID, openedOwn);
+      return openedOwn;
+    }
     const tenant = tenantDirectory?.resolve(tenantId) ?? null;
     if (!tenant) throw new AppError('tenant_not_found', 'Tenant not found.', 404);
     // A suspended tenant keeps its data but loses access — this is the kernel
@@ -403,7 +418,19 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
           log: scope.log,
           tenantDb,
           tenants() {
-            return tenantDirectory?.list() ?? [];
+            // The own workspace is listed so that workers which sweep every
+            // database (builds, delivery) also serve it. `own` marks it as not
+            // a customer tenant; tenant pickers filter it out.
+            return [
+              ...(tenantDirectory?.list() ?? []),
+              {
+                id: OWN_WORKSPACE_ID,
+                name: OWN_WORKSPACE_NAME,
+                slug: OWN_WORKSPACE_SLUG,
+                status: 'active' as const,
+                own: true,
+              },
+            ];
           },
           provideTenantDirectory(directory) {
             tenantDirectory = directory;
@@ -611,8 +638,15 @@ export function navFor(
   const items: NavEntry[] = plugins
     .filter((manifest) => manifest.nav)
     // An operator has no tenant of their own: a tenant-scoped plugin is offered
-    // only while a tenant is chosen, so its page never opens onto a 403.
-    .filter((manifest) => role !== 'operator' || manifest.scope !== 'tenant' || hasActiveTenant)
+    // only while a tenant is chosen, unless it declines that rule because it
+    // also works in the operator's own workspace (the websites plugin).
+    .filter(
+      (manifest) =>
+        role !== 'operator' ||
+        manifest.scope !== 'tenant' ||
+        hasActiveTenant ||
+        manifest.nav?.ownWorkspace === true,
+    )
     .map((manifest) => {
       const nav = manifest.nav as NonNullable<PluginManifest['nav']>;
       return {

@@ -46,7 +46,9 @@ export function canPublish(
   approvals: WebsiteApproval[],
   options: { requireApproval?: boolean; released?: boolean } = {},
 ): boolean {
-  if (role !== 'tenant_admin') return false;
+  // The server accepts tenant_admin and operator; the operator runs the platform
+  // itself, so an own website must not be blocked by a missing publish button.
+  if (role !== 'tenant_admin' && role !== 'operator') return false;
   if (!build || build.status !== 'ok') return false;
   // A build that already has a release would hit the unique index on re-publish.
   if (options.released === true) return false;

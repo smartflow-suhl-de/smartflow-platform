@@ -200,34 +200,53 @@ test('the body is validated', async (t) => {
   assert.equal((await me(ctx, cookie)).activeTenant, null);
 });
 
-const manifest = (id: string, scope: 'platform' | 'tenant'): PluginManifest => ({
+const manifest = (
+  id: string,
+  scope: 'platform' | 'tenant',
+  ownWorkspace = false,
+): PluginManifest => ({
   id,
   label: id,
   description: id,
   version: '1.0.0',
   apiVersion: 1,
   scope,
-  nav: { label: id, path: `/${id}`, group: 'work', icon: 'x', roles: ['operator', 'tenant_admin'] },
+  nav: {
+    label: id,
+    path: `/${id}`,
+    group: 'work',
+    icon: 'x',
+    roles: ['operator', 'tenant_admin'],
+    ...(ownWorkspace ? { ownWorkspace: true } : {}),
+  },
 });
 
 test('navFor hides tenant-scoped entries from an operator without a tenant', () => {
-  const plugins = [manifest('platform-thing', 'platform'), manifest('tenant-thing', 'tenant')];
+  const plugins = [
+    manifest('platform-thing', 'platform'),
+    manifest('tenant-thing', 'tenant'),
+    manifest('own-thing', 'tenant', true),
+  ];
   const ids = (role: 'operator' | 'tenant_admin', active: boolean) =>
     navFor(plugins, role, active).items.map((item) => item.plugin);
-  assert.deepEqual(ids('operator', false), ['platform-thing']);
-  assert.deepEqual(ids('operator', true), ['platform-thing', 'tenant-thing']);
+  assert.deepEqual(ids('operator', false), ['own-thing', 'platform-thing']);
+  assert.deepEqual(ids('operator', true), ['own-thing', 'platform-thing', 'tenant-thing']);
   // Tenant roles are not affected by the operator rule.
-  assert.deepEqual(ids('tenant_admin', false), ['platform-thing', 'tenant-thing']);
+  assert.deepEqual(ids('tenant_admin', false), [
+    'own-thing',
+    'platform-thing',
+    'tenant-thing',
+  ]);
 });
 
-test('the tenant-bound plugin stays hidden for an operator until a tenant is chosen', async (t) => {
+test('the tenant-bound plugin is offered without a tenant when it opts in', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
   const cookie = await ctx.signIn();
   const id = await makeTenant(ctx, cookie, 'Alpha GmbH');
   const without = await navPlugins(ctx, cookie);
   assert.equal(without.includes('agent'), true, 'platform entries stay');
-  assert.equal(without.includes('websites'), false);
+  assert.equal(without.includes('websites'), true, 'the own area needs no tenant');
   await choose(ctx, cookie, id);
   assert.equal((await navPlugins(ctx, cookie)).includes('agent'), true);
   assert.equal((await navPlugins(ctx, cookie)).includes('websites'), true);
@@ -393,7 +412,7 @@ test('tenantId stays the fixed binding: switching never turns it into a tenant',
   assert.equal(admin?.activeTenantId, id);
 });
 
-test('an operator gets 403 on the tenant-bound websites API without a tenant, 200 with a tenant', async (t) => {
+test('the websites API answers without a tenant (own area) and with a tenant', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
   const cookie = await ctx.signIn();
@@ -401,11 +420,8 @@ test('an operator gets 403 on the tenant-bound websites API without a tenant, 20
   const call = () =>
     ctx.app.inject({ method: 'GET', url: '/api/v1/websites', headers: { cookie } });
   const without = await call();
-  assert.equal(without.statusCode, 403, 'no tenant chosen');
-  assert.equal(
-    (without.json() as { error: { message: string } }).error.message,
-    'Select a tenant first.',
-  );
+  assert.equal(without.statusCode, 200, 'no tenant chosen: own area');
+  assert.equal((without.json() as { total: number }).total, 0);
   await choose(ctx, cookie, id);
   const withTenant = await call();
   assert.equal(withTenant.statusCode, 200, 'tenant chosen');

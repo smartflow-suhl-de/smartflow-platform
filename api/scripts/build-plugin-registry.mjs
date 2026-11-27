@@ -52,8 +52,8 @@ function validate(manifest, folder) {
     const nav = manifest.nav;
     if (typeof nav.label !== 'string' || !nav.label) fail(`${where}: nav.label is required`);
     if (!nav.path?.startsWith('/')) fail(`${where}: nav.path must start with "/"`);
-    if (nav.group !== 'work' && nav.group !== 'management') {
-      fail(`${where}: nav.group must be "work" or "management"`);
+    if (nav.group !== 'work' && nav.group !== 'tools' && nav.group !== 'management') {
+      fail(`${where}: nav.group must be "work", "tools" or "management"`);
     }
   }
   if (!existsSync(join(pluginsDir, folder, 'server.ts'))) {

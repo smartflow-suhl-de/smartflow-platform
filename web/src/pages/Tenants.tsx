@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { BuildingIcon } from '../components/icons';
+import { BuildingIcon, CloseIcon } from '../components/icons';
+import { useFocusTrap } from '../components/useFocusTrap';
 import {
   Badge,
   Button,
@@ -22,7 +23,15 @@ import {
   type Messages,
 } from '../lib/i18n';
 import { navigate } from '../lib/router';
-import type { Tenant, TenantListResponse, TenantStats, TenantStatus } from '../lib/types';
+import {
+  TENANT_DETAIL_FIELDS,
+  TENANT_DETAIL_MAX_LENGTH,
+  type Tenant,
+  type TenantDetailField,
+  type TenantListResponse,
+  type TenantStats,
+  type TenantStatus,
+} from '../lib/types';
 
 const PAGE_SIZE = 10;
 
@@ -50,6 +59,7 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
   const [error, setError] = useState<string | null>(null);
   const [busyTenantId, setBusyTenantId] = useState<string | null>(null);
   const [pendingSuspend, setPendingSuspend] = useState<Tenant | null>(null);
+  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -347,11 +357,20 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
                   <tbody>
                     {items.map((tenant) => {
                       const busy = busyTenantId === tenant.id;
+                      const place = [tenant.details.postal_code, tenant.details.city]
+                        .filter((part): part is string => Boolean(part))
+                        .join(' ');
+                      const contact = tenant.details.contact_name;
                       return (
                         <tr key={tenant.id}>
                           <td>
                             <div className="sf-tenant-name">{tenant.name}</div>
                             <div className="numeric sf-tenant-slug">{tenant.slug}</div>
+                            {place || contact ? (
+                              <div className="sf-tenant-meta">
+                                {[place, contact].filter(Boolean).join(' · ')}
+                              </div>
+                            ) : null}
                           </td>
                           <td>
                             <span className="numeric">{tenant.id}</span>
@@ -367,6 +386,14 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
                             </span>
                           </td>
                           <td className="sf-table-actions">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => setEditingTenant(tenant)}
+                            >
+                              {messages.tenants.actionEdit}
+                            </Button>
                             {tenant.status === 'active' ? (
                               <Button
                                 variant="secondary"
@@ -426,6 +453,20 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
         </Card>
       </div>
 
+      {editingTenant ? (
+        <TenantDetailsModal
+          tenant={editingTenant}
+          locale={locale}
+          messages={messages}
+          onClose={() => setEditingTenant(null)}
+          onSaved={(updated) => {
+            setEditingTenant(null);
+            showToast(messages.tenants.savedSuccess(updated.name));
+            refreshAll();
+          }}
+        />
+      ) : null}
+
       <ConfirmModal
         open={pendingSuspend !== null}
         title={pendingSuspend ? messages.tenants.confirmSuspendTitle(pendingSuspend.name) : ''}
@@ -439,5 +480,268 @@ export function TenantsPage({ search, stats, locale, messages, onStatsChange }: 
         onCancel={() => setPendingSuspend(null)}
       />
     </div>
+  );
+}
+
+type DetailSectionKey =
+  'sectionAddress' | 'sectionContact' | 'sectionContactCompany' | 'sectionTax';
+
+const DETAIL_SECTIONS: Array<{ title: DetailSectionKey; fields: TenantDetailField[] }> = [
+  {
+    title: 'sectionAddress',
+    fields: ['street', 'address_extra', 'postal_code', 'city', 'country'],
+  },
+  {
+    title: 'sectionContact',
+    fields: ['contact_name', 'contact_role', 'contact_email', 'contact_phone', 'contact_mobile'],
+  },
+  { title: 'sectionContactCompany', fields: ['email', 'phone', 'website'] },
+  { title: 'sectionTax', fields: ['vat_id', 'tax_number', 'register_court', 'register_number'] },
+];
+
+type DetailValues = Record<TenantDetailField, string>;
+type DetailErrors = Partial<Record<TenantDetailField | 'name' | 'slug' | 'form', string>>;
+
+/** The API answers in English; the mask speaks the operator's language. */
+function detailFieldError(field: TenantDetailField, raw: string, locale: Locale): string {
+  if (locale === 'en') return raw;
+  if (field === 'contact_email' || field === 'email') {
+    return 'Bitte eine gültige E-Mail-Adresse eingeben.';
+  }
+  if (field === 'postal_code') return 'Bitte eine gültige Postleitzahl eingeben.';
+  return `Eingabe zu lang (max. ${TENANT_DETAIL_MAX_LENGTH[field]} Zeichen).`;
+}
+
+function detailValues(tenant: Tenant): DetailValues {
+  const values = {} as DetailValues;
+  for (const field of TENANT_DETAIL_FIELDS) values[field] = tenant.details[field] ?? '';
+  return values;
+}
+
+interface TenantDetailsModalProps {
+  tenant: Tenant;
+  locale: Locale;
+  messages: Messages;
+  onClose: () => void;
+  onSaved: (tenant: Tenant) => void;
+}
+
+/**
+ * Master data of one tenant. Every field is optional; an empty input is sent
+ * as `null` and clears the stored value, which is why the payload is built
+ * from the full field list instead of the changed keys.
+ */
+function TenantDetailsModal({
+  tenant,
+  locale,
+  messages,
+  onClose,
+  onSaved,
+}: TenantDetailsModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [name, setName] = useState(tenant.name);
+  const [slug, setSlug] = useState(tenant.slug);
+  const [values, setValues] = useState<DetailValues>(() => detailValues(tenant));
+  const [errors, setErrors] = useState<DetailErrors>({});
+  const [saving, setSaving] = useState(false);
+
+  useFocusTrap(dialogRef, true, { onEscape: onClose, escapeDisabled: saving });
+
+  function setValue(field: TenantDetailField, value: string): void {
+    setValues((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    setErrors({});
+    setSaving(true);
+
+    const details = Object.fromEntries(
+      TENANT_DETAIL_FIELDS.map((field) => [field, values[field].trim() || null]),
+    ) as Record<TenantDetailField, string | null>;
+
+    try {
+      const updated = await api.updateTenant(tenant.id, {
+        name: name.trim(),
+        slug: slug.trim(),
+        details,
+      });
+      onSaved(updated);
+    } catch (err) {
+      if (err instanceof ApiError && Object.keys(err.fields).length > 0) {
+        const next: DetailErrors = {};
+        for (const [key, message] of Object.entries(err.fields)) {
+          if (key === 'name') {
+            next.name = locale === 'de' ? 'Bitte 2 bis 80 Zeichen eingeben.' : message;
+          } else if (key === 'slug') {
+            next.slug =
+              locale === 'de'
+                ? 'Nur Kleinbuchstaben, Ziffern und Bindestriche (2–48 Zeichen).'
+                : message;
+          } else if ((TENANT_DETAIL_FIELDS as readonly string[]).includes(key)) {
+            next[key as TenantDetailField] = detailFieldError(
+              key as TenantDetailField,
+              message,
+              locale,
+            );
+          } else {
+            next.form = message;
+          }
+        }
+        setErrors(next);
+      } else {
+        setErrors({ form: formatApiError(err, locale) });
+      }
+      setSaving(false);
+    }
+  }
+
+  function renderField(field: TenantDetailField) {
+    return (
+      <Field
+        key={field}
+        label={messages.tenants.detailLabels[field]}
+        error={errors[field]}
+        htmlFor={`sf-tenant-${field}`}
+      >
+        <Input
+          id={`sf-tenant-${field}`}
+          value={values[field]}
+          onChange={(event) => setValue(field, event.target.value)}
+          invalid={Boolean(errors[field])}
+          disabled={saving}
+          maxLength={TENANT_DETAIL_MAX_LENGTH[field]}
+        />
+      </Field>
+    );
+  }
+
+  return (
+    <>
+      <div
+        className="sf-overlay-backdrop"
+        onClick={() => !saving && onClose()}
+        aria-hidden="true"
+      />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sf-tenant-details-title"
+        tabIndex={-1}
+        className="sf-modal sf-modal-wide"
+      >
+        <form onSubmit={handleSubmit}>
+          <div className="sf-modal-head">
+            <div>
+              <h2 id="sf-tenant-details-title" className="sf-modal-title">
+                {messages.tenants.editTitle(tenant.name)}
+              </h2>
+              <p className="sf-modal-desc">{messages.tenants.editHint}</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={messages.common.close}
+              disabled={saving}
+              onClick={onClose}
+            >
+              <CloseIcon size={16} />
+            </Button>
+          </div>
+
+          <div className="sf-modal-body sf-modal-body-scroll">
+            {errors.form ? (
+              <div className="sf-alert sf-alert-bad" role="alert">
+                <span>{errors.form}</span>
+              </div>
+            ) : null}
+
+            <div className="sf-detail-section">
+              <h3 className="sf-detail-title label">{messages.tenants.sectionCompany}</h3>
+              <div className="sf-form-2col">
+                <Field
+                  label={messages.tenants.nameEditLabel}
+                  error={errors.name}
+                  htmlFor="sf-tenant-name-edit"
+                >
+                  <Input
+                    id="sf-tenant-name-edit"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    invalid={Boolean(errors.name)}
+                    disabled={saving}
+                    maxLength={80}
+                    required
+                  />
+                </Field>
+                <Field
+                  label={messages.tenants.slugEditLabel}
+                  hint={messages.tenants.slugEditHint}
+                  error={errors.slug}
+                  htmlFor="sf-tenant-slug-edit"
+                >
+                  <Input
+                    id="sf-tenant-slug-edit"
+                    value={slug}
+                    onChange={(event) => setSlug(event.target.value)}
+                    invalid={Boolean(errors.slug)}
+                    disabled={saving}
+                    maxLength={48}
+                    required
+                    className="numeric"
+                  />
+                </Field>
+                {(
+                  ['legal_name', 'legal_form', 'customer_number', 'industry'] as TenantDetailField[]
+                ).map(renderField)}
+              </div>
+            </div>
+
+            {DETAIL_SECTIONS.map((section) => (
+              <div key={section.title} className="sf-detail-section">
+                <h3 className="sf-detail-title label">{messages.tenants[section.title]}</h3>
+                <div className="sf-form-2col">{section.fields.map(renderField)}</div>
+              </div>
+            ))}
+
+            <div className="sf-detail-section">
+              <h3 className="sf-detail-title label">{messages.tenants.sectionNotes}</h3>
+              <Field
+                label={messages.tenants.detailLabels.notes}
+                error={errors.notes}
+                htmlFor="sf-tenant-notes"
+              >
+                <textarea
+                  id="sf-tenant-notes"
+                  className={
+                    errors.notes ? 'sf-input sf-textarea sf-input-invalid' : 'sf-input sf-textarea'
+                  }
+                  value={values.notes}
+                  onChange={(event) => setValue('notes', event.target.value)}
+                  placeholder={messages.tenants.notesPlaceholder}
+                  disabled={saving}
+                  maxLength={TENANT_DETAIL_MAX_LENGTH.notes}
+                  rows={4}
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="sf-modal-foot">
+            <Button variant="secondary" disabled={saving} onClick={onClose}>
+              {messages.common.cancel}
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={saving || name.trim().length < 2 || slug.trim().length < 2}
+            >
+              {saving ? messages.tenants.saving : messages.tenants.save}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </>
   );
 }

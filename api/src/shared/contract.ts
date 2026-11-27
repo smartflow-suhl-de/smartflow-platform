@@ -5,6 +5,16 @@
 
 export const KERNEL_API_VERSION = 1;
 
+/**
+ * The operator's own workspace: websites the agency runs for itself. It is not
+ * a tenant row and never shows up in a tenant list; the kernel opens one
+ * database for it under the same isolation rules as a customer database. A
+ * tenant-scoped plugin opts in with `nav.ownWorkspace`.
+ */
+export const OWN_WORKSPACE_ID = 'ten_own_workspace';
+export const OWN_WORKSPACE_NAME = 'Eigene Webseiten';
+export const OWN_WORKSPACE_SLUG = 'eigen';
+
 export type Role = 'operator' | 'tenant_admin' | 'employee';
 
 export const ROLES: readonly Role[] = ['operator', 'tenant_admin', 'employee'];
@@ -12,12 +22,17 @@ export const ROLES: readonly Role[] = ['operator', 'tenant_admin', 'employee'];
 export interface PluginNav {
   label: string;
   path: string;
-  group: 'work' | 'management';
+  group: 'work' | 'tools' | 'management';
   icon: string;
   order?: number;
   roles?: Role[];
   createLabel?: string;
   aliases?: string[];
+  /**
+   * Tenant-scoped plugin that also works without a chosen tenant: an operator
+   * then works in the own workspace instead of a customer database.
+   */
+  ownWorkspace?: boolean;
 }
 
 export interface PluginManifest {
@@ -74,7 +89,7 @@ export interface NavEntry {
   plugin: string;
   label: string;
   path: string;
-  group: 'work' | 'management';
+  group: 'work' | 'tools' | 'management';
   icon: string;
   order: number;
   roles: Role[];
@@ -205,12 +220,42 @@ export interface HealthResponse {
 
 export type TenantStatus = 'active' | 'suspended';
 
+/**
+ * Master data of a tenant. Every field is optional in the mask and therefore
+ * `null` until someone fills it in; the API never invents defaults.
+ */
+export interface TenantDetails {
+  legal_name: string | null;
+  legal_form: string | null;
+  customer_number: string | null;
+  industry: string | null;
+  street: string | null;
+  address_extra: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country: string | null;
+  contact_name: string | null;
+  contact_role: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  contact_mobile: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  vat_id: string | null;
+  tax_number: string | null;
+  register_court: string | null;
+  register_number: string | null;
+  notes: string | null;
+}
+
 export interface Tenant {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
   created_at: string;
+  details: TenantDetails;
 }
 
 export interface TenantUser {

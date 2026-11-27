@@ -14,6 +14,31 @@ interface Call {
 let calls: Call[] = [];
 let respond: (url: string, init: RequestInit) => Response | Promise<Response>;
 
+const emptyTenantDetails = {
+  legal_name: null,
+  legal_form: null,
+  customer_number: null,
+  industry: null,
+  street: null,
+  address_extra: null,
+  postal_code: null,
+  city: null,
+  country: null,
+  contact_name: null,
+  contact_role: null,
+  contact_email: null,
+  contact_phone: null,
+  contact_mobile: null,
+  email: null,
+  phone: null,
+  website: null,
+  vat_id: null,
+  tax_number: null,
+  register_court: null,
+  register_number: null,
+  notes: null,
+};
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -104,6 +129,7 @@ describe('api requests', () => {
         slug: 'acme',
         status: 'suspended',
         created_at: '2026-01-01T00:00:00Z',
+        details: emptyTenantDetails,
       });
     await api.suspendTenant('t/1');
 
@@ -119,6 +145,7 @@ describe('api requests', () => {
         slug: 'acme',
         status: 'active',
         created_at: '2026-01-01T00:00:00Z',
+        details: emptyTenantDetails,
       });
     await api.createTenant({ name: 'Acme', slug: '   ' });
 
@@ -133,6 +160,7 @@ describe('api requests', () => {
         slug: 'acme',
         status: 'active',
         created_at: '2026-01-01T00:00:00Z',
+        details: emptyTenantDetails,
       });
     await api.createTenant({ name: 'Acme', slug: ' acme ' });
 

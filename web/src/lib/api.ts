@@ -1,4 +1,13 @@
 import type {
+  EmailInboxDetail,
+  EmailInboxItem,
+  EmailInboxStatus,
+  EmailListResponse,
+  EmailOutboxDetail,
+  EmailOutboxItem,
+  EmailSettings,
+  EmailSettingsInput,
+  EmailSettingsSaved,
   PublicApproval,
   Website,
   WebsiteAiJob,
@@ -16,6 +25,7 @@ import type {
   WebsiteStatus,
   WebsiteSummary,
   AgentAskResponse,
+  AgentSettings,
   AgentRun,
   AgentRunListResponse,
   AgentSourceInfo,
@@ -41,13 +51,19 @@ import type {
   SetupInput,
   SetupStatus,
   Tenant,
+  TenantDetailField,
+  TenantDetails,
   TenantListResponse,
   TenantStats,
   TenantStatus,
   LlmAuthStyle,
   LlmCapabilities,
+  LlmLogEntry,
+  LlmLogLevel,
+  LlmLogListResponse,
   LlmModel,
   LlmModelInput,
+  LlmPluginConsumer,
   LlmProvider,
   LlmProviderInput,
   LlmProviderListResponse,
@@ -57,6 +73,7 @@ import type {
   LlmUsageListResponse,
   LlmUsageSummary,
 } from './types';
+import { TENANT_DETAIL_FIELDS } from './types';
 
 const API_PREFIX = '/api/v1';
 /** A question may take several model rounds; the server caps the total. */
@@ -183,6 +200,7 @@ function parseWebsite(raw: unknown): Website {
     deploy_target: asWebsiteNullableString(raw.deploy_target, 'website.deploy_target'),
     domain: asWebsiteNullableString(raw.domain, 'website.domain'),
     domain_state: asString(raw.domain_state, 'website.domain_state'),
+    internal_port: asWebsiteNullableNumber(raw.internal_port, 'website.internal_port'),
     created_by: asString(raw.created_by, 'website.created_by'),
     created_at: asString(raw.created_at, 'website.created_at'),
     updated_at: asString(raw.updated_at, 'website.updated_at'),
@@ -212,6 +230,7 @@ function parseWebsiteListItem(raw: unknown): WebsiteListItem {
     ...site,
     client_name: asWebsiteNullableString(raw.client_name, 'website.client_name'),
     last_build: raw.last_build == null ? null : parseWebsiteBuildSummary(raw.last_build),
+    url: asWebsiteNullableString(raw.url, 'website.url'),
   };
 }
 
@@ -230,6 +249,7 @@ function parseWebsiteDetail(raw: unknown): WebsiteDetail {
     release,
     open_approval: approval,
     require_approval: raw.require_approval !== false,
+    url: asWebsiteNullableString(raw.url, 'website.url'),
   };
 }
 
@@ -246,6 +266,7 @@ function parseWebsitePage(raw: unknown): WebsitePage {
     route: asString(raw.route, 'page.route'),
     title: asString(raw.title, 'page.title'),
     origin: raw.origin,
+    body_md: asWebsiteNullableString(raw.body_md, 'page.body_md'),
     created_at: asString(raw.created_at, 'page.created_at'),
     updated_at: asString(raw.updated_at, 'page.updated_at'),
   };
@@ -288,7 +309,11 @@ function parseWebsiteApproval(raw: unknown): WebsiteApproval {
 function parseWebsiteApprovalLink(raw: unknown): WebsiteApprovalLink {
   const approval = parseWebsiteApproval(raw);
   if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid approval payload');
-  return { ...approval, url: asString(raw.url, 'approval.url') };
+  return {
+    ...approval,
+    url: asString(raw.url, 'approval.url'),
+    preview_url: asWebsiteNullableString(raw.preview_url, 'approval.preview_url'),
+  };
 }
 
 function parseWebsiteSummary(raw: unknown): WebsiteSummary {
@@ -409,7 +434,10 @@ function parseHealth(raw: unknown): HealthResponse {
 }
 
 function parseNavEntry(raw: unknown): NavEntry {
-  if (!isRecord(raw) || (raw.group !== 'work' && raw.group !== 'management')) {
+  if (
+    !isRecord(raw) ||
+    (raw.group !== 'work' && raw.group !== 'tools' && raw.group !== 'management')
+  ) {
     throw new ApiError(500, 'invalid_response', 'Invalid nav entry');
   }
   // The server treats an empty role list as "visible to nobody" (`navFor`
@@ -443,12 +471,24 @@ function parseTenant(raw: unknown): Tenant {
   if (!isRecord(raw) || !isTenantStatus(raw.status)) {
     throw new ApiError(500, 'invalid_response', 'Invalid tenant payload');
   }
+  if (!isRecord(raw.details)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid tenant details payload');
+  }
+  const details = {} as TenantDetails;
+  for (const field of TENANT_DETAIL_FIELDS) {
+    const value = raw.details[field];
+    if (value !== null && typeof value !== 'string') {
+      throw new ApiError(500, 'invalid_response', `Expected string or null for tenant.${field}`);
+    }
+    details[field] = value;
+  }
   return {
     id: asString(raw.id, 'tenant.id'),
     name: asString(raw.name, 'tenant.name'),
     slug: asString(raw.slug, 'tenant.slug'),
     status: raw.status,
     created_at: asString(raw.created_at, 'tenant.created_at'),
+    details,
   };
 }
 
@@ -529,6 +569,7 @@ function parseAgentStatus(raw: unknown): AgentStatus {
   }
   return {
     configured: raw.configured,
+    provider: typeof raw.provider === 'string' ? raw.provider : null,
     model: typeof raw.model === 'string' ? raw.model : null,
     reachable: raw.reachable,
     retentionDays: asNumber(raw.retentionDays, 'agent.retentionDays'),
@@ -729,6 +770,7 @@ function parseLlmProvider(raw: unknown): LlmProvider {
     retentionDays: asNumber(raw.retentionDays, 'provider.retentionDays'),
     allowedPlugins: Array.isArray(raw.allowedPlugins) ? asStringArray(raw.allowedPlugins) : null,
     status: raw.status === 'disabled' ? 'disabled' : 'active',
+    isDefault: asBoolean(raw.isDefault),
     lastTestAt: asNullableString(raw.lastTestAt),
     lastTestStatus: asNullableString(raw.lastTestStatus),
     lastTestMs: asNullableNumber(raw.lastTestMs),
@@ -976,12 +1018,31 @@ export const api = {
     return parseTenantList(await requestJson(path, { signal }));
   },
 
-  async createTenant(input: { name: string; slug?: string }): Promise<Tenant> {
-    const body =
-      input.slug && input.slug.trim().length > 0
-        ? { name: input.name, slug: input.slug.trim() }
-        : { name: input.name };
+  async createTenant(input: {
+    name: string;
+    slug?: string;
+    details?: Partial<Record<TenantDetailField, string | null>>;
+  }): Promise<Tenant> {
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.slug && input.slug.trim().length > 0) body.slug = input.slug.trim();
+    if (input.details) Object.assign(body, input.details);
     return parseTenant(await requestJson('/tenants', { method: 'POST', body }));
+  },
+
+  async updateTenant(
+    id: string,
+    input: {
+      name?: string;
+      slug?: string;
+      details?: Partial<Record<TenantDetailField, string | null>>;
+    },
+  ): Promise<Tenant> {
+    const body: Record<string, unknown> = { ...(input.details ?? {}) };
+    if (input.name !== undefined) body.name = input.name;
+    if (input.slug !== undefined) body.slug = input.slug;
+    return parseTenant(
+      await requestJson(`/tenants/${encodeURIComponent(id)}`, { method: 'PATCH', body }),
+    );
   },
 
   async suspendTenant(id: string): Promise<Tenant> {
@@ -996,7 +1057,7 @@ export const api = {
     );
   },
 
-  // --- Automatisierungs-Scout ---------------------------------------------
+  // --- Automatisierungs-Check ---------------------------------------------
 
   async listDiscoveryInvites(
     params: { status?: DiscoveryInviteStatus; q?: string; limit?: number; cursor?: string | null },
@@ -1016,7 +1077,7 @@ export const api = {
   },
 
   async createDiscoveryInvite(input: {
-    customerName: string;
+    customerName?: string;
     contactEmail?: string;
     locale?: DiscoveryLocale;
     mode?: DiscoveryMode;
@@ -1057,6 +1118,60 @@ export const api = {
     return (await requestJson('/discovery/overview', { signal })) as DiscoveryOverview;
   },
 
+  async listLlmPlugins(signal?: AbortSignal): Promise<LlmPluginConsumer[]> {
+    const raw = (await requestJson('/llm/plugins', { signal })) as { items?: unknown };
+    if (!raw || !Array.isArray(raw.items)) return [];
+    return raw.items.map((entry) => {
+      if (!isRecord(entry)) {
+        throw new ApiError(500, 'invalid_response', 'Invalid plugin entry');
+      }
+      return {
+        id: asString(entry.id, 'plugin.id'),
+        label: asString(entry.label, 'plugin.label'),
+        description: asString(entry.description, 'plugin.description'),
+        needsLlm: Boolean(entry.needsLlm),
+      };
+    });
+  },
+
+  async listLlmLogs(
+    params: { level?: LlmLogLevel; limit?: number; cursor?: string | null },
+    signal?: AbortSignal,
+  ): Promise<LlmLogListResponse> {
+    const query = new URLSearchParams();
+    if (params.level) query.set('level', params.level);
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const suffix = query.toString();
+    const raw = (await requestJson(suffix.length > 0 ? `/llm/logs?${suffix}` : '/llm/logs', {
+      signal,
+    })) as { items?: unknown; total?: unknown; nextCursor?: unknown };
+    const items: LlmLogEntry[] = Array.isArray(raw.items)
+      ? raw.items.map((entry) => {
+          if (!isRecord(entry)) {
+            throw new ApiError(500, 'invalid_response', 'Invalid log entry');
+          }
+          const level = entry.level;
+          const safeLevel: LlmLogLevel =
+            level === 'warn' || level === 'error' ? level : 'info';
+          return {
+            id: asString(entry.id, 'log.id'),
+            level: safeLevel,
+            action: asString(entry.action, 'log.action'),
+            providerId: typeof entry.providerId === 'string' ? entry.providerId : null,
+            providerName: typeof entry.providerName === 'string' ? entry.providerName : null,
+            message: asString(entry.message, 'log.message'),
+            createdAt: asString(entry.createdAt, 'log.createdAt'),
+          };
+        })
+      : [];
+    return {
+      items,
+      total: typeof raw.total === 'number' ? raw.total : items.length,
+      nextCursor: typeof raw.nextCursor === 'string' ? raw.nextCursor : null,
+    };
+  },
+
   async listLlmProviders(
     params: { status?: 'active' | 'disabled'; q?: string; limit?: number; cursor?: string | null },
     signal?: AbortSignal,
@@ -1082,6 +1197,49 @@ export const api = {
 
   async createLlmProvider(input: LlmProviderInput): Promise<LlmProvider> {
     return parseLlmProvider(await requestJson('/llm/providers', { method: 'POST', body: input }));
+  },
+
+  async startMartLlmLink(): Promise<{
+    deviceCode: string;
+    verificationUrl: string;
+    linkCode: string;
+    interval: number;
+    expiresIn: number;
+  }> {
+    const raw = await requestJson('/llm/providers/martllm/link/start', { method: 'POST' });
+    if (!isRecord(raw)) {
+      throw new ApiError(500, 'invalid_response', 'Invalid MartLLM link payload');
+    }
+    return {
+      deviceCode: asString(raw.deviceCode, 'martllm.deviceCode'),
+      verificationUrl: asString(raw.verificationUrl, 'martllm.verificationUrl'),
+      linkCode: typeof raw.linkCode === 'string' ? raw.linkCode : '',
+      interval: asNumber(raw.interval, 'martllm.interval'),
+      expiresIn: asNumber(raw.expiresIn, 'martllm.expiresIn'),
+    };
+  },
+
+  async pollMartLlmLink(
+    deviceCode: string,
+    name?: string,
+  ): Promise<
+    | { status: 'pending' | 'denied' | 'expired' }
+    | { status: 'approved'; provider: LlmProvider }
+  > {
+    const raw = await requestJson('/llm/providers/martllm/link/poll', {
+      method: 'POST',
+      body: name ? { deviceCode, name } : { deviceCode },
+    });
+    if (!isRecord(raw) || typeof raw.status !== 'string') {
+      throw new ApiError(500, 'invalid_response', 'Invalid MartLLM poll payload');
+    }
+    if (raw.status === 'approved') {
+      return { status: 'approved', provider: parseLlmProvider(raw.provider) };
+    }
+    if (raw.status === 'denied' || raw.status === 'expired') {
+      return { status: raw.status };
+    }
+    return { status: 'pending' };
   },
 
   async updateLlmProvider(id: string, input: Partial<LlmProviderInput>): Promise<LlmProvider> {
@@ -1310,6 +1468,21 @@ export const api = {
     );
   },
 
+  async previewWebsite(
+    id: string,
+    buildId?: string,
+  ): Promise<{ preview_url: string; expires_at: string }> {
+    const raw = await requestJson(`/websites/${encodeURIComponent(id)}/preview`, {
+      method: 'POST',
+      body: buildId === undefined ? {} : { build_id: buildId },
+    });
+    if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid preview payload');
+    return {
+      preview_url: asString(raw.preview_url, 'preview.preview_url'),
+      expires_at: asString(raw.expires_at, 'preview.expires_at'),
+    };
+  },
+
   async publishWebsite(id: string, buildId: string): Promise<{ version: string }> {
     const raw = await requestJson(`/websites/${encodeURIComponent(id)}/releases`, {
       method: 'POST',
@@ -1418,6 +1591,28 @@ export const api = {
     );
   },
 
+  async agentSettings(signal?: AbortSignal): Promise<AgentSettings> {
+    const raw = (await requestJson('/agent/settings', { signal })) as {
+      providerId?: unknown;
+      modelId?: unknown;
+    };
+    return {
+      providerId: typeof raw.providerId === 'string' ? raw.providerId : null,
+      modelId: typeof raw.modelId === 'string' ? raw.modelId : null,
+    };
+  },
+
+  async updateAgentSettings(input: AgentSettings): Promise<AgentSettings> {
+    const raw = (await requestJson('/agent/settings', {
+      method: 'PATCH',
+      body: input,
+    })) as { providerId?: unknown; modelId?: unknown };
+    return {
+      providerId: typeof raw.providerId === 'string' ? raw.providerId : null,
+      modelId: typeof raw.modelId === 'string' ? raw.modelId : null,
+    };
+  },
+
   /**
    * The model may take several rounds; the route is bounded by the server's
    * own budget, so the client waits longer than the default 15 s.
@@ -1434,12 +1629,13 @@ export const api = {
   },
 
   async agentRuns(
-    params: { limit?: number; cursor?: string | null } = {},
+    params: { limit?: number; cursor?: string | null; q?: string } = {},
     signal?: AbortSignal,
   ): Promise<AgentRunListResponse> {
     const query = new URLSearchParams();
     if (params.limit) query.set('limit', String(params.limit));
     if (params.cursor) query.set('cursor', params.cursor);
+    if (params.q) query.set('q', params.q);
     const suffix = query.toString();
     return parseAgentRunList(
       await requestJson(suffix.length > 0 ? `/agent/runs?${suffix}` : '/agent/runs', { signal }),
@@ -1448,6 +1644,121 @@ export const api = {
 
   async agentRun(id: string, signal?: AbortSignal): Promise<AgentRun> {
     return parseAgentRun(await requestJson(`/agent/runs/${encodeURIComponent(id)}`, { signal }));
+  },
+
+  async deleteAgentRun(id: string, signal?: AbortSignal): Promise<void> {
+    await requestJson(`/agent/runs/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  },
+
+  async deleteAgentRuns(signal?: AbortSignal): Promise<number> {
+    const raw = await requestJson('/agent/runs', { method: 'DELETE', signal });
+    return isRecord(raw) ? asNumber(raw.deleted, 'agent.deleted') : 0;
+  },
+
+  // --- Email plugin --------------------------------------------------------
+
+  async emailSettings(signal?: AbortSignal): Promise<EmailSettings> {
+    return (await requestJson('/email/settings', { signal })) as EmailSettings;
+  },
+
+  async saveEmailSettings(input: EmailSettingsInput): Promise<EmailSettingsSaved> {
+    return (await requestJson('/email/settings', {
+      method: 'PUT',
+      body: input,
+    })) as EmailSettingsSaved;
+  },
+
+  async testEmail(): Promise<{ id: string; status: string }> {
+    return (await requestJson('/email/settings/test', { method: 'POST' })) as {
+      id: string;
+      status: string;
+    };
+  },
+
+  async runEmailRetention(): Promise<{ deleted: number; remaining: number }> {
+    return (await requestJson('/email/retention/run', {
+      method: 'POST',
+      body: { confirm: true },
+    })) as { deleted: number; remaining: number };
+  },
+
+  async emailOutbox(
+    params: { status?: string; cursor?: string | null; limit?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<EmailListResponse<EmailOutboxItem>> {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.cursor) query.set('cursor', params.cursor);
+    if (params.limit) query.set('limit', String(params.limit));
+    const suffix = query.toString();
+    return (await requestJson(suffix ? `/email/outbox?${suffix}` : '/email/outbox', {
+      signal,
+    })) as EmailListResponse<EmailOutboxItem>;
+  },
+
+  async emailOutboxItem(id: string, signal?: AbortSignal): Promise<EmailOutboxDetail> {
+    return (await requestJson(`/email/outbox/${encodeURIComponent(id)}`, {
+      signal,
+    })) as EmailOutboxDetail;
+  },
+
+  async retryEmail(id: string): Promise<{ id: string; status: string }> {
+    return (await requestJson(`/email/outbox/${encodeURIComponent(id)}/retry`, {
+      method: 'POST',
+    })) as { id: string; status: string };
+  },
+
+  async sendEmail(input: {
+    to: string;
+    subject: string;
+    text?: string;
+    html?: string;
+    reply_to?: string | null;
+    dedupe_key?: string;
+  }): Promise<{ id: string; status: string }> {
+    return (await requestJson('/email/outbox', {
+      method: 'POST',
+      body: input,
+    })) as { id: string; status: string };
+  },
+
+  async emailInbox(
+    params: { unread?: boolean; q?: string; cursor?: string | null; limit?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<EmailListResponse<EmailInboxItem>> {
+    const query = new URLSearchParams();
+    if (params.unread) query.set('unread', 'true');
+    if (params.q) query.set('q', params.q);
+    if (params.cursor) query.set('cursor', params.cursor);
+    if (params.limit) query.set('limit', String(params.limit));
+    const suffix = query.toString();
+    return (await requestJson(suffix ? `/email/inbox?${suffix}` : '/email/inbox', {
+      signal,
+    })) as EmailListResponse<EmailInboxItem>;
+  },
+
+  async emailInboxItem(id: string, signal?: AbortSignal): Promise<EmailInboxDetail> {
+    return (await requestJson(`/email/inbox/${encodeURIComponent(id)}`, {
+      signal,
+    })) as EmailInboxDetail;
+  },
+
+  async markEmail(id: string, read: boolean): Promise<{ id: string; read: boolean }> {
+    return (await requestJson(`/email/inbox/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { read },
+    })) as { id: string; read: boolean };
+  },
+
+  async syncInbox(): Promise<{ added: number }> {
+    return (await requestJson('/email/inbox/sync', { method: 'POST' })) as { added: number };
+  },
+
+  async emailInboxStatus(signal?: AbortSignal): Promise<EmailInboxStatus> {
+    return (await requestJson('/email/inbox/status', { signal })) as EmailInboxStatus;
   },
 };
 
