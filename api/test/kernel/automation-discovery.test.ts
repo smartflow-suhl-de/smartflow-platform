@@ -11,8 +11,10 @@ import {
   AiUnavailable,
   interviewHint,
   suggestClusters,
+  AI_CALL_BUDGET_MS,
   ANALYSIS_MAX_TOKENS,
   ANALYSIS_TIMEOUT_MS,
+  withDeadline,
   HINT_MAX_TOKENS,
   HINT_TIMEOUT_MS,
 } from '../../src/plugins/automation-discovery/ai.ts';
@@ -718,6 +720,40 @@ test('a report cut off twice answers with its own code, not a schema error', asy
   assert.equal(reports.total, 0);
 });
 
+test('an empty reasoning answer becomes truncated, not a schema error', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+  let analysisCalls = 0;
+  stubLlm(ctx, (payload) => {
+    const hit = JSON.stringify(payload).includes('structured automation assessment');
+    if (!hit) return llmReply(payload);
+    analysisCalls += 1;
+    // A reasoning model that spends the whole budget before writing any JSON.
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'length',
+      }),
+    };
+  });
+
+  await runInterview(ctx, invite.token);
+  const completed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+  });
+  assert.equal(completed.statusCode, 502);
+  const error = (completed.json() as { error: { code: string; reason?: string } }).error;
+  assert.equal(error.code, 'discovery_ai_truncated');
+  assert.equal(error.reason, 'truncated');
+  // One retry, then the defined error: not the old schema message.
+  assert.equal(analysisCalls, 2);
+});
+
 test('the short check skips the deep phase unless the operator forces full', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -1299,6 +1335,12 @@ test('a 504 from the provider becomes a timeout reason', async () => {
   );
 });
 
+/** Turns a valid answer into the cut-off shape the provider really returned. */
+function cutOff(content: unknown): string {
+  const json = JSON.stringify(content);
+  return json.slice(0, Math.max(1, Math.floor(json.length * 0.6)));
+}
+
 /**
  * A model that answers in the requested JSON but signals `finishReason: 'length'`
  * for the first N calls: exactly the shape the real provider returned when the
@@ -1323,9 +1365,7 @@ function truncatingModel(
       return {
         status: 200,
         body: JSON.stringify({
-          message: {
-            content: truncated ? JSON.stringify(content).slice(0, 40) : JSON.stringify(content),
-          },
+          message: { content: truncated ? cutOff(content) : JSON.stringify(content) },
           model: { modelKey: 'test-model' },
           finishReason: truncated ? 'length' : 'stop',
         }),
@@ -1359,7 +1399,12 @@ test('a cut-off answer is retried once with a doubled token budget', async () =>
 });
 
 test('an answer cut off twice becomes a defined truncated error, not a schema error', async () => {
-  const model = truncatingModel(2, { clusters: [{ id: 'A', reason: 'x' }] });
+  const model = truncatingModel(2, {
+    clusters: [
+      { id: 'A', reason: 'Angebote kosten Zeit.' },
+      { id: 'B', reason: 'Rechnungen werden doppelt erfasst.' },
+    ],
+  });
   const warnings: string[] = [];
   await assert.rejects(
     () =>
@@ -1437,6 +1482,260 @@ test('the requests carry the raised budgets and the browser stays inside its tim
   assert.ok(2 * ANALYSIS_TIMEOUT_MS < 45_000);
   assert.ok(2 * HINT_TIMEOUT_MS < 45_000);
   assert.ok(ANALYSIS_MAX_TOKENS * 2 <= 8192);
+});
+
+/**
+ * A model that answers with an empty content string and `finishReason: 'length'`
+ * for the first N calls: a reasoning model that spent the whole budget before
+ * writing any JSON.
+ */
+function emptyReasoningModel(
+  cutOffCalls: number,
+  content: unknown,
+): {
+  call: (caller: string, request: { payload?: unknown }) => Promise<LlmReply>;
+  budgets: number[];
+  reasons: string[];
+} {
+  const budgets: number[] = [];
+  const reasons: string[] = [];
+  let calls = 0;
+  return {
+    budgets,
+    reasons,
+    call: async (_caller, request) => {
+      const payload = request.payload as { maxTokens?: number } | undefined;
+      budgets.push(payload?.maxTokens ?? 0);
+      calls += 1;
+      const truncated = calls <= cutOffCalls;
+      reasons.push(truncated ? 'length' : 'stop');
+      return {
+        status: 200,
+        body: JSON.stringify({
+          message: { content: truncated ? '' : JSON.stringify(content) },
+          model: { modelKey: 'test-model' },
+          finishReason: truncated ? 'length' : 'stop',
+        }),
+      };
+    },
+  };
+}
+
+test('an empty answer that hit the budget is retried instead of reported as a schema error', async () => {
+  const model = emptyReasoningModel(1, {
+    clusters: [
+      { id: 'A', reason: 'Angebote kosten Zeit.' },
+      { id: 'B', reason: 'Rechnungen werden doppelt erfasst.' },
+    ],
+  });
+  const warnings: string[] = [];
+  const picked = await suggestClusters(model.call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    answers: [],
+    log: { warn: (_obj, message) => warnings.push(message) },
+  });
+
+  assert.deepEqual(
+    picked.map((entry) => entry.id),
+    ['A', 'B'],
+  );
+  assert.deepEqual(model.budgets, [HINT_MAX_TOKENS, HINT_MAX_TOKENS * 2]);
+  assert.equal(warnings.length, 1);
+});
+
+test('an empty answer that really stopped stays invalid_output', async () => {
+  const budgets: number[] = [];
+  const model = {
+    budgets,
+    call: async (_caller: string, request: { payload?: unknown }) => {
+      const payload = request.payload as { maxTokens?: number } | undefined;
+      budgets.push(payload?.maxTokens ?? 0);
+      return {
+        status: 200,
+        body: JSON.stringify({
+          message: { content: '' },
+          model: { modelKey: 'test-model' },
+          finishReason: 'stop',
+        }),
+      };
+    },
+  };
+  await assert.rejects(
+    () =>
+      suggestClusters(model.call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        answers: [],
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'invalid_output',
+  );
+  assert.deepEqual(model.budgets, [HINT_MAX_TOKENS]);
+});
+
+test('an empty answer cut off twice becomes truncated, not invalid_output', async () => {
+  const model = emptyReasoningModel(2, {
+    clusters: [
+      { id: 'A', reason: 'Angebote kosten Zeit.' },
+      { id: 'B', reason: 'Rechnungen werden doppelt erfasst.' },
+    ],
+  });
+  await assert.rejects(
+    () =>
+      suggestClusters(model.call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        answers: [],
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'truncated',
+  );
+  assert.deepEqual(model.budgets, [HINT_MAX_TOKENS, HINT_MAX_TOKENS * 2]);
+});
+
+test("a provider's max_tokens finish reason counts as cut off", async () => {
+  const budgets: number[] = [];
+  let calls = 0;
+  const call = async (_caller: string, request: { payload?: unknown }) => {
+    const payload = request.payload as { maxTokens?: number } | undefined;
+    budgets.push(payload?.maxTokens ?? 0);
+    calls += 1;
+    const truncated = calls === 1;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: {
+          content: truncated
+            ? '{"clusters":[{"id":"A"'
+            : JSON.stringify({
+                clusters: [
+                  { id: 'A', reason: 'Angebote kosten Zeit.' },
+                  { id: 'B', reason: 'Rechnungen werden doppelt erfasst.' },
+                ],
+              }),
+        },
+        model: { modelKey: 'test-model' },
+        finishReason: truncated ? 'max_tokens' : 'end_turn',
+      }),
+    };
+  };
+
+  const picked = await suggestClusters(call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    answers: [],
+  });
+  assert.deepEqual(
+    picked.map((entry) => entry.id),
+    ['A', 'B'],
+  );
+  assert.deepEqual(budgets, [HINT_MAX_TOKENS, HINT_MAX_TOKENS * 2]);
+});
+
+test('a complete JSON answer marked as cut off is accepted without a retry', async () => {
+  const budgets: number[] = [];
+  const warnings: string[] = [];
+  const call = async (_caller: string, request: { payload?: unknown }) => {
+    const payload = request.payload as { maxTokens?: number } | undefined;
+    budgets.push(payload?.maxTokens ?? 0);
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: {
+          content: JSON.stringify({
+            clusters: [
+              { id: 'A', reason: 'Angebote kosten Zeit.' },
+              { id: 'B', reason: 'Rechnungen werden doppelt erfasst.' },
+            ],
+          }),
+        },
+        model: { modelKey: 'test-model' },
+        finishReason: 'length',
+      }),
+    };
+  };
+
+  const picked = await suggestClusters(call, {
+    locale: 'de',
+    customerName: 'Test GmbH',
+    answers: [],
+    log: { warn: (_obj, message) => warnings.push(message) },
+  });
+  assert.deepEqual(
+    picked.map((entry) => entry.id),
+    ['A', 'B'],
+  );
+  assert.deepEqual(budgets, [HINT_MAX_TOKENS]);
+  assert.match(warnings[0] ?? '', /cut off but is complete JSON/);
+});
+
+test('the whole model call is bounded below the browser timeout', async () => {
+  // The browser gives up at 45 s; two attempts, each repeated once by the
+  // provider, must still fit, so the server answers first.
+  assert.ok(AI_CALL_BUDGET_MS < 45_000);
+  assert.ok(AI_CALL_BUDGET_MS <= 40_000);
+
+  let clock = 0;
+  const now = () => clock;
+  const never = new Promise<string>(() => {});
+  await assert.rejects(
+    () => withDeadline(never, 40_000, () => new AiUnavailable('timeout', 'late'), now),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'timeout',
+  );
+
+  // An answer before the deadline is passed through unchanged.
+  clock = 0;
+  const quick = withDeadline(Promise.resolve('ok'), 40_000, () => new Error('late'), now);
+  assert.equal(await quick, 'ok');
+
+  // A rejection keeps its own error.
+  await assert.rejects(
+    () =>
+      withDeadline(
+        Promise.reject(new AiUnavailable('invalid_output', 'broken')),
+        40_000,
+        () => new Error('late'),
+        now,
+      ),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'invalid_output',
+  );
+});
+
+test('the retry is skipped when too little of the call budget is left', async (t) => {
+  const realNow = Date.now;
+  let clock = 1_000_000;
+  Date.now = () => clock;
+  t.after(() => {
+    Date.now = realNow;
+  });
+  const budgets: number[] = [];
+  const warnings: string[] = [];
+  const call = async (_caller: string, request: { payload?: unknown }) => {
+    const payload = request.payload as { maxTokens?: number } | undefined;
+    budgets.push(payload?.maxTokens ?? 0);
+    // The first attempt burns almost the whole call budget.
+    clock += AI_CALL_BUDGET_MS - 1_000;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '{"clusters":[{"id":"A"' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'length',
+      }),
+    };
+  };
+
+  await assert.rejects(
+    () =>
+      suggestClusters(call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        answers: [],
+        log: { warn: (_obj, message) => warnings.push(message) },
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'truncated',
+  );
+  assert.deepEqual(budgets, [HINT_MAX_TOKENS]);
+  assert.match(warnings[0] ?? '', /retry skipped/);
 });
 
 test('the analysis retry stays under the provider token cap', async () => {

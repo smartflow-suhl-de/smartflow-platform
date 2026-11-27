@@ -41,22 +41,59 @@ export const ANALYSIS_MAX_TOKENS = 4000;
 /** The provider route accepts at most 8192; the retry stays under it. */
 const MAX_TOKENS_CAP = 8192;
 /**
- * Wall-clock budget per provider attempt.
- *
- * The provider repeats a timing-out call once on its own, so one attempt can
- * take twice this long. Both numbers stay below the browser's 45 s budget for
- * the public discovery routes, also with the internal repeat.
+ * How long one public discovery request may spend on the model in total,
+ * including the truncation retry. The browser gives up at 45 s, so the server
+ * answers before that, whatever the provider does internally.
  */
-export const HINT_TIMEOUT_MS = 20_000;
-export const ANALYSIS_TIMEOUT_MS = 20_000;
-/**
- * Deadline for one `complete()` call including the truncation retry. The
- * browser gives up at 45 s, so the server must answer before that: the retry
- * only starts while enough of this budget is left.
- */
-export const AI_CALL_BUDGET_MS = 42_000;
+export const AI_CALL_BUDGET_MS = 40_000;
 /** Below this a retry cannot finish usefully, so it is skipped. */
 const MIN_RETRY_MS = 5_000;
+/** Wall-clock budget per provider attempt for the normal case. */
+export const HINT_TIMEOUT_MS = 20_000;
+export const ANALYSIS_TIMEOUT_MS = 20_000;
+
+/**
+ * The `finish_reason` values that mean the answer was cut off. Providers word
+ * this differently: OpenAI-compatible ones say `length`, Anthropic-compatible
+ * ones `max_tokens`; `content_filter` is a cut-off answer for the same reason.
+ */
+const TRUNCATED_REASONS = new Set(['length', 'max_tokens', 'content_filter']);
+
+/** Was the answer cut off at the token budget? */
+export function isTruncated(finishReason: string): boolean {
+  return TRUNCATED_REASONS.has(finishReason.trim().toLowerCase());
+}
+
+/**
+ * Runs one call but never longer than `deadline`.
+ *
+ * The provider repeats a timing-out call once on its own, so a per-attempt
+ * timeout cannot bound the request on its own. This deadline does: when it
+ * passes, the customer gets a defined error instead of the browser's own
+ * "network request failed". The abandoned request finishes in the background
+ * and its result is dropped.
+ */
+export function withDeadline<T>(
+  promise: Promise<T>,
+  deadline: number,
+  onTimeout: () => Error,
+  now: () => number = Date.now,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const delay = Math.max(0, deadline - now());
+    const timer = setTimeout(() => reject(onTimeout()), delay);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
 
 export class AiUnavailable extends Error {
   readonly reason: AiFailureReason;
@@ -202,84 +239,119 @@ async function completeOnce(request: CompleteRequest): Promise<CompleteAnswer> {
   const record = asRecord(body);
   const message = asRecord(record?.message);
   const content = typeof message?.content === 'string' ? message.content : '';
-  if (content.trim().length === 0) {
-    throw new AiUnavailable('invalid_output', 'The AI response was empty.');
-  }
   const finishReason = typeof record?.finishReason === 'string' ? record.finishReason : 'stop';
   const modelRecord = asRecord(record?.model);
   const model = typeof modelRecord?.modelKey === 'string' ? modelRecord.modelKey : 'unknown';
+  // An empty answer with a cut-off reason is a reasoning model that spent its
+  // whole budget before writing anything. That is a truncation and gets a
+  // retry; only an empty answer that really stopped is a broken output.
   return { content, finishReason, model };
 }
 
+/** The error a cut-off answer ends in; its own code, its own message. */
+function truncatedError(): AiUnavailable {
+  return new AiUnavailable(
+    'truncated',
+    'The AI answer was cut off before it was complete. Please try again.',
+  );
+}
+
 /**
- * Calls the model and parses its JSON.
+ * Calls the model and decides what an answer means.
  *
- * `finishReason: 'length'` means the answer was cut off at the token budget;
- * the content then usually misses its closing braces. That is not a schema
- * problem the customer caused, so it gets one retry with a doubled budget and,
- * if it is cut off again, its own reason and log line instead of the generic
- * "did not match the schema" message.
+ * `finish_reason` decides, not the content alone:
+ * - a cut-off answer (any of `length`, `max_tokens`, `content_filter`) that is
+ *   not usable JSON is retried once with a doubled budget;
+ * - still cut off and unusable afterwards is `truncated`, with its own log
+ *   line and error code instead of the generic schema message;
+ * - a cut-off answer that is nevertheless complete JSON is accepted, because
+ *   re-asking cannot improve it;
+ * - an empty answer that really stopped is `invalid_output`.
+ *
+ * The whole call, retry included, is bounded by `withDeadline`, so the
+ * browser's own timeout is never reached first.
  */
 async function complete(
   request: CompleteRequest,
   log?: AiLogger,
 ): Promise<{ parsed: unknown; model: string }> {
   const deadline = Date.now() + AI_CALL_BUDGET_MS;
-  const first = await completeOnce(request);
-  let answer = first;
+  const run = (attempt: CompleteRequest) =>
+    withDeadline(
+      completeOnce(attempt),
+      deadline,
+      () => new AiUnavailable('timeout', 'The AI service did not answer in time.'),
+    );
 
-  if (first.finishReason === 'length') {
+  let answer = await run(request);
+
+  if (isTruncated(answer.finishReason) && extractJson(answer.content) === null) {
     const retryMaxTokens = Math.min(request.maxTokens * 2, MAX_TOKENS_CAP);
-    const remaining = deadline - Date.now();
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < MIN_RETRY_MS) {
+      // Cut off, but a retry would outlive the call budget.
+      log?.warn(
+        {
+          purpose: request.purpose,
+          maxTokens: request.maxTokens,
+          outputChars: answer.content.length,
+          finishReason: answer.finishReason,
+          remainingMs,
+        },
+        'discovery ai retry skipped: no time left in the call budget',
+      );
+      throw truncatedError();
+    }
     log?.warn(
       {
         purpose: request.purpose,
         maxTokens: request.maxTokens,
         retryMaxTokens,
-        outputChars: first.content.length,
-        finishReason: first.finishReason,
-        remainingMs: remaining,
+        outputChars: answer.content.length,
+        finishReason: answer.finishReason,
+        remainingMs,
       },
       'discovery ai answer hit the token budget; retrying with a larger one',
     );
-    if (remaining < MIN_RETRY_MS) {
-      // The answer is cut off, but a retry would outlive the client's budget.
-      log?.warn(
-        { purpose: request.purpose, remainingMs: remaining },
-        'discovery ai retry skipped: no time left in the call budget',
-      );
-      throw new AiUnavailable(
-        'truncated',
-        'The AI answer was cut off by the token budget. Please try again.',
-      );
-    }
-    answer = await completeOnce({
+    answer = await run({
       ...request,
       maxTokens: retryMaxTokens,
-      timeoutMs: Math.min(request.timeoutMs, remaining),
+      timeoutMs: Math.min(request.timeoutMs, remainingMs),
     });
-    if (answer.finishReason === 'length') {
-      log?.warn(
-        {
-          purpose: request.purpose,
-          maxTokens: retryMaxTokens,
-          outputChars: answer.content.length,
-          finishReason: answer.finishReason,
-        },
-        'discovery ai answer was cut off twice; giving up',
-      );
-      throw new AiUnavailable(
-        'truncated',
-        'The AI answer was cut off by the token budget. Please try again.',
-      );
-    }
   }
 
   const parsed = extractJson(answer.content);
-  if (parsed === null) {
-    throw new AiUnavailable('invalid_output', 'The AI response was not a JSON object.');
+  if (parsed !== null) {
+    if (isTruncated(answer.finishReason)) {
+      log?.warn(
+        {
+          purpose: request.purpose,
+          maxTokens: request.maxTokens,
+          outputChars: answer.content.length,
+          finishReason: answer.finishReason,
+        },
+        'discovery ai answer was cut off but is complete JSON; accepting it',
+      );
+    }
+    return { parsed, model: answer.model };
   }
-  return { parsed, model: answer.model };
+  if (isTruncated(answer.finishReason)) {
+    log?.warn(
+      {
+        purpose: request.purpose,
+        outputChars: answer.content.length,
+        finishReason: answer.finishReason,
+      },
+      'discovery ai answer was cut off and stayed unusable; giving up',
+    );
+    throw truncatedError();
+  }
+  throw new AiUnavailable(
+    'invalid_output',
+    answer.content.trim().length === 0
+      ? 'The AI response was empty.'
+      : 'The AI response was not a JSON object.',
+  );
 }
 
 const INTERVIEW_RULES = `You support a structured automation interview. Answer in the requested language.

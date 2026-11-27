@@ -559,6 +559,7 @@ export interface Messages {
     errorBody: string;
     retry: string;
     aiUnavailable: string;
+    aiTruncated: string;
     skipShort: string;
     skipShortHint: string;
     saveLater: string;
@@ -1268,6 +1269,8 @@ const DE: Messages = {
     retry: 'Erneut versuchen',
     aiUnavailable:
       'Der KI-Dienst antwortet gerade nicht. Ihre Antworten sind gespeichert; bitte versuchen Sie es gleich noch einmal.',
+    aiTruncated:
+      'Die Auswertung war beim Erstellen zu lang und wurde abgeschnitten. Ihre Antworten sind gespeichert; bitte versuchen Sie es noch einmal.',
     skipShort: 'Abkürzen: ohne Vertiefung fortfahren',
     skipShortHint: 'Sie können nach der Landkarte direkt zur Auswertung.',
     saveLater: 'Speichern und später weiter',
@@ -1995,6 +1998,8 @@ const EN: Messages = {
     retry: 'Try again',
     aiUnavailable:
       'The AI service is not answering right now. Your answers are saved; please try again shortly.',
+    aiTruncated:
+      'The assessment was too long to be written in one go and was cut off. Your answers are saved; please try again.',
     skipShort: 'Shortcut: continue without the deep dive',
     skipShortHint: 'After the map you can go straight to the assessment.',
     saveLater: 'Save and continue later',

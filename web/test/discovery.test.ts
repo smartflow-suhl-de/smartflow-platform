@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { DiscoveryStep } from '../src/lib/types.ts';
 
-const { answersForStep, missingRequired, initialValues, reorderRank, rankMoveLabel } =
+const { answersForStep, missingRequired, initialValues, reorderRank, rankMoveLabel, aiNoticeFor } =
   await import('../src/pages/DiscoveryPublic.tsx');
 const { getMessages } = await import('../src/lib/i18n.ts');
 const { discoveryPublic, ApiError, DISCOVERY_TIMEOUT_MS, REQUEST_TIMEOUT_MS } =
@@ -209,5 +209,37 @@ describe('discoveryInviteId', () => {
     assert.equal(discoveryInviteId('/discovery/inv_123'), 'inv_123');
     assert.equal(discoveryInviteId('/discovery/%E0%A4%A'), null);
     assert.equal(discoveryInviteId('/discovery/a/b'), null);
+  });
+});
+
+describe('aiNoticeFor', () => {
+  const error = (code: string, status = 502) =>
+    new ApiError(status, code, 'The AI answer was cut off by the token budget.');
+
+  it('maps the cut-off answer to its own notice, not to the server text', () => {
+    assert.equal(aiNoticeFor(error('discovery_ai_truncated')), 'truncated');
+  });
+
+  it('maps an outage and unusable JSON to the retryable notice', () => {
+    assert.equal(aiNoticeFor(error('discovery_ai_unavailable', 503)), 'unavailable');
+    assert.equal(aiNoticeFor(error('discovery_analysis_invalid')), 'unavailable');
+  });
+
+  it('leaves unrelated errors to the caller', () => {
+    assert.equal(aiNoticeFor(new ApiError(409, 'discovery_token_used', 'x')), null);
+    assert.equal(aiNoticeFor(new Error('boom')), null);
+  });
+
+  it('has a German and an English text for every notice', () => {
+    for (const locale of ['de', 'en'] as const) {
+      const messages = getMessages(locale);
+      assert.ok(messages.discovery.aiTruncated.length > 20);
+      assert.notEqual(messages.discovery.aiTruncated, messages.discovery.aiUnavailable);
+    }
+    const de = getMessages('de').discovery.aiTruncated;
+    const en = getMessages('en').discovery.aiTruncated;
+    assert.notEqual(de, en);
+    // The customer must not read the English server message in the German UI.
+    assert.ok(!de.includes('token budget'));
   });
 });

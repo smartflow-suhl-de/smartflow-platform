@@ -16,6 +16,30 @@ export interface DiscoveryPublicPageProps {
 
 type ClosedKind = 'completed' | 'revoked' | 'expired' | 'invalid';
 
+/**
+ * What the customer sees when the model cannot answer: the difference matters
+ * to them, a retry helps after a cut-off answer, but not after an invalid one.
+ */
+type AiNotice = 'unavailable' | 'truncated' | null;
+
+/**
+ * The model errors the public page turns into a localised notice, each with a
+ * retry that makes sense for the customer.
+ */
+const AI_NOTICE_CODES: Record<string, Exclude<AiNotice, null>> = {
+  discovery_ai_unavailable: 'unavailable',
+  discovery_ai_truncated: 'truncated',
+  // Unusable JSON is retried the same way; the customer does not need the
+  // difference between "too long" and "not usable".
+  discovery_analysis_invalid: 'unavailable',
+};
+
+/** Exported because the web test suite checks the mapping without a DOM. */
+export function aiNoticeFor(err: unknown): AiNotice {
+  if (!(err instanceof ApiError)) return null;
+  return AI_NOTICE_CODES[err.code] ?? null;
+}
+
 interface ClosedState {
   kind: ClosedKind;
   report: DiscoveryReport | null;
@@ -134,7 +158,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
   const [state, setState] = useState<DiscoveryPublicState | null>(null);
   const [closed, setClosed] = useState<ClosedState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [aiNotice, setAiNotice] = useState(false);
+  const [aiNotice, setAiNotice] = useState<AiNotice>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [values, setValues] = useState<Record<string, FieldValue>>({});
@@ -246,7 +270,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
     if (!step || busy) return;
     setBusy(true);
     setError(null);
-    setAiNotice(false);
+    setAiNotice(null);
     setHint(null);
     try {
       const savedOk = await saveCurrent();
@@ -264,8 +288,9 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
       if (body.hint) setHint(body.hint);
       setSaved(true);
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'discovery_ai_unavailable') {
-        setAiNotice(true);
+      const notice = aiNoticeFor(err);
+      if (notice) {
+        setAiNotice(notice);
       } else if (err instanceof ApiError && err.status === 422) {
         setFieldErrors(err.fields);
       } else {
@@ -294,7 +319,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
     if (busy) return;
     setBusy(true);
     setError(null);
-    setAiNotice(false);
+    setAiNotice(null);
     try {
       const response = await discoveryPublic.complete(token);
       const payload = response.payload as DiscoveryPublicState | { error?: { code?: string } };
@@ -313,10 +338,9 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
         setClosed({ kind: 'completed', report: payload.report ?? null });
       }
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'discovery_ai_unavailable') {
-        setAiNotice(true);
-      } else if (err instanceof ApiError && err.code === 'discovery_analysis_invalid') {
-        setError(m.discovery.aiUnavailable);
+      const notice = aiNoticeFor(err);
+      if (notice) {
+        setAiNotice(notice);
       } else {
         setError(err instanceof ApiError ? err.message : m.discovery.errorBody);
       }
@@ -401,11 +425,11 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
 
       {aiNotice ? (
         <div className="sf-alert sf-alert-info" role="status">
-          <p>{m.discovery.aiUnavailable}</p>
+          <p>{aiNotice === 'truncated' ? m.discovery.aiTruncated : m.discovery.aiUnavailable}</p>
           <button
             type="button"
             className="sf-btn sf-btn-secondary sf-btn-sm"
-            onClick={() => void handleNext()}
+            onClick={() => void (state.canComplete ? handleComplete() : handleNext())}
           >
             {m.discovery.retry}
           </button>
