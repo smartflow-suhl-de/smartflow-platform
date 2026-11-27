@@ -29,6 +29,7 @@ import {
 } from './theme';
 import { WebsiteDetailPage } from './pages/WebsiteDetail';
 import { WebsitesPage } from './pages/Websites';
+import { AgentPage } from './pages/Agent';
 
 const PLATFORM_TITLE = 'SmartFlow Plattform';
 
@@ -377,6 +378,8 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         messages={messages}
       />
     );
+  } else if (pathname === '/agent' && auth.user.role === 'operator') {
+    content = <AgentPage locale={locale} messages={messages} />;
   } else if (pathname === '/settings') {
     content = (
       <SettingsPage

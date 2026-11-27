@@ -66,23 +66,34 @@ Die API liest ausschließlich `SF_*`-Variablen mit entwicklungsfreundlichen Defa
 `.env` an der Repo-Wurzel wird automatisch geladen (`--env-file-if-exists`); Vorlage ist
 `.env.example`:
 
-| Variable                | Default                      | Bedeutung                                                                                                                                               |
-| ----------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SF_HOST`               | `127.0.0.1`                  | Bind-Adresse der API                                                                                                                                    |
-| `SF_PORT`               | `8790`                       | Port der API                                                                                                                                            |
-| `SF_PUBLIC_URL`         | `http://127.0.0.1:5273`      | Öffentliche Origin. In `NODE_ENV=production` **Pflicht** und muss `https://` sein, sonst bricht der Start ab; `https://` schaltet Secure-Cookies scharf |
-| `SF_DATA_DIR`           | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`)     |
-| `SF_WEB_DIR`            | leer                         | Gebautes SPA, das die API unter `/` ausliefert. Leer = reine API; im Container `/app/web/dist`                                                          |
-| `SF_SECURE_COOKIES`     | abhängig von `SF_PUBLIC_URL` | `Secure`-Flag am Session-Cookie; in `NODE_ENV=production` darf es nicht `0` sein, sonst bricht der Start ab                                             |
-| `SF_LOG_LEVEL`          | `info` (`silent` in Tests)   | Fastify-Log-Level                                                                                                                                       |
-| `SF_TRUST_PROXY`        | `0`                          | `X-Forwarded-*` vertrauen                                                                                                                               |
-| `SF_BODY_LIMIT`         | `1048576`                    | Max. Request-Body in Bytes                                                                                                                              |
-| `SF_RATE_LIMIT_ENABLED` | `1`                          | Rate-Limit aktiv                                                                                                                                        |
-| `SF_RATE_LIMIT_LOGIN`   | `10`                         | Anmeldeversuche pro Minute und Absender; je Adresse das Dreifache pro 15 Minuten                                                                        |
+| Variable                   | Default                      | Bedeutung                                                                                                                                               |
+| -------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SF_HOST`                  | `127.0.0.1`                  | Bind-Adresse der API                                                                                                                                    |
+| `SF_PORT`                  | `8790`                       | Port der API                                                                                                                                            |
+| `SF_PUBLIC_URL`            | `http://127.0.0.1:5273`      | Öffentliche Origin. In `NODE_ENV=production` **Pflicht** und muss `https://` sein, sonst bricht der Start ab; `https://` schaltet Secure-Cookies scharf |
+| `SF_DATA_DIR`              | `./data`                     | Verzeichnis für `platform.sqlite`, Mandanten-DBs und Secret-Key; relativ zum Startverzeichnis (`api/data` bei Start über `npm run dev`/`npm start`)     |
+| `SF_WEB_DIR`               | leer                         | Gebautes SPA, das die API unter `/` ausliefert. Leer = reine API; im Container `/app/web/dist`                                                          |
+| `SF_SECURE_COOKIES`        | abhängig von `SF_PUBLIC_URL` | `Secure`-Flag am Session-Cookie; in `NODE_ENV=production` darf es nicht `0` sein, sonst bricht der Start ab                                             |
+| `SF_LOG_LEVEL`             | `info` (`silent` in Tests)   | Fastify-Log-Level                                                                                                                                       |
+| `SF_TRUST_PROXY`           | `0`                          | `X-Forwarded-*` vertrauen                                                                                                                               |
+| `SF_BODY_LIMIT`            | `1048576`                    | Max. Request-Body in Bytes                                                                                                                              |
+| `SF_RATE_LIMIT_ENABLED`    | `1`                          | Rate-Limit aktiv                                                                                                                                        |
+| `SF_RATE_LIMIT_LOGIN`      | `10`                         | Anmeldeversuche pro Minute und Absender; je Adresse das Dreifache pro 15 Minuten                                                                        |
+| `SF_AGENT_PROVIDER_BASE`   | `/api/v1/llm`                | API-Pfad des Provider-Plugins, das der Agent für Antworten aufruft                                                                                      |
+| `SF_AGENT_MAX_STEPS`       | `4`                          | Modellrunden je Frage (1–8)                                                                                                                             |
+| `SF_AGENT_TIMEOUT_MS`      | `30000`                      | Zeitlimit je Provider-Aufruf                                                                                                                            |
+| `SF_AGENT_BUDGET_MS`       | `45000`                      | Gesamtbudget je Frage                                                                                                                                   |
+| `SF_AGENT_RETENTION_DAYS`  | `90`                         | Aufbewahrung von Agent-Fragen und -Antworten                                                                                                            |
+| `SF_AGENT_RATE_PER_MINUTE` | `10`                         | Agent-Fragen je Operator und Minute                                                                                                                     |
+| `SF_AGENT_RATE_PER_DAY`    | `200`                        | Agent-Fragen je Operator und Tag                                                                                                                        |
 
 Es gibt keinen Mailversand mehr: die Ersteinrichtung legt den ersten Operator direkt im
 Browser an (E-Mail, Name, Passwort), danach meldet man sich mit E-Mail und Passwort an.
 Die Passwörter liegen als scrypt-Hash in der Datenbank.
+
+Der Agent (`/agent`, nur Operatoren) beantwortet Fragen aus freigegebenen Datenquellen.
+Das Modell liefert ein eigenes Provider-Plugin über eine interne Route; Vertrag, Quellen
+und Grenzen stehen in [`docs/agent-plugin.md`](docs/agent-plugin.md).
 
 ## Verzeichnisstruktur
 

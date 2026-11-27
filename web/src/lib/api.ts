@@ -15,6 +15,12 @@ import type {
   WebsiteSettings,
   WebsiteStatus,
   WebsiteSummary,
+  AgentAskResponse,
+  AgentRun,
+  AgentRunListResponse,
+  AgentSourceInfo,
+  AgentStatus,
+  AgentStep,
   AuthMe,
   DiscoveryInvite,
   DiscoveryInviteCreated,
@@ -53,6 +59,11 @@ import type {
 } from './types';
 
 const API_PREFIX = '/api/v1';
+/** A question may take several model rounds; the server caps the total. */
+/** A status probe is cheap; answer before the browser gives up. */
+export const AGENT_STATUS_TIMEOUT_MS = 4_000;
+
+export const AGENT_TIMEOUT_MS = 60_000;
 
 /**
  * Upper bound for a single request. Without it a hanging `/auth/login` would
@@ -462,6 +473,94 @@ function parseTenantList(raw: unknown): TenantListResponse {
   };
 }
 
+function parseAgentSource(raw: unknown): AgentSourceInfo {
+  if (!isRecord(raw)) throw new ApiError(500, 'invalid_response', 'Invalid agent source');
+  return {
+    id: asString(raw.id, 'agent.source.id'),
+    label: asString(raw.label, 'agent.source.label'),
+    description: asString(raw.description, 'agent.source.description'),
+    ...(typeof raw.href === 'string' ? { href: raw.href } : {}),
+  };
+}
+
+function parseAgentStep(raw: unknown): AgentStep {
+  if (!isRecord(raw) || (raw.status !== 'ok' && raw.status !== 'error')) {
+    throw new ApiError(500, 'invalid_response', 'Invalid agent step');
+  }
+  return {
+    seq: asNumber(raw.seq, 'agent.step.seq'),
+    source: asString(raw.source, 'agent.step.source'),
+    status: raw.status,
+    durationMs: asNumber(raw.durationMs, 'agent.step.durationMs'),
+    ...(typeof raw.errorCode === 'string' ? { errorCode: raw.errorCode } : {}),
+    truncated: raw.truncated === true,
+  };
+}
+
+function parseAgentRun(raw: unknown): AgentRun {
+  if (!isRecord(raw) || (raw.status !== 'ok' && raw.status !== 'error')) {
+    throw new ApiError(500, 'invalid_response', 'Invalid agent run');
+  }
+  const steps = Array.isArray(raw.steps) ? raw.steps.map(parseAgentStep) : [];
+  return {
+    id: asString(raw.id, 'agent.run.id'),
+    question: asString(raw.question, 'agent.run.question'),
+    answer: typeof raw.answer === 'string' ? raw.answer : null,
+    status: raw.status,
+    errorCode: typeof raw.errorCode === 'string' ? raw.errorCode : null,
+    model: typeof raw.model === 'string' ? raw.model : null,
+    durationMs: typeof raw.durationMs === 'number' ? raw.durationMs : null,
+    createdAt: asString(raw.createdAt, 'agent.run.createdAt'),
+    finishedAt: typeof raw.finishedAt === 'string' ? raw.finishedAt : null,
+    steps,
+  };
+}
+
+function parseAgentStatus(raw: unknown): AgentStatus {
+  if (
+    !isRecord(raw) ||
+    typeof raw.configured !== 'boolean' ||
+    typeof raw.reachable !== 'boolean' ||
+    !Array.isArray(raw.sources) ||
+    !isRecord(raw.limits)
+  ) {
+    throw new ApiError(500, 'invalid_response', 'Invalid agent status');
+  }
+  return {
+    configured: raw.configured,
+    model: typeof raw.model === 'string' ? raw.model : null,
+    reachable: raw.reachable,
+    retentionDays: asNumber(raw.retentionDays, 'agent.retentionDays'),
+    limits: {
+      perMinute: asNumber(raw.limits.perMinute, 'agent.limits.perMinute'),
+      perDay: asNumber(raw.limits.perDay, 'agent.limits.perDay'),
+    },
+    sources: raw.sources.map(parseAgentSource),
+  };
+}
+
+function parseAgentAsk(raw: unknown): AgentAskResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.sources)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid agent answer');
+  }
+  return {
+    run: parseAgentRun(raw.run),
+    sources: raw.sources.map(parseAgentSource),
+    truncated: raw.truncated === true,
+  };
+}
+
+function parseAgentRunList(raw: unknown): AgentRunListResponse {
+  if (!isRecord(raw) || !Array.isArray(raw.items)) {
+    throw new ApiError(500, 'invalid_response', 'Invalid agent run list');
+  }
+  return {
+    items: raw.items.map(parseAgentRun),
+    total: asNumber(raw.total, 'agent.total'),
+    nextCursor: typeof raw.nextCursor === 'string' ? raw.nextCursor : null,
+  };
+}
+
 function extractApiError(status: number, payload: unknown): ApiError {
   if (isRecord(payload) && isRecord(payload.error)) {
     const err = payload.error;
@@ -483,6 +582,8 @@ interface RequestOptions {
   body?: unknown;
   notifyUnauthorized?: boolean;
   signal?: AbortSignal;
+  /** Overrides the global 15 s bound for a route that may think for longer. */
+  timeoutMs?: number;
 }
 
 /**
@@ -510,8 +611,11 @@ export function translateFetchError(error: unknown): unknown {
 }
 
 /** Combined caller signal and request timeout, or just the timeout. */
-function requestSignal(signal: AbortSignal | undefined): AbortSignal {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+function requestSignal(
+  signal: AbortSignal | undefined,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
@@ -531,7 +635,7 @@ async function requestJson(path: string, options: RequestOptions = {}): Promise<
       headers,
       credentials: 'same-origin',
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      signal: requestSignal(options.signal),
+      signal: requestSignal(options.signal, options.timeoutMs),
     });
     text = await response.text();
   } catch (error) {
@@ -1291,6 +1395,44 @@ export const api = {
       throw new ApiError(500, 'invalid_response', 'Invalid decision payload');
     }
     return { state: raw.state };
+  },
+
+  async agentStatus(signal?: AbortSignal): Promise<AgentStatus> {
+    return parseAgentStatus(
+      await requestJson('/agent/status', { signal, timeoutMs: AGENT_STATUS_TIMEOUT_MS }),
+    );
+  },
+
+  /**
+   * The model may take several rounds; the route is bounded by the server's
+   * own budget, so the client waits longer than the default 15 s.
+   */
+  async agentAsk(question: string, signal?: AbortSignal): Promise<AgentAskResponse> {
+    return parseAgentAsk(
+      await requestJson('/agent/ask', {
+        method: 'POST',
+        body: { question },
+        timeoutMs: AGENT_TIMEOUT_MS,
+        signal,
+      }),
+    );
+  },
+
+  async agentRuns(
+    params: { limit?: number; cursor?: string | null } = {},
+    signal?: AbortSignal,
+  ): Promise<AgentRunListResponse> {
+    const query = new URLSearchParams();
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const suffix = query.toString();
+    return parseAgentRunList(
+      await requestJson(suffix.length > 0 ? `/agent/runs?${suffix}` : '/agent/runs', { signal }),
+    );
+  },
+
+  async agentRun(id: string, signal?: AbortSignal): Promise<AgentRun> {
+    return parseAgentRun(await requestJson(`/agent/runs/${encodeURIComponent(id)}`, { signal }));
   },
 };
 

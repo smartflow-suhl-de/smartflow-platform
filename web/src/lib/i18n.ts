@@ -77,6 +77,7 @@ export interface Messages {
     tenantsCreate: string;
     settings: string;
     help: string;
+    agent: string;
   };
   shell: {
     navAria: string;
@@ -323,6 +324,47 @@ export interface Messages {
     title: string;
     description: string;
     back: string;
+  };
+  agent: {
+    title: string;
+    description: string;
+    placeholder: string;
+    textareaLabel: string;
+    hint: string;
+    send: string;
+    thinking: string;
+    examples: string;
+    examplesHint: string;
+    exampleTenantsTitle: string;
+    exampleTenantsText: string;
+    exampleEventsTitle: string;
+    exampleEventsText: string;
+    exampleSourcesTitle: string;
+    exampleSourcesText: string;
+    newQuestion: string;
+    copy: string;
+    copied: string;
+    sources: string;
+    steps: string;
+    stepsSummary: (count: number, ms: number) => string;
+    stepOk: string;
+    stepError: string;
+    ready: string;
+    notConfigured: string;
+    modelLabel: string;
+    stand: (time: string) => string;
+    retention: (days: number) => string;
+    limit: (perMinute: number, perDay: number) => string;
+    providerMissingTitle: string;
+    providerMissingText: string;
+    providerUnreachableTitle: string;
+    providerUnreachableText: string;
+    checkStatus: string;
+    emptyAnswer: string;
+    truncatedNotice: string;
+    errorTitle: string;
+    history: string;
+    clearHistory: string;
   };
   settingsPage: {
     title: string;
@@ -674,6 +716,7 @@ const DE: Messages = {
     tenantsCreate: 'Mandant anlegen',
     settings: 'Einstellungen',
     help: 'Hilfe',
+    agent: 'Agent',
   },
   shell: {
     navAria: 'Navigation',
@@ -935,6 +978,50 @@ const DE: Messages = {
     keyNotSet: 'Kein Schlüssel',
     loaded: 'Modelle geladen.',
     errorsLabel: 'Fehler',
+  },
+  agent: {
+    title: 'Agent',
+    description: 'Fragt die Plattform nach ihrem Zustand — liest nur, ändert nichts.',
+    placeholder: 'Frag die Plattform …',
+    textareaLabel: 'Frage an den Agenten',
+    hint: 'Enter sendet · Shift+Enter neue Zeile · liest nur',
+    send: 'Senden',
+    thinking: 'Der Agent liest die Datenquellen …',
+    examples: 'Beispiele',
+    examplesHint: 'aus echten Datenquellen',
+    exampleTenantsTitle: 'Wie viele Mandanten sind gesperrt?',
+    exampleTenantsText: 'Zählt aktive und gesperrte Mandanten und nennt die betroffenen.',
+    exampleEventsTitle: 'Was ist zuletzt passiert?',
+    exampleEventsText: 'Liest das Ereignisprotokoll der letzten Stunden, ohne Nutzdaten.',
+    exampleSourcesTitle: 'Welche Daten kann ich fragen?',
+    exampleSourcesText: 'Zeigt die freigegebenen Quellen mit Zweck und Argumenten.',
+    newQuestion: 'Neu fragen',
+    copy: 'Kopieren',
+    copied: 'Kopiert',
+    sources: 'Quellen',
+    steps: 'Abfrageprotokoll',
+    stepsSummary: (count, ms) => `${count} ${count === 1 ? 'Abfrage' : 'Abfragen'} · ${ms} ms`,
+    stepOk: 'OK',
+    stepError: 'Fehler',
+    ready: 'Bereit',
+    notConfigured: 'Nicht konfiguriert',
+    modelLabel: 'Modell',
+    stand: (time) => `Stand ${time}`,
+    retention: (days) => `Aufbewahrung ${days} Tage`,
+    limit: (perMinute, perDay) => `${perMinute} pro Minute · ${perDay} pro Tag`,
+    providerMissingTitle: 'Kein Modell hinterlegt',
+    providerMissingText:
+      'Der Agent beantwortet Fragen über ein Modell-Plugin. Es ist noch nicht eingerichtet; die Plattform selbst läuft normal weiter.',
+    providerUnreachableTitle: 'Modell-Plugin antwortet nicht',
+    providerUnreachableText:
+      'Der Agent erreicht das Modell-Plugin gerade nicht. Prüfen Sie dessen Zustand; Fragen sind erst danach möglich.',
+    checkStatus: 'Status prüfen',
+    emptyAnswer: 'Die Antwort war leer. Bitte fragen Sie erneut.',
+    truncatedNotice:
+      'Die Datenquelle lieferte mehr, als in eine Antwort passt; die Antwort nutzt den Anfang.',
+    errorTitle: 'Die Frage konnte nicht beantwortet werden.',
+    history: 'Verlauf',
+    clearHistory: 'Verlauf leeren',
   },
   notFound: {
     title: 'Seite nicht gefunden',
@@ -1345,6 +1432,7 @@ const EN: Messages = {
     tenantsCreate: 'Create tenant',
     settings: 'Settings',
     help: 'Help',
+    agent: 'Agent',
   },
   shell: {
     navAria: 'Navigation',
@@ -1598,6 +1686,50 @@ const EN: Messages = {
     keyNotSet: 'No key',
     loaded: 'Models loaded.',
     errorsLabel: 'Errors',
+  },
+  agent: {
+    title: 'Agent',
+    description: 'Asks the platform about itself — reads only, changes nothing.',
+    placeholder: 'Ask the platform …',
+    textareaLabel: 'Question for the agent',
+    hint: 'Enter sends · Shift+Enter for a new line · read-only',
+    send: 'Send',
+    thinking: 'The agent is reading its sources …',
+    examples: 'Examples',
+    examplesHint: 'from real data sources',
+    exampleTenantsTitle: 'How many tenants are suspended?',
+    exampleTenantsText: 'Counts active and suspended tenants and names the affected ones.',
+    exampleEventsTitle: 'What happened recently?',
+    exampleEventsText: 'Reads the event log of the last hours, without payloads.',
+    exampleSourcesTitle: 'What can I ask about?',
+    exampleSourcesText: 'Lists the released sources with purpose and arguments.',
+    newQuestion: 'Ask again',
+    copy: 'Copy',
+    copied: 'Copied',
+    sources: 'Sources',
+    steps: 'Query log',
+    stepsSummary: (count, ms) => `${count} ${count === 1 ? 'query' : 'queries'} · ${ms} ms`,
+    stepOk: 'OK',
+    stepError: 'Error',
+    ready: 'Ready',
+    notConfigured: 'Not configured',
+    modelLabel: 'Model',
+    stand: (time) => `As of ${time}`,
+    retention: (days) => `Retention ${days} days`,
+    limit: (perMinute, perDay) => `${perMinute} per minute · ${perDay} per day`,
+    providerMissingTitle: 'No model available',
+    providerMissingText:
+      'The agent answers through a model plugin. It is not set up yet; the platform itself keeps running normally.',
+    providerUnreachableTitle: 'The model plugin is not responding',
+    providerUnreachableText:
+      'The agent cannot reach the model plugin right now. Check its state; questions are possible afterwards.',
+    checkStatus: 'Check status',
+    emptyAnswer: 'The answer was empty. Please ask again.',
+    truncatedNotice:
+      'The source returned more than fits into an answer; the answer uses the beginning.',
+    errorTitle: 'The question could not be answered.',
+    history: 'History',
+    clearHistory: 'Clear history',
   },
   notFound: {
     title: 'Page not found',
@@ -2039,6 +2171,15 @@ export function formatApiError(error: unknown, locale: Locale): string {
         return 'Dieser Zweck existiert bereits.';
       case 'llm_secret_unreadable':
         return 'Der gespeicherte Schlüssel lässt sich nicht mehr öffnen.';
+      case 'agent_not_configured':
+        return 'Es ist kein Modell hinterlegt. Bitte den Modell-Provider einrichten.';
+      case 'agent_rate_limited':
+        return 'Zu viele Fragen in kurzer Zeit. Bitte einen Moment warten.';
+      case 'agent_provider_failed':
+        return 'Das Modell hat die Anfrage abgelehnt. Bitte erneut versuchen.';
+      case 'agent_provider_timeout':
+      case 'agent_budget_exceeded':
+        return 'Die Antwort hat zu lange gedauert. Bitte enger fragen.';
       default:
         return error.message || m.common.unknownError;
     }
@@ -2092,6 +2233,15 @@ export function formatApiError(error: unknown, locale: Locale): string {
       return 'This purpose already exists.';
     case 'llm_secret_unreadable':
       return 'The stored key can no longer be opened.';
+    case 'agent_not_configured':
+      return 'No model is configured. Set up the model provider first.';
+    case 'agent_rate_limited':
+      return 'Too many questions in a short time. Please wait a moment.';
+    case 'agent_provider_failed':
+      return 'The model rejected the request. Please try again.';
+    case 'agent_provider_timeout':
+    case 'agent_budget_exceeded':
+      return 'The answer took too long. Please ask a narrower question.';
     default:
       return error.message || m.common.unknownError;
   }

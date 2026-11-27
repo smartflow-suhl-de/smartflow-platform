@@ -1,6 +1,20 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+/**
+ * Agent settings. The model endpoint and its credential belong to the
+ * provider plugin; this only bounds what the agent itself does.
+ */
+export interface AgentConfig {
+  providerBase: string;
+  maxSteps: number;
+  timeoutMs: number;
+  budgetMs: number;
+  retentionDays: number;
+  perMinute: number;
+  perDay: number;
+}
+
 export interface Config {
   env: 'development' | 'test' | 'production';
   host: string;
@@ -13,6 +27,7 @@ export interface Config {
    * here; everything else stays the client's business.
    */
   webDir: string | null;
+  agent: AgentConfig;
   secureCookies: boolean;
   logLevel: string;
   /**
@@ -97,6 +112,38 @@ function assertPublicOrigin(value: string): void {
   }
 }
 
+function loadAgent(env: NodeJS.ProcessEnv): AgentConfig {
+  const bounded = (name: string, fallback: number, min: number, max: number): number => {
+    const raw = (env[name] ?? '').trim();
+    if (raw === '') return fallback;
+    const value = /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : Number.NaN;
+    if (!Number.isInteger(value) || value < min || value > max) {
+      throw new Error(`${name} must be an integer between ${min} and ${max} (got "${raw}").`);
+    }
+    return value;
+  };
+
+  const rawBase = (env.SF_AGENT_PROVIDER_BASE ?? '').trim();
+  const providerBase = rawBase === '' ? '/api/v1/llm' : rawBase;
+  // Strict on purpose: `callInternal` sends the internal token to this path, so
+  // no `..`, query, fragment, double slash or trailing slash may get through.
+  if (!/^\/api\/v1\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/.test(providerBase)) {
+    throw new Error(
+      `SF_AGENT_PROVIDER_BASE must look like /api/v1/<plugin> using lowercase letters, digits and "-" (got "${providerBase}").`,
+    );
+  }
+
+  return {
+    providerBase,
+    maxSteps: bounded('SF_AGENT_MAX_STEPS', 4, 1, 8),
+    timeoutMs: bounded('SF_AGENT_TIMEOUT_MS', 30_000, 1_000, 120_000),
+    budgetMs: bounded('SF_AGENT_BUDGET_MS', 45_000, 1_000, 120_000),
+    retentionDays: bounded('SF_AGENT_RETENTION_DAYS', 90, 1, 3_650),
+    perMinute: bounded('SF_AGENT_RATE_PER_MINUTE', 10, 1, 1_000),
+    perDay: bounded('SF_AGENT_RATE_PER_DAY', 200, 1, 100_000),
+  };
+}
+
 /**
  * Runtime configuration. Every value comes from a `SF_*` environment variable
  * with a development-friendly default; nothing secret is baked in.
@@ -132,6 +179,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     publicUrl,
     dataDir,
     webDir,
+    agent: loadAgent(env),
     // The guard above rejects an insecure value in production, so this is the
     // single place that decides it: behind a TLS-terminating proxy
     // `SF_PUBLIC_URL` may still be http, and a session cookie without `Secure`

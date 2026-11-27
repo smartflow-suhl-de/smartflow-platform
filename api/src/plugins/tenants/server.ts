@@ -162,6 +162,76 @@ export function register(ctx: PluginContext): void {
     },
   });
 
+  /**
+   * The agent asks these two questions instead of reading the tenant table.
+   * Both are read-only and return only what an operator may see; the
+   * arguments are validated by the agent against the schema below.
+   */
+  ctx.provideAgentSource({
+    id: 'tenants.summary',
+    readOnly: true,
+    label: 'Mandanten',
+    description: 'Anzahl aller, aktiver und gesperrter Mandanten.',
+    args: { type: 'object', additionalProperties: false, properties: {} },
+    href: '/tenants',
+    run: async () => {
+      const rows = db
+        .prepare('select status, count(*) as count from tenants group by status')
+        .all() as { status: TenantStatus; count: number }[];
+      const counts = { active: 0, suspended: 0 };
+      for (const row of rows) counts[row.status] = row.count;
+      return { ...counts, total: counts.active + counts.suspended };
+    },
+  });
+
+  ctx.provideAgentSource({
+    id: 'tenants.list',
+    readOnly: true,
+    label: 'Mandantenliste',
+    description: 'Mandanten mit Slug, Status und Anlagedatum; filterbar nach Status und Name.',
+    args: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        status: { type: 'string', enum: ['active', 'suspended'] },
+        q: { type: 'string', maxLength: 80 },
+        limit: { type: 'integer', minimum: 1, maximum: 20, default: 10 },
+      },
+    },
+    href: '/tenants',
+    run: async (args) => {
+      const where: string[] = [];
+      const params: unknown[] = [];
+      if (args.status === 'active' || args.status === 'suspended') {
+        where.push('status = ?');
+        params.push(args.status);
+      }
+      if (typeof args.q === 'string' && args.q.trim().length > 0) {
+        where.push("(lower(name) like ? escape '\\' or lower(slug) like ? escape '\\')");
+        // `%`, `_` and `\` in the search text are literals, not wildcards.
+        const needle = `%${args.q
+          .trim()
+          .toLowerCase()
+          .replace(/[\\%_]/g, '\\$&')}%`;
+        params.push(needle, needle);
+      }
+      const limit = typeof args.limit === 'number' ? Math.min(20, Math.max(1, args.limit)) : 10;
+      const rows = db
+        .prepare(
+          `select name, slug, status, created_at from tenants
+           ${where.length > 0 ? `where ${where.join(' and ')}` : ''}
+           order by created_at desc, id desc limit ?`,
+        )
+        .all(...params, limit) as {
+        name: string;
+        slug: string;
+        status: TenantStatus;
+        created_at: string;
+      }[];
+      return { items: rows, shown: rows.length };
+    },
+  });
+
   function provision(tenant: TenantRow): void {
     const database = ctx.tenantDb(tenant.id);
     database
