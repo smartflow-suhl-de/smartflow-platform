@@ -23,6 +23,7 @@ export type AiFailureReason =
   | 'timeout'
   | 'invalid_output'
   | 'truncated'
+  | 'filtered'
   | 'caller_not_allowed';
 
 /** A logger shape the plugin context satisfies. */
@@ -53,15 +54,25 @@ export const HINT_TIMEOUT_MS = 20_000;
 export const ANALYSIS_TIMEOUT_MS = 20_000;
 
 /**
- * The `finish_reason` values that mean the answer was cut off. Providers word
- * this differently: OpenAI-compatible ones say `length`, Anthropic-compatible
- * ones `max_tokens`; `content_filter` is a cut-off answer for the same reason.
+ * The `finish_reason` values that mean the answer was cut off by the token
+ * budget. Providers word this differently: OpenAI-compatible ones say `length`,
+ * Anthropic-compatible ones `max_tokens`.
+ *
+ * `content_filter` is deliberately absent. The provider's filter stopped the
+ * answer, and a retry with the same prompt and the same policy would be
+ * filtered again: a second paid call with the same refusal. It has its own
+ * reason instead.
  */
-const TRUNCATED_REASONS = new Set(['length', 'max_tokens', 'content_filter']);
+const TRUNCATED_REASONS = new Set(['length', 'max_tokens']);
 
 /** Was the answer cut off at the token budget? */
 export function isTruncated(finishReason: string): boolean {
   return TRUNCATED_REASONS.has(finishReason.trim().toLowerCase());
+}
+
+/** Did the provider's content filter stop the answer? */
+export function isFiltered(finishReason: string): boolean {
+  return finishReason.trim().toLowerCase() === 'content_filter';
 }
 
 /**
@@ -70,8 +81,12 @@ export function isTruncated(finishReason: string): boolean {
  * The provider repeats a timing-out call once on its own, so a per-attempt
  * timeout cannot bound the request on its own. This deadline does: when it
  * passes, the customer gets a defined error instead of the browser's own
- * "network request failed". The abandoned request finishes in the background
- * and its result is dropped.
+ * "network request failed".
+ *
+ * It bounds the wait, not the work: `InternalRequest` carries no abort signal,
+ * so the abandoned call keeps running until the provider's own timeout and is
+ * billed once. Aborting it would need a signal in the kernel's internal call,
+ * which this plugin must not change.
  */
 export function withDeadline<T>(
   promise: Promise<T>,
@@ -248,6 +263,21 @@ async function completeOnce(request: CompleteRequest): Promise<CompleteAnswer> {
   return { content, finishReason, model };
 }
 
+/**
+ * The provider refused the content; a retry cannot change that.
+ *
+ * The abandoned request note applies here too: `callInternal` carries no abort
+ * signal, so a call that outlives `withDeadline` keeps running until the
+ * provider's own timeout and is still billed once. The deadline bounds what the
+ * customer waits for, not what the provider works on.
+ */
+function filteredError(): AiUnavailable {
+  return new AiUnavailable(
+    'filtered',
+    'The AI provider refused to answer this request. Please contact the person who invited you.',
+  );
+}
+
 /** The error a cut-off answer ends in; its own code, its own message. */
 function truncatedError(): AiUnavailable {
   return new AiUnavailable(
@@ -285,7 +315,21 @@ async function complete(
 
   let answer = await run(request);
 
+  if (isFiltered(answer.finishReason)) {
+    log?.warn(
+      {
+        purpose: request.purpose,
+        outputChars: answer.content.length,
+        finishReason: answer.finishReason,
+      },
+      'discovery ai answer was refused by the content filter; not retrying',
+    );
+    throw filteredError();
+  }
+
   if (isTruncated(answer.finishReason) && extractJson(answer.content) === null) {
+    // Doubling is a no-op once the provider model allows less than the cap;
+    // the retry then helps only through a different prompt budget, so log it.
     const retryMaxTokens = Math.min(request.maxTokens * 2, MAX_TOKENS_CAP);
     const remainingMs = deadline - Date.now();
     if (remainingMs < MIN_RETRY_MS) {

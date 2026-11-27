@@ -20,7 +20,7 @@ type ClosedKind = 'completed' | 'revoked' | 'expired' | 'invalid';
  * What the customer sees when the model cannot answer: the difference matters
  * to them, a retry helps after a cut-off answer, but not after an invalid one.
  */
-type AiNotice = 'unavailable' | 'truncated' | 'limit' | null;
+type AiNotice = 'unavailable' | 'truncated' | 'limit' | 'filtered' | null;
 
 /**
  * The model errors the public page turns into a localised notice, each with a
@@ -29,6 +29,9 @@ type AiNotice = 'unavailable' | 'truncated' | 'limit' | null;
 const AI_NOTICE_CODES: Record<string, Exclude<AiNotice, null>> = {
   discovery_ai_unavailable: 'unavailable',
   discovery_ai_truncated: 'truncated',
+  // The provider's content filter stopped the answer; asking again would be
+  // filtered again, so this notice carries no retry button either.
+  discovery_ai_filtered: 'filtered',
   // Retrying cannot help here, so this notice carries no retry button.
   discovery_complete_limit_reached: 'limit',
   // Unusable JSON is retried the same way; the customer does not need the
@@ -39,10 +42,18 @@ const AI_NOTICE_CODES: Record<string, Exclude<AiNotice, null>> = {
 /** The customer-facing text of a notice; the server text never reaches them. */
 export function aiNoticeText(
   notice: Exclude<AiNotice, null>,
-  m: { discovery: { aiUnavailable: string; aiTruncated: string; aiLimitReached: string } },
+  m: {
+    discovery: {
+      aiUnavailable: string;
+      aiTruncated: string;
+      aiLimitReached: string;
+      aiFiltered: string;
+    };
+  },
 ): string {
   if (notice === 'truncated') return m.discovery.aiTruncated;
   if (notice === 'limit') return m.discovery.aiLimitReached;
+  if (notice === 'filtered') return m.discovery.aiFiltered;
   return m.discovery.aiUnavailable;
 }
 
@@ -438,7 +449,7 @@ export function DiscoveryPublicPage({ token, locale, messages }: DiscoveryPublic
       {aiNotice ? (
         <div className="sf-alert sf-alert-info" role="status">
           <p>{aiNoticeText(aiNotice, m)}</p>
-          {aiNotice === 'limit' ? null : (
+          {aiNotice === 'limit' || aiNotice === 'filtered' ? null : (
             <button
               type="button"
               className="sf-btn sf-btn-secondary sf-btn-sm"

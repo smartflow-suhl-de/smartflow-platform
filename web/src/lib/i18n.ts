@@ -561,6 +561,7 @@ export interface Messages {
     aiUnavailable: string;
     aiTruncated: string;
     aiLimitReached: string;
+    aiFiltered: string;
     skipShort: string;
     skipShortHint: string;
     saveLater: string;
@@ -1274,6 +1275,8 @@ const DE: Messages = {
       'Die Auswertung war beim Erstellen zu lang und wurde abgeschnitten. Ihre Antworten sind gespeichert; bitte versuchen Sie es noch einmal.',
     aiLimitReached:
       'Für diesen Link wurde die Auswertung zu oft angefordert. Ihre Antworten sind gespeichert; bitte wenden Sie sich an Ihren Ansprechpartner.',
+    aiFiltered:
+      'Der KI-Dienst hat die Auswertung dieses Inhalts abgelehnt. Ihre Antworten sind gespeichert; bitte wenden Sie sich an Ihren Ansprechpartner.',
     skipShort: 'Abkürzen: ohne Vertiefung fortfahren',
     skipShortHint: 'Sie können nach der Landkarte direkt zur Auswertung.',
     saveLater: 'Speichern und später weiter',
@@ -2005,6 +2008,8 @@ const EN: Messages = {
       'The assessment was too long to be written in one go and was cut off. Your answers are saved; please try again.',
     aiLimitReached:
       'The assessment was requested too often for this link. Your answers are saved; please contact the person who invited you.',
+    aiFiltered:
+      'The AI service declined to assess this content. Your answers are saved; please contact the person who invited you.',
     skipShort: 'Shortcut: continue without the deep dive',
     skipShortHint: 'After the map you can go straight to the assessment.',
     saveLater: 'Save and continue later',

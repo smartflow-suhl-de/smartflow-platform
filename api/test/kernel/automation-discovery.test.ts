@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import { createTestApp, type TestApp } from './helpers.ts';
 import {
   COMPLETE_ATTEMPT_LIMIT,
@@ -16,9 +16,15 @@ import {
   ANALYSIS_MAX_TOKENS,
   ANALYSIS_TIMEOUT_MS,
   withDeadline,
+  isFiltered,
+  isTruncated,
   HINT_MAX_TOKENS,
   HINT_TIMEOUT_MS,
 } from '../../src/plugins/automation-discovery/ai.ts';
+
+// The public limiter is module-global, so one test file's requests would eat
+// into the next one's per-IP budget and turn a green suite red at random.
+beforeEach(() => publicRateLimiter.clear());
 
 interface LlmReply {
   status: number;
@@ -721,6 +727,75 @@ test('a report cut off twice answers with its own code, not a schema error', asy
   assert.equal(reports.total, 0);
 });
 
+test('a filtered answer is not retried, because the same filter would stop it again', async () => {
+  let calls = 0;
+  const call = async () => {
+    calls += 1;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'content_filter',
+      }),
+    };
+  };
+  const warnings: string[] = [];
+  await assert.rejects(
+    () =>
+      analyse(call, {
+        locale: 'de',
+        customerName: 'Test GmbH',
+        selectedClusters: ['A'],
+        answers: [],
+        log: { warn: (_obj, message) => warnings.push(message) },
+      }),
+    (error: unknown) => error instanceof AiUnavailable && error.reason === 'filtered',
+  );
+  // One paid call, not two: a retry with the same prompt and policy is
+  // filtered again and only costs money.
+  assert.equal(calls, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0] ?? '', /content filter/);
+});
+
+test('a filtered answer reaches the customer with its own code, not a budget message', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+  stubLlm(ctx, (payload) => {
+    const hit = JSON.stringify(payload).includes('structured automation assessment');
+    if (!hit) return llmReply(payload);
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'content_filter',
+      }),
+    };
+  });
+
+  await runInterview(ctx, invite.token);
+  const completed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+  });
+  assert.equal(completed.statusCode, 422);
+  const error = (completed.json() as { error: { code: string; reason?: string } }).error;
+  assert.equal(error.code, 'discovery_ai_filtered');
+  assert.equal(error.reason, 'filtered');
+});
+
+test('isFiltered recognises the filter and isTruncated no longer claims it', () => {
+  assert.equal(isFiltered('content_filter'), true);
+  assert.equal(isFiltered('CONTENT_FILTER'), true);
+  assert.equal(isFiltered('length'), false);
+  assert.equal(isTruncated('content_filter'), false);
+  assert.equal(isTruncated('length'), true);
+});
+
 test('an empty reasoning answer becomes truncated, not a schema error', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -753,6 +828,57 @@ test('an empty reasoning answer becomes truncated, not a schema error', async (t
   assert.equal(error.reason, 'truncated');
   // One retry, then the defined error: not the old schema message.
   assert.equal(analysisCalls, 2);
+});
+
+test('a failed configuration attempt costs nothing, and a new link resets the budget', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  // The analysis purpose is unmapped, so the provider answers 409 before any
+  // model call; the interview hints keep working.
+  stubLlm(ctx, (payload) => {
+    if (JSON.stringify(payload).includes('structured automation assessment')) {
+      return { status: 409, body: JSON.stringify({ error: { code: 'llm_purpose_unmapped' } }) };
+    }
+    return llmReply(payload);
+  });
+
+  await runInterview(ctx, invite.token);
+
+  for (let index = 0; index < 6; index += 1) {
+    const response = await ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/discovery/public/${invite.token}/complete`,
+    });
+    assert.equal(response.statusCode, 503);
+    assert.equal(
+      (response.json() as { error: { reason?: string } }).error.reason,
+      'not_configured',
+    );
+  }
+  const attempts = () =>
+    (
+      ctx.db
+        .prepare('select complete_attempts from discovery_session where invite_id = ?')
+        .get(invite.id) as { complete_attempts: number }
+    ).complete_attempts;
+  // Six configuration failures spend nothing: the model was never called, so
+  // the customer must not be locked out.
+  assert.equal(attempts(), 0);
+
+  // A rotated link starts the budget over as well.
+  ctx.db
+    .prepare('update discovery_session set complete_attempts = ? where invite_id = ?')
+    .run(COMPLETE_ATTEMPT_LIMIT, invite.id);
+  const rotated = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/invites/${invite.id}/resend`,
+    headers: { cookie },
+  });
+  assert.equal(rotated.statusCode, 200);
+  assert.equal(attempts(), 0);
 });
 
 test('repeated complete calls stop at the attempt limit, and a report still wins', async (t) => {

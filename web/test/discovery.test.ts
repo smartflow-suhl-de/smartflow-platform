@@ -236,6 +236,11 @@ describe('aiNoticeFor', () => {
     assert.equal(aiNoticeFor(error('discovery_complete_limit_reached', 429)), 'limit');
   });
 
+  it('maps a filtered answer to its own notice, not to the budget one', () => {
+    assert.equal(aiNoticeFor(error('discovery_ai_filtered', 422)), 'filtered');
+    assert.notEqual(aiNoticeFor(error('discovery_ai_filtered', 422)), 'truncated');
+  });
+
   it('leaves unrelated errors to the caller', () => {
     assert.equal(aiNoticeFor(new ApiError(409, 'discovery_token_used', 'x')), null);
     assert.equal(aiNoticeFor(new Error('boom')), null);
@@ -247,6 +252,7 @@ describe('aiNoticeFor', () => {
       assert.ok(messages.discovery.aiTruncated.length > 20);
       assert.notEqual(messages.discovery.aiTruncated, messages.discovery.aiUnavailable);
       assert.ok(messages.discovery.aiLimitReached.length > 20);
+      assert.ok(messages.discovery.aiFiltered.length > 20);
       assert.notEqual(messages.discovery.aiLimitReached, messages.discovery.aiTruncated);
     }
     const de = getMessages('de').discovery.aiTruncated;
@@ -261,5 +267,6 @@ describe('aiNoticeFor', () => {
     assert.equal(aiNoticeText('truncated', messages), messages.discovery.aiTruncated);
     assert.equal(aiNoticeText('unavailable', messages), messages.discovery.aiUnavailable);
     assert.equal(aiNoticeText('limit', messages), messages.discovery.aiLimitReached);
+    assert.equal(aiNoticeText('filtered', messages), messages.discovery.aiFiltered);
   });
 });

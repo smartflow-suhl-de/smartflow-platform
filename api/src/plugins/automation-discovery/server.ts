@@ -486,6 +486,15 @@ function aiError(error: unknown): AppError {
         { reason: error.reason },
       );
     }
+    if (error.reason === 'filtered') {
+      // The provider's filter stopped the answer; asking again cannot help.
+      return new AppError(
+        'discovery_ai_filtered',
+        'The AI provider refused to answer this request.',
+        422,
+        { reason: error.reason },
+      );
+    }
     if (error.reason === 'invalid_output') {
       return new AppError(
         'discovery_analysis_invalid',
@@ -1677,6 +1686,14 @@ export function register(ctx: PluginContext): void {
       invite.status = 'open';
       invite.expires_at = expiresAt;
       const session = findSession(db, invite.id);
+      if (session) {
+        // The customer gets a fresh link, so the attempt budget starts over:
+        // the old link's failures must not block the new one.
+        db.prepare('update discovery_session set complete_attempts = 0 where id = ?').run(
+          session.id,
+        );
+        session.complete_attempts = 0;
+      }
       log.info({ inviteId: invite.id, at: stamp }, 'discovery invite link rotated');
       return {
         invite: toInviteDto(invite, session, Boolean(session && findReport(db, session.id))),
@@ -1929,6 +1946,17 @@ export function register(ctx: PluginContext): void {
           log,
         });
       } catch (error) {
+        // A missing model assignment or a refused caller never reached the
+        // provider, so it cost nothing: give the attempt back instead of
+        // locking the link out after five configuration errors.
+        if (
+          error instanceof AiUnavailable &&
+          (error.reason === 'not_configured' || error.reason === 'caller_not_allowed')
+        ) {
+          db.prepare(
+            'update discovery_session set complete_attempts = complete_attempts - 1 where id = ? and complete_attempts > 0',
+          ).run(session.id);
+        }
         throw aiError(error);
       }
 
