@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { browser } from './helpers/browser.ts';
 import { defaultTheme, type ThemeDefinition } from '../src/lib/themes.ts';
-import { appearanceCycle, nextAppearance, type AppearancePair } from '../src/lib/appearance.ts';
-import { AppearanceToggle } from '../src/components/AppearanceToggle.tsx';
+import {
+  appearanceCycle,
+  nextAppearance,
+  themeForAppearance,
+  type AppearancePair,
+} from '../src/lib/appearance.ts';
+import {
+  AppearanceToggle,
+  type AppearanceToggleProps,
+} from '../src/components/AppearanceToggle.tsx';
 import { getMessages } from '../src/lib/i18n.ts';
 import { applyTheme, storedMode, storedTheme } from '../src/theme.ts';
 
@@ -72,40 +80,139 @@ describe('appearance cycle', () => {
     });
   });
 
-  it('recovers when the stored theme is no longer in the catalog', () => {
+  it('advances into the start of the cycle when the stored theme is unknown', () => {
+    // Not a position in the cycle, so the next entry is entry 0 — light, the
+    // start of the cycle, not the dark variant of the first theme.
     assert.deepEqual(nextAppearance({ themeId: 'removed-theme', mode: 'dark' }, null), {
       themeId: 'instrument',
-      mode: 'dark',
+      mode: 'light',
     });
+    assert.deepEqual(nextAppearance({ themeId: 'removed-theme', mode: 'light' }, null), {
+      themeId: 'instrument',
+      mode: 'light',
+    });
+    // A custom theme that this browser no longer has behaves the same way.
+    assert.deepEqual(nextAppearance({ themeId: 'custom', mode: 'dark' }, null), {
+      themeId: 'instrument',
+      mode: 'light',
+    });
+    // The unknown id has no theme to apply, so the caller keeps its own.
+    assert.equal(themeForAppearance({ themeId: 'removed-theme', mode: 'dark' }, null), undefined);
+    assert.equal(
+      themeForAppearance({ themeId: 'instrument', mode: 'dark' }, null)?.id,
+      'instrument',
+    );
   });
 });
+
+/**
+ * The click path as the shell wires it: the button hands its target pair to
+ * `onAppearanceChange`, which resolves the theme (App.tsx) and writes both
+ * values through `applyTheme`, the same writer the topbar switch uses.
+ *
+ * The tests below drive the real `onClick` of the rendered button instead of
+ * calling `nextAppearance` themselves, so a change to the component's click
+ * handling, to the pair it emits, or to the persistence keys fails here.
+ */
+function clickButton(
+  current: AppearancePair,
+  withCustom: ThemeDefinition | null,
+  locale: 'de' | 'en' = 'de',
+): { focused: number } {
+  const messages = getMessages(locale);
+  const focus = { count: 0 };
+
+  const onChange = (next: AppearancePair): void => {
+    const theme = themeForAppearance(next, withCustom);
+    if (theme) applyTheme(theme, next.mode);
+  };
+
+  const element = AppearanceToggle({
+    current,
+    customTheme: withCustom,
+    locale,
+    messages,
+    onChange,
+  }) as ReactElement<AppearanceToggleProps & { onClick: (event: unknown) => void }>;
+
+  element.props.onClick({
+    currentTarget: {
+      focus() {
+        focus.count += 1;
+      },
+    },
+  });
+
+  return { focused: focus.count };
+}
+
+/** The pair a reload would restore, read back through the public getters. */
+function restoredPair(): AppearancePair {
+  return { themeId: storedTheme().id, mode: storedMode() };
+}
 
 describe('appearance persistence', () => {
   beforeEach(() => {
     browser.reset();
   });
 
-  it('keeps the last theme and mode after a reload', () => {
-    // Two clicks from the fresh state: instrument dark, nordlicht light.
-    let pair: AppearancePair = { themeId: storedTheme().id, mode: storedMode() };
-    pair = nextAppearance(pair, null);
-    applyTheme(defaultTheme(), pair.mode);
-    pair = nextAppearance(pair, null);
-    const nordlicht = appearanceCycle(null).find(
-      (step) => step.themeId === pair.themeId && step.mode === pair.mode,
-    );
-    assert.ok(nordlicht);
+  it('writes the clicked pair and restores it after a reload', () => {
+    browser.storage.set('sf.theme', 'instrument');
+    browser.storage.set('sf.mode', 'light');
 
-    // Only the pair is written, exactly like the settings page does it.
-    browser.storage.set('sf.theme', pair.themeId);
-    applyTheme(
-      { ...defaultTheme(), id: pair.themeId, label: { de: 'Nordlicht', en: 'Northern light' } },
-      pair.mode,
-    );
+    let current = restoredPair();
+    const seen: string[] = [];
 
-    // A reload re-reads both values from the same keys.
-    assert.equal(storedTheme().id, pair.themeId);
-    assert.equal(storedMode(), pair.mode);
+    for (let step = 0; step < 4; step += 1) {
+      const { focused } = clickButton(current, null);
+      assert.equal(focused, 1, 'the button keeps the focus after the click');
+
+      // The click wrote through `applyTheme`, not into a second state source.
+      current = restoredPair();
+      seen.push(`${current.themeId}:${current.mode}`);
+      assert.equal(browser.storage.get('sf.theme'), current.themeId);
+      assert.equal(browser.storage.get('sf.mode'), current.mode);
+      assert.equal(browser.documentElement.dataset.theme, current.themeId);
+      assert.equal(browser.documentElement.dataset.mode, current.mode);
+      assert.equal(browser.documentElement.classList.contains('dark'), current.mode === 'dark');
+    }
+
+    // instrument:dark → nordlicht:light → nordlicht:dark → archiv:light.
+    assert.deepEqual(seen, [
+      'instrument:dark',
+      'nordlicht:light',
+      'nordlicht:dark',
+      'archiv:light',
+    ]);
+
+    // A reload starts from exactly these two keys, and the button then offers
+    // the next step of the cycle from there.
+    assert.deepEqual(restoredPair(), { themeId: 'archiv', mode: 'light' });
+    const messages = getMessages('de');
+    const html = renderToStaticMarkup(
+      createElement(AppearanceToggle, {
+        current: restoredPair(),
+        customTheme: null,
+        locale: 'de',
+        messages,
+        onChange: () => undefined,
+      }),
+    );
+    assert.ok(html.includes('Darstellung: Archiv hell — wechseln zu Archiv dunkel'));
+  });
+
+  it('stores the custom theme id when the cycle reaches it', () => {
+    browser.storage.set('sf.theme', 'kontrast');
+    browser.storage.set('sf.mode', 'dark');
+
+    const { themeId, mode } = nextAppearance(restoredPair(), custom);
+    assert.deepEqual({ themeId, mode }, { themeId: 'custom', mode: 'light' });
+
+    clickButton(restoredPair(), custom);
+    assert.deepEqual(restoredPair(), { themeId: 'custom', mode: 'light' });
+    // The custom theme travels with its own key, so a reload keeps it.
+    assert.ok(browser.storage.get('sf.theme.custom'));
+    assert.equal(storedTheme().label.de, 'Eigene Marke');
   });
 });
 
@@ -132,8 +239,29 @@ describe('appearance switch button', () => {
     assert.ok(html.includes('title="Darstellung: Nordlicht dunkel — wechseln zu Archiv hell"'));
     // No aria-pressed for a control with more than two states.
     assert.ok(!html.includes('aria-pressed'));
-    // The icon shows the target mode: light next, so a sun.
-    assert.ok(html.includes('lucide') || html.includes('<svg'));
+  });
+
+  it('draws the icon of the target mode: a sun for light, a moon for dark', () => {
+    const messages = getMessages('de');
+    const render = (current: AppearancePair) =>
+      renderToStaticMarkup(
+        createElement(AppearanceToggle, {
+          current,
+          customTheme: null,
+          locale: 'de',
+          messages,
+          onChange: () => undefined,
+        }),
+      );
+
+    // Sun: a circle plus rays. Moon: one crescent path, no circle.
+    const toLight = render({ themeId: 'instrument', mode: 'dark' });
+    assert.match(toLight, /<circle cx="12" cy="12" r="4"/);
+    assert.doesNotMatch(toLight, /M12 3a6 6 0 0 0 9 9/);
+
+    const toDark = render({ themeId: 'instrument', mode: 'light' });
+    assert.match(toDark, /M12 3a6 6 0 0 0 9 9/);
+    assert.doesNotMatch(toDark, /<circle/);
   });
 
   it('carries the same information in English', () => {

@@ -41,21 +41,19 @@ export function appearanceCycle(customTheme: ThemeDefinition | null): Appearance
   return cycle;
 }
 
+/** Position of `current` in the cycle, or `-1` when the pair is not part of it. */
 function indexOfPair(cycle: AppearancePair[], current: AppearancePair): number {
-  const exact = cycle.findIndex(
-    (step) => step.themeId === current.themeId && step.mode === current.mode,
-  );
-  if (exact >= 0) return exact;
-  // A theme that is not in the catalog any more still has a place: start from
-  // its light variant (or the next entry of another theme), never from a
-  // negative index that would wrap to the end.
-  return Math.max(
-    0,
-    cycle.findIndex((step) => step.themeId === current.themeId),
-  );
+  return cycle.findIndex((step) => step.themeId === current.themeId && step.mode === current.mode);
 }
 
-/** The appearance after one click, wrapping from the last entry to the first. */
+/**
+ * The appearance after one click, wrapping from the last entry to the first.
+ *
+ * A pair that is not in the cycle any more (a theme that left the catalog, or a
+ * custom theme this browser no longer has) has no position: `-1` advances into
+ * entry `0`, the start of the cycle — never into a later theme, and never past
+ * the end, because the wrap only applies after the `+ 1`.
+ */
 export function nextAppearance(
   current: AppearancePair,
   customTheme: ThemeDefinition | null,
@@ -68,6 +66,17 @@ export function nextAppearance(
   return cycle[(indexOfPair(cycle, current) + 1) % cycle.length];
 }
 
+/**
+ * The theme a pair stands for, or `undefined` when neither the catalog nor the
+ * browser's own theme knows its id. The caller then keeps its current theme.
+ */
+export function themeForAppearance(
+  pair: AppearancePair,
+  customTheme: ThemeDefinition | null,
+): ThemeDefinition | undefined {
+  return pair.themeId === CUSTOM_THEME_ID ? (customTheme ?? undefined) : findTheme(pair.themeId);
+}
+
 /** Human-readable name of one appearance, e.g. "Nordlicht dunkel". */
 export function appearanceName(
   pair: AppearancePair,
@@ -75,8 +84,7 @@ export function appearanceName(
   locale: Locale,
   messages: Messages,
 ): string {
-  const theme =
-    pair.themeId === CUSTOM_THEME_ID ? (customTheme ?? undefined) : findTheme(pair.themeId);
+  const theme = themeForAppearance(pair, customTheme);
   const mode =
     pair.mode === 'dark' ? messages.shell.appearanceDark : messages.shell.appearanceLight;
   const name = theme?.label[locale];

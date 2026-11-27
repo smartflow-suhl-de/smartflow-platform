@@ -18,14 +18,8 @@ import type {
   TenantListResponse,
   TenantStats,
 } from './lib/types';
-import {
-  BUILTIN_THEMES,
-  CUSTOM_THEME_ID,
-  defaultTheme,
-  findTheme,
-  type ThemeDefinition,
-} from './lib/themes';
-import type { AppearancePair } from './lib/appearance';
+import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
+import { themeForAppearance, type AppearancePair } from './lib/appearance';
 import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
 import { LlmProviderDetailPage, LlmProviderFormPage, LlmProvidersPage } from './pages/LlmProviders';
@@ -148,7 +142,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
   // page uses, so the persisted state stays the single source of truth.
   const handleAppearanceChange = useCallback(
     (next: AppearancePair) => {
-      const nextTheme = next.themeId === CUSTOM_THEME_ID ? customTheme : findTheme(next.themeId);
+      const nextTheme = themeForAppearance(next, customTheme);
       if (nextTheme) setTheme(nextTheme);
       setMode(next.mode);
     },
