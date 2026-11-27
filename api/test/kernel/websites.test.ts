@@ -679,3 +679,35 @@ test('public approval links are rate limited per sender', async (t) => {
     'rate_limited',
   );
 });
+
+test('public approval answers carry no-store, no-referrer and noindex', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const response = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/public/websites/ten_demo/approvals/${'A'.repeat(43)}`,
+    remoteAddress: '203.0.113.11',
+  });
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.equal(response.headers['referrer-policy'], 'no-referrer');
+  assert.equal(response.headers['x-robots-tag'], 'noindex, nofollow');
+  assert.equal(response.headers['x-content-type-options'], 'nosniff');
+});
+
+test('an unknown tenant and an unknown token answer the same 404', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const unknownTenant = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/public/websites/ten_missing/approvals/${'A'.repeat(43)}`,
+    remoteAddress: '203.0.113.12',
+  });
+  const unknownToken = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/public/websites/ten_demo/approvals/${'B'.repeat(43)}`,
+    remoteAddress: '203.0.113.13',
+  });
+  assert.equal(unknownTenant.statusCode, 404);
+  assert.equal(unknownToken.statusCode, 404);
+  assert.equal(unknownTenant.payload, unknownToken.payload);
+});

@@ -2,6 +2,7 @@ import { FieldError } from '../../shared/contract.ts';
 import { hashToken } from '../../kernel/crypto.ts';
 import { AppError, invalidState, notFound } from '../../kernel/errors.ts';
 import { newId, token } from '../../kernel/ids.ts';
+import type { FastifyReply } from 'fastify';
 import {
   type ApprovalRow,
   type ApprovalState,
@@ -15,23 +16,42 @@ export function registerApprovals(runtime: Runtime): void {
   // Public links are open to the internet; the token is the only credential.
   // One key per sender and token keeps a leaked link from being hammered.
   const PUBLIC_LIMIT_PER_MINUTE = 120;
+  const PUBLIC_MAX_KEYS = 2_000;
+  const PUBLIC_PRUNE_MS = 30_000;
   const publicWindows = new Map<string, number[]>();
+  let lastPrune = 0;
   function allowPublic(key: string): boolean {
     const now = runtime.now().getTime();
+    if (now - lastPrune >= PUBLIC_PRUNE_MS) {
+      lastPrune = now;
+      for (const [entry, stamps] of publicWindows) {
+        if (stamps.every((stamp) => now - stamp >= 60_000)) publicWindows.delete(entry);
+      }
+    }
     const recent = (publicWindows.get(key) ?? []).filter((stamp) => now - stamp < 60_000);
     if (recent.length >= PUBLIC_LIMIT_PER_MINUTE) {
       publicWindows.set(key, recent);
       return false;
     }
     recent.push(now);
+    // Insertion order doubles as LRU order, so the map never grows unbounded.
+    publicWindows.delete(key);
     publicWindows.set(key, recent);
-    if (publicWindows.size > 2_000) {
-      for (const [entry, stamps] of publicWindows) {
-        if (stamps.every((stamp) => now - stamp >= 60_000)) publicWindows.delete(entry);
-      }
+    while (publicWindows.size > PUBLIC_MAX_KEYS) {
+      const oldest = publicWindows.keys().next().value;
+      if (oldest === undefined) break;
+      publicWindows.delete(oldest);
     }
     return true;
   }
+  /** Public answers carry no cache and no index hint, like the discovery link. */
+  function publicHeaders(reply: FastifyReply): void {
+    reply.header('cache-control', 'no-store');
+    reply.header('referrer-policy', 'no-referrer');
+    reply.header('x-robots-tag', 'noindex, nofollow');
+    reply.header('x-content-type-options', 'nosniff');
+  }
+
   function publicGuard(tenantId: string, plaintext: string, ip: string): void {
     if (!allowPublic(`${tenantId}:${hashToken(plaintext).slice(0, 16)}:${ip}`)) {
       throw new AppError('rate_limited', 'Too many requests. Please wait a moment.', 429);
@@ -316,10 +336,16 @@ export function registerApprovals(runtime: Runtime): void {
    * tenant. Knowing a random tenant id grants nothing without the token.
    */
   function publicApproval(tenantId: string, plaintext: string) {
+    // An unknown tenant and an unknown token must be indistinguishable.
     if (!tenantId.startsWith('ten_') || plaintext.length < 16) {
       throw notFound('Approval not found.');
     }
-    const database = runtime.tenantDb(tenantId);
+    let database;
+    try {
+      database = runtime.tenantDb(tenantId);
+    } catch {
+      throw notFound('Approval not found.');
+    }
     const approval = database
       .prepare('select * from web_approvals where token_hash = ?')
       .get(hashToken(plaintext)) as ApprovalRow | undefined;
@@ -354,8 +380,10 @@ export function registerApprovals(runtime: Runtime): void {
     '/public/websites/:tenantId/approvals/:token',
     {
       schema: { summary: 'Public approval page data, without a session' },
+      logLevel: 'silent',
     },
-    async (request) => {
+    async (request, reply) => {
+      publicHeaders(reply);
       publicGuard(request.params.tenantId, request.params.token, request.ip);
       const found = publicApproval(request.params.tenantId, request.params.token);
       return {
@@ -380,6 +408,7 @@ export function registerApprovals(runtime: Runtime): void {
   }>(
     '/public/websites/:tenantId/approvals/:token/decision',
     {
+      logLevel: 'silent',
       schema: {
         summary: 'Client decision on a build: approve or request changes',
         body: {
@@ -393,7 +422,8 @@ export function registerApprovals(runtime: Runtime): void {
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
+      publicHeaders(reply);
       publicGuard(request.params.tenantId, request.params.token, request.ip);
       const found = publicApproval(request.params.tenantId, request.params.token);
       if (found.approval.state !== 'open') {

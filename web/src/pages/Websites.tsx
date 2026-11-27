@@ -195,7 +195,13 @@ export function WebsitesPage({ search, locale, messages }: WebsitesPageProps) {
           label={messages.websites.kpiAttention}
           value={summary ? summary.failed + summary.approvals_open : '—'}
           hint={messages.websites.kpiAttentionHint}
-          tone={summary && summary.failed > 0 ? 'bad' : 'neutral'}
+          tone={
+            summary && summary.failed > 0
+              ? 'bad'
+              : summary && summary.approvals_open > 0
+                ? 'warn'
+                : 'neutral'
+          }
         />
       </div>
 

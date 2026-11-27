@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { BrandLogo } from '../components/BrandLogo';
-import { Badge, Button, Card, CardHeader, Field, Input } from '../components/ui';
+import { Badge, Button, Card, CardHeader, Field } from '../components/ui';
 import { ApiError, api, isAbortError } from '../lib/api';
 import { formatApiError, formatDateTime, type Locale, type Messages } from '../lib/i18n';
+import { approvalStateTone } from '../lib/websites';
 import type { PublicApproval } from '../lib/types';
 
 export interface PublicApprovalPageProps {
@@ -130,7 +131,13 @@ export function PublicApprovalPage({ tenantId, token, locale, messages }: Public
                   approval.build ? formatDateTime(approval.build.created_at, locale) : undefined
                 }
                 actions={
-                  <Badge tone={decided === 'approved' ? 'good' : 'warn'}>
+                  <Badge
+                    tone={
+                      decided === 'approved' || decided === 'changes'
+                        ? approvalStateTone(decided)
+                        : approvalStateTone('open')
+                    }
+                  >
                     {decided === 'approved'
                       ? messages.approval.stateApproved
                       : decided === 'changes'
@@ -170,16 +177,19 @@ export function PublicApprovalPage({ tenantId, token, locale, messages }: Public
                     error={fieldError ?? undefined}
                     htmlFor="sf-approval-comment"
                   >
-                    <Input
+                    <textarea
                       id="sf-approval-comment"
+                      className="sf-input"
+                      rows={4}
                       value={comment}
                       onChange={(event) => setComment(event.target.value)}
                       placeholder={messages.approval.commentPlaceholder}
-                      invalid={Boolean(fieldError)}
+                      aria-invalid={fieldError ? true : undefined}
                       maxLength={2_000}
                       disabled={busy !== null}
                     />
                   </Field>
+                  <p className="sf-card-meta">{comment.length} / 2000</p>
                   <div className="sf-page-actions" style={{ marginTop: 'var(--spacing-lg)' }}>
                     <Button
                       variant="primary"

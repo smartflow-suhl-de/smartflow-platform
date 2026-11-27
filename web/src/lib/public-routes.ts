@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { createElement } from 'react';
 import { DiscoveryPublicPage } from '../pages/DiscoveryPublic';
+import { PublicApprovalPage } from '../pages/PublicApproval';
 import { getMessages, storedLocale } from './i18n';
 
 /**
@@ -37,6 +38,14 @@ export const OPAQUE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 /** All public routes, kept apart from the page components. */
 export const publicPatterns: readonly PublicPattern[] = [
   { pattern: '/d/:token', params: { token: /^[A-Za-z0-9_-]{20,64}$/ } },
+  {
+    // Approval link: the tenant id is opaque, the token is base64url from 32 bytes.
+    pattern: '/freigabe/:tenantId/:token',
+    params: {
+      tenantId: /^ten_[A-Za-z0-9]{8,40}$/,
+      token: /^[A-Za-z0-9_-]{20,64}$/,
+    },
+  },
 ];
 
 /**
@@ -131,3 +140,25 @@ export function registerDiscoveryPublicRoute(): void {
 }
 
 registerDiscoveryPublicRoute();
+
+// The approval link is opened by the client, who has no account. Registering it
+// here keeps it off the session probe and gives it the shared public shell.
+export function registerWebsiteApprovalRoute(): void {
+  if (publicRoutes.some((route) => route.pattern === '/freigabe/:tenantId/:token')) return;
+  publicRoutes.push({
+    pattern: '/freigabe/:tenantId/:token',
+    title: () => getMessages(storedLocale()).approval.kicker,
+    render: ({ tenantId, token }) => {
+      const locale = storedLocale();
+      return createElement(PublicApprovalPage, {
+        key: `${tenantId}:${token}`,
+        tenantId,
+        token,
+        locale,
+        messages: getMessages(locale),
+      });
+    },
+  });
+}
+
+registerWebsiteApprovalRoute();

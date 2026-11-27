@@ -18,7 +18,6 @@ import { LoginPage } from './pages/Login';
 import { NotFoundPage } from './pages/NotFound';
 import { OverviewPage } from './pages/Overview';
 import { SettingsPage } from './pages/Settings';
-import { PublicApprovalPage } from './pages/PublicApproval';
 import { TenantsPage } from './pages/Tenants';
 import {
   applyTheme,
@@ -263,17 +262,8 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
       .finally(() => setLoggingOut(false));
   }, [locale]);
 
-  // The approval link is opened by the client, who has no account. It must not
-  // depend on a session, so it is answered before every signed-in branch.
-  const approvalMatch = /^\/freigabe\/([^/]+)\/([^/]+)$/.exec(pathname);
-  if (approvalMatch) {
-    const tenantId = approvalMatch[1] as string;
-    const token = approvalMatch[2] as string;
-    return (
-      <PublicApprovalPage tenantId={tenantId} token={token} locale={locale} messages={messages} />
-    );
-  }
-
+  // The approval link is opened by the client, who has no account. It is a
+  // public route (public-routes.ts), so it never reaches this session shell.
   if (session.kind === 'loading') {
     return (
       <div className="sf-center-load" role="status">

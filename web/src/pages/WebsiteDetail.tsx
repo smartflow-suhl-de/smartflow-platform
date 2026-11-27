@@ -195,8 +195,13 @@ export function WebsiteDetailPage({ siteId, role, locale, messages }: WebsiteDet
 
   if (loading) {
     return (
-      <div className="sf-card-body">
-        <span className="numeric">{messages.common.loadingPlatform}</span>
+      <div>
+        <PageHeader title={messages.websites.detailTitleFallback} />
+        <div className="sf-card-body">
+          <span className="numeric" role="status">
+            {messages.common.loadingPlatform}
+          </span>
+        </div>
       </div>
     );
   }
