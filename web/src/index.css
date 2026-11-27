@@ -2156,6 +2156,7 @@ input:-webkit-autofill:active {
 .sf-agent-question p {
   margin: 0;
   font-size: 15px;
+  white-space: pre-wrap;
 }
 
 .sf-agent-answer {

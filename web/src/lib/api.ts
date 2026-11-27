@@ -1401,12 +1401,13 @@ export const api = {
    * The model may take several rounds; the route is bounded by the server's
    * own budget, so the client waits longer than the default 15 s.
    */
-  async agentAsk(question: string): Promise<AgentAskResponse> {
+  async agentAsk(question: string, signal?: AbortSignal): Promise<AgentAskResponse> {
     return parseAgentAsk(
       await requestJson('/agent/ask', {
         method: 'POST',
         body: { question },
         timeoutMs: AGENT_TIMEOUT_MS,
+        signal,
       }),
     );
   },

@@ -92,6 +92,7 @@ export function AgentPage({ locale, messages }: AgentPageProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const lastAnswerRef = useRef<HTMLElement | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const askController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -117,6 +118,8 @@ export function AgentPage({ locale, messages }: AgentPageProps) {
   useEffect(
     () => () => {
       if (copyTimer.current !== null) clearTimeout(copyTimer.current);
+      // Leaving the page cancels the 60 s request instead of leaking it.
+      askController.current?.abort();
     },
     [],
   );
@@ -125,11 +128,14 @@ export function AgentPage({ locale, messages }: AgentPageProps) {
     async (raw: string) => {
       const text = raw.trim();
       if (text.length === 0 || asking) return;
+      const controller = new AbortController();
+      askController.current?.abort();
+      askController.current = controller;
       setAsking(true);
       setError(null);
       setLastAttempt(text);
       try {
-        const response = await api.agentAsk(text);
+        const response = await api.agentAsk(text, controller.signal);
         setEntries((previous) => [
           ...previous,
           { run: response.run, sources: response.sources, truncated: response.truncated },
@@ -334,6 +340,12 @@ export function AgentPage({ locale, messages }: AgentPageProps) {
         </div>
       ) : (
         <div className="sf-agent-thread sf-agent-column">
+          <div className="sf-agent-examples-head">
+            <span className="label">{messages.agent.history}</span>
+            <Button variant="ghost" size="sm" onClick={() => setEntries([])}>
+              {messages.agent.clearHistory}
+            </Button>
+          </div>
           {entries.map((entry, index) => {
             const isLast = index === entries.length - 1;
             const totalMs = entry.run.steps.reduce((sum, step) => sum + step.durationMs, 0);
