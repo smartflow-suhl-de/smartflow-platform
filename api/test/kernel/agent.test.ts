@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { LlmRequest } from '../../src/shared/contract.ts';
+import { INTERNAL_CALLER_HEADER, INTERNAL_TOKEN_HEADER } from '../../src/kernel/app.ts';
+import { toWireRequest } from '../../src/plugins/agent/provider.ts';
 import { createTestApp, type TestApp } from './helpers.ts';
 
 type CompleteHandler = (request: LlmRequest, call: number) => unknown | Promise<unknown>;
@@ -16,7 +18,56 @@ interface StubOptions {
 }
 
 interface StubApp extends TestApp {
+  stubComplete: { next: ((call: number) => unknown) | null; base: number };
   providerCalls: LlmRequest[];
+  wireCalls: Record<string, unknown>[];
+}
+
+interface WireMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string | null;
+  tool_call_id?: string;
+  tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+}
+interface WireRequest {
+  purpose?: string;
+  messages: WireMessage[];
+  tools?: { type: string; function: { name: string; description: string; parameters: object } }[];
+  maxTokens?: number;
+}
+
+/** Back to the neutral form so the existing assertions keep reading the same fields. */
+function fromWire(wire: WireRequest): LlmRequest {
+  return {
+    messages: wire.messages.map((m) =>
+      m.role === 'tool'
+        ? { role: 'tool', content: m.content ?? '', toolCallId: m.tool_call_id ?? '' }
+        : m.role === 'assistant'
+          ? {
+              role: 'assistant',
+              content: m.content ?? '',
+              ...(m.tool_calls
+                ? {
+                    toolCalls: m.tool_calls.map((c) => ({
+                      id: c.id,
+                      name: c.function.name,
+                      arguments: c.function.arguments,
+                    })),
+                  }
+                : {}),
+            }
+          : { role: m.role, content: m.content ?? '' },
+    ),
+    ...(wire.tools
+      ? {
+          tools: wire.tools.map((t) => ({
+            name: t.function.name,
+            description: t.function.description,
+            parameters: t.function.parameters as Record<string, unknown>,
+          })),
+        }
+      : {}),
+  };
 }
 
 /**
@@ -37,28 +88,52 @@ async function setup(options: StubOptions = {}): Promise<StubApp> {
   );
 
   const providerCalls: LlmRequest[] = [];
+  const wireCalls: Record<string, unknown>[] = [];
   const status = options.status ?? { configured: true, model: 'test-model' };
-  const complete: CompleteHandler =
-    options.complete ??
-    (() => ({ content: 'Antwort aus der Quelle.', toolCalls: [], model: 'test-model' }));
+  const stubComplete: { next: ((call: number) => unknown) | null; base: number } = {
+    next: null,
+    base: 0,
+  };
+  const complete: CompleteHandler = (request, call) =>
+    stubComplete.next
+      ? stubComplete.next(call - stubComplete.base)
+      : (
+          options.complete ??
+          (() => ({ content: 'Antwort aus der Quelle.', toolCalls: [], model: 'test-model' }))
+        )(request, call);
 
+  // Same shapes as the real `llm-providers` internal routes.
   ctx.app.get(
-    '/api/v1/test-llm/status',
+    '/api/v1/test-llm/internal/status',
     { preHandler: ctx.app.requireInternal },
     async (_request, reply) => {
       if (options.statusCode && options.statusCode !== 200) {
         reply.code(options.statusCode);
         return { error: { code: 'provider_down', message: 'down' } };
       }
-      return status;
+      return {
+        configured: status.configured,
+        providers: 1,
+        purposes: [
+          {
+            purpose: 'agent',
+            configured: status.configured,
+            model: status.configured
+              ? { modelKey: status.model, label: 'L', providerId: 'p', providerName: 'P' }
+              : null,
+          },
+        ],
+      };
     },
   );
 
   ctx.app.post(
-    '/api/v1/test-llm/complete',
+    '/api/v1/test-llm/internal/complete',
     { preHandler: ctx.app.requireInternal },
     async (request, reply) => {
-      providerCalls.push(request.body as LlmRequest);
+      const wire = request.body as WireRequest;
+      wireCalls.push(wire as unknown as Record<string, unknown>);
+      providerCalls.push(fromWire(wire));
       if (options.delayMs) {
         await new Promise((resolve) => setTimeout(resolve, options.delayMs));
       }
@@ -66,11 +141,24 @@ async function setup(options: StubOptions = {}): Promise<StubApp> {
         reply.code(options.failWithStatus);
         return { error: { code: 'provider_failed', message: 'no' } };
       }
-      return await complete(request.body as LlmRequest, providerCalls.length);
+      const out = (await complete(fromWire(wire), providerCalls.length)) as {
+        content: string;
+        toolCalls: unknown[];
+        model: string;
+      };
+      return {
+        id: 'x',
+        model: { modelKey: out.model, label: 'L', providerId: 'p', providerName: 'P' },
+        message: { role: 'assistant', content: out.content, toolCalls: out.toolCalls },
+        usage: { inputTokens: null, outputTokens: null, totalTokens: null },
+        finishReason: 'stop',
+        latencyMs: 1,
+        costMicros: 0,
+      };
     },
   );
 
-  return { ...ctx, providerCalls };
+  return { ...ctx, providerCalls, wireCalls, stubComplete };
 }
 
 function ask(ctx: StubApp, cookie: string, question: string) {
@@ -471,4 +559,192 @@ test('the question text never appears in the log', async (t) => {
 
   const joined = lines.join('\n');
   assert.ok(!joined.includes(marker), 'the question must not be logged');
+});
+
+test('the provider call uses the llm-providers internal wire format', async (t) => {
+  const ctx = await setup({
+    complete: (_request, call) =>
+      call === 1
+        ? {
+            content: '',
+            toolCalls: [{ id: 'call_1', name: 'tenants__summary', arguments: '{}' }],
+            model: 'test-model',
+          }
+        : { content: 'Fertig.', toolCalls: [], model: 'test-model' },
+  });
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  assert.equal((await ask(ctx, cookie, 'Wie viele Mandanten?')).statusCode, 200);
+
+  const first = ctx.wireCalls[0] as unknown as WireRequest;
+  assert.equal(first.purpose, 'agent');
+  assert.equal(first.maxTokens, 800);
+  assert.ok(first.tools?.every((tool) => tool.type === 'function' && tool.function.name));
+  assert.equal(Object.hasOwn(first, 'maxOutputTokens'), false);
+
+  const second = ctx.wireCalls[1] as unknown as WireRequest;
+  const assistant = second.messages.find((m) => m.role === 'assistant');
+  assert.equal(assistant?.tool_calls?.[0]?.function.name, 'tenants__summary');
+  assert.equal(assistant?.tool_calls?.[0]?.id, 'call_1');
+  const tool = second.messages.find((m) => m.role === 'tool');
+  assert.equal(tool?.tool_call_id, 'call_1');
+});
+
+test('only the agent purpose counts as configured', async (t) => {
+  const other = await createTestApp({ SF_AGENT_PROVIDER_BASE: '/api/v1/test-llm-other' });
+  t.after(() => other.close());
+  other.app.get(
+    '/api/v1/test-llm-other/internal/status',
+    { preHandler: other.app.requireInternal },
+    async () => ({
+      configured: true,
+      providers: 1,
+      purposes: [{ purpose: 'discovery.interview', configured: true, model: { modelKey: 'm' } }],
+    }),
+  );
+  const cookie = await other.signIn();
+  const status = await other.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/status',
+    headers: { cookie },
+  });
+  const body = status.json() as { configured: boolean; reachable: boolean };
+  assert.equal(body.reachable, true);
+  assert.equal(body.configured, false);
+});
+
+test('plugins see sources without run, and cannot register a writable one', async (t) => {
+  const ctx = await setup();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const status = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/status',
+    headers: { cookie },
+  });
+  const sources = (status.json() as { sources: Record<string, unknown>[] }).sources;
+  assert.ok(sources.every((source) => !('run' in source)));
+});
+
+test('the runs list loads steps for the whole page', async (t) => {
+  const ctx = await setup({
+    complete: (_request, call) =>
+      call % 2 === 1
+        ? {
+            content: '',
+            toolCalls: [{ id: `c${call}`, name: 'platform__plugins', arguments: '{}' }],
+            model: 'test-model',
+          }
+        : { content: 'ok', toolCalls: [], model: 'test-model' },
+  });
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  for (let i = 0; i < 3; i += 1) await ask(ctx, cookie, `Frage ${i}`);
+  const list = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/agent/runs',
+    headers: { cookie },
+  });
+  const items = (list.json() as { items: { run?: unknown; steps: unknown[] }[] }).items;
+  assert.equal(items.length, 3);
+  assert.ok(items.every((item) => item.steps.length === 1));
+});
+
+/** Runs one source through the agent loop and returns what the model saw. */
+async function viaAgent(ctx: StubApp, source: string, args: object): Promise<unknown> {
+  const cookie = await ctx.signIn();
+  const before = ctx.providerCalls.length;
+  const stub = ctx.stubComplete;
+  stub.next = (call) =>
+    call === 1
+      ? {
+          content: '',
+          toolCalls: [
+            { id: 'c1', name: source.replace('.', '__'), arguments: JSON.stringify(args) },
+          ],
+          model: 'test-model',
+        }
+      : { content: 'ok', toolCalls: [], model: 'test-model' };
+  stub.base = before;
+  assert.equal((await ask(ctx, cookie, 'x')).statusCode, 200);
+  return toolMessage(ctx.providerCalls[before + 1] as LlmRequest);
+}
+
+test('tenants.list treats % and _ in the search text as literals', async (t) => {
+  const ctx = await setup();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  for (const name of ['Alpha GmbH', 'A_pha AG']) {
+    const r = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name },
+    });
+    assert.equal(r.statusCode, 201);
+  }
+  const names = async (q: string) =>
+    ((await viaAgent(ctx, 'tenants.list', { q })) as { items: { name: string }[] }).items.map(
+      (item) => item.name,
+    );
+  assert.deepEqual(await names('a_pha'), ['A_pha AG']);
+  assert.deepEqual(await names('%'), []);
+});
+
+test('platform.events counts only the last 30 days', async (t) => {
+  const ctx = await setup();
+  t.after(() => ctx.close());
+  const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+  ctx.db
+    .prepare('insert into events (id, name, payload, created_at) values (?, ?, ?, ?)')
+    .run('evt_old', 'ancient.event', '{}', old);
+  const result = (await viaAgent(ctx, 'platform.events', {})) as {
+    countsByEvent: { name: string }[];
+  };
+  assert.equal(
+    result.countsByEvent.some((row) => row.name === 'ancient.event'),
+    false,
+  );
+});
+
+test('the wire request passes the real llm-providers schema', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const headers = {
+    [INTERNAL_TOKEN_HEADER]: ctx.internalToken,
+    [INTERNAL_CALLER_HEADER]: 'agent',
+  };
+  const payload = toWireRequest(
+    {
+      messages: [
+        { role: 'system', content: 's' },
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'c1', name: 'tenants__summary', arguments: '{}' }],
+        },
+        { role: 'tool', content: '{}', toolCallId: 'c1' },
+      ],
+      tools: [{ name: 'tenants__summary', description: 'd', parameters: { type: 'object' } }],
+      maxOutputTokens: 800,
+    },
+    30_000,
+  );
+  const response = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/llm/internal/complete',
+    headers,
+    payload,
+  });
+  // Schema accepted: the only thing missing in a fresh install is a model for `agent`.
+  assert.equal(response.statusCode, 409, response.body);
+  assert.equal((response.json() as { error: { code: string } }).error.code, 'llm_purpose_unmapped');
+
+  const status = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/llm/internal/status',
+    headers,
+  });
+  assert.equal(status.statusCode, 200);
 });

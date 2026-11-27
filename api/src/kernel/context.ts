@@ -1,5 +1,10 @@
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
-import type { AgentDataSource, PluginManifest, TenantStatus } from '../shared/contract.ts';
+import type {
+  AgentDataSource,
+  AgentSourceView,
+  PluginManifest,
+  TenantStatus,
+} from '../shared/contract.ts';
 import type { EventName, PlatformEvents } from '../shared/events.ts';
 import type { Config } from './config.ts';
 import type { Db, Migration } from './db.ts';
@@ -50,8 +55,17 @@ export interface PluginContext {
    * source. The list is read at request time, not when the agent registers.
    */
   provideAgentSource(source: AgentDataSource): void;
-  /** Every registered source, in registration order. */
-  agentSources(): AgentDataSource[];
+  /**
+   * Every registered source as an info view, in registration order. It has no
+   * `run`: a plugin cannot call another plugin's source around the checks.
+   */
+  agentSources(): AgentSourceView[];
+  /**
+   * Runs one source. The kernel validates `rawArgs` against the source's
+   * schema first and throws `ArgumentError` on a mismatch; an unknown id
+   * throws `Error`.
+   */
+  runAgentSource(sourceId: string, rawArgs: unknown): Promise<unknown>;
   /** Plugin-scoped migrations against the platform database. */
   migrate(migrations: Migration[]): void;
   /** Plugin-scoped migrations applied to every tenant database when it opens. */

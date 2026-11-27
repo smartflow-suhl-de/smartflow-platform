@@ -8,7 +8,7 @@ import type { PluginContext } from '../../kernel/context.ts';
 import { AppError } from '../../kernel/errors.ts';
 import { decodeCursor, encodeCursor } from '../../kernel/cursor.ts';
 import { newId } from '../../kernel/ids.ts';
-import { ArgumentError, validateArguments } from './args.ts';
+import { ArgumentError, validateArguments } from '../../kernel/agent-args.ts';
 import type { AgentConfig } from '../../kernel/config.ts';
 import { RateLimiter } from './limits.ts';
 import { SYSTEM_PROMPT } from './prompt.ts';
@@ -209,6 +209,7 @@ export function register(ctx: PluginContext): void {
   // answerable from data rather than from prompt text the model could invent.
   ctx.provideAgentSource({
     id: 'agent.sources',
+    readOnly: true,
     label: 'Datenquellen',
     description: 'Die freigegebenen Datenquellen des Agenten mit Zweck und Argumenten.',
     args: { type: 'object', additionalProperties: false, properties: {} },
@@ -292,6 +293,20 @@ export function register(ctx: PluginContext): void {
          where run_id = ? order by seq`,
       )
       .all(runId) as StepRow[];
+
+  /** One query for a whole page instead of one per run. */
+  const stepsForRuns = (runIds: string[]): Map<string, StepRow[]> => {
+    const byRun = new Map<string, StepRow[]>(runIds.map((id) => [id, []]));
+    if (runIds.length === 0) return byRun;
+    const rows = db
+      .prepare(
+        `select run_id, seq, source, status, duration_ms, error_code, truncated from agent_steps
+         where run_id in (${runIds.map(() => '?').join(', ')}) order by run_id, seq`,
+      )
+      .all(...runIds) as (StepRow & { run_id: string })[];
+    for (const { run_id: runId, ...step } of rows) byRun.get(runId)?.push(step);
+    return byRun;
+  };
 
   app.get(
     '/agent/status',
@@ -488,7 +503,7 @@ export function register(ctx: PluginContext): void {
             const callStarted = ctx.now().getTime();
             try {
               const result = await withTimeout(
-                source.run(args),
+                ctx.runAgentSource(sourceId, args),
                 SOURCE_TIMEOUT_MS,
                 'agent_source_timeout',
                 'The data source did not answer in time.',
@@ -650,7 +665,9 @@ export function register(ctx: PluginContext): void {
       const last = page.at(-1);
 
       return {
-        items: page.map((row) => runToJson(row, stepsFor(row.id))),
+        items: ((steps) => page.map((row) => runToJson(row, steps.get(row.id) ?? [])))(
+          stepsForRuns(page.map((row) => row.id)),
+        ),
         total,
         nextCursor:
           hasMore && last ? encodeCursor({ created_at: last.created_at, id: last.id }) : null,

@@ -124,10 +124,12 @@ function loadAgent(env: NodeJS.ProcessEnv): AgentConfig {
   };
 
   const rawBase = (env.SF_AGENT_PROVIDER_BASE ?? '').trim();
-  const providerBase = rawBase === '' ? '/api/v1/llm' : rawBase.replace(/\/+$/, '');
-  if (!providerBase.startsWith('/api/')) {
+  const providerBase = rawBase === '' ? '/api/v1/llm' : rawBase;
+  // Strict on purpose: `callInternal` sends the internal token to this path, so
+  // no `..`, query, fragment, double slash or trailing slash may get through.
+  if (!/^\/api\/v1\/[a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)*$/.test(providerBase)) {
     throw new Error(
-      `SF_AGENT_PROVIDER_BASE must be an API path below /api/ (got "${providerBase}").`,
+      `SF_AGENT_PROVIDER_BASE must look like /api/v1/<plugin> using lowercase letters, digits and "-" (got "${providerBase}").`,
     );
   }
 

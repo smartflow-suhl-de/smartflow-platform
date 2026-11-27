@@ -23,6 +23,7 @@ import {
 import { PLATFORM_VERSION } from '../shared/version.ts';
 import { AuthService, type SessionUser } from './auth.ts';
 import type { Config } from './config.ts';
+import { validateArguments } from './agent-args.ts';
 import type { PluginContext, PluginModule, TenantDirectory } from './context.ts';
 import { migrate, openDatabase, tenantDatabaseFile, type Db, type Migration } from './db.ts';
 import { AppError, notFound, unauthorized } from './errors.ts';
@@ -265,6 +266,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
   const kernelAgentSources: AgentDataSource[] = [
     {
       id: 'platform.status',
+      readOnly: true,
       label: 'Plattform',
       description: 'Version, Umgebung und Port des laufenden Prozesses.',
       args: { type: 'object', additionalProperties: false, properties: {} },
@@ -277,6 +279,7 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     },
     {
       id: 'platform.plugins',
+      readOnly: true,
       label: 'Plugins',
       description: 'Die installierten Plugins mit Version, Scope und Abhängigkeiten.',
       args: { type: 'object', additionalProperties: false, properties: {} },
@@ -293,8 +296,10 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
     },
     {
       id: 'platform.events',
+      readOnly: true,
       label: 'Ereignisprotokoll',
-      description: 'Die zuletzt protokollierten Ereignisse, ohne Nutzdaten.',
+      description:
+        'Die zuletzt protokollierten Ereignisse und Zähler der letzten 30 Tage, ohne Nutzdaten.',
       args: {
         type: 'object',
         additionalProperties: false,
@@ -309,9 +314,15 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
         const rows = db
           .prepare('select name, created_at from events order by created_at desc, id desc limit ?')
           .all(limit) as { name: string; created_at: string }[];
+        // Bounded: last 30 days, at most 50 names, so the answer cannot grow
+        // with the age of the installation.
+        const since = new Date(now().getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
         const counts = db
-          .prepare('select name, count(*) as count from events group by name order by count desc')
-          .all() as { name: string; count: number }[];
+          .prepare(
+            `select name, count(*) as count from events where created_at >= ?
+             group by name order by count desc, name limit 50`,
+          )
+          .all(since) as { name: string; count: number }[];
         return {
           recent: rows.map((row) => ({ name: row.name, at: row.created_at })),
           countsByEvent: counts,
@@ -327,6 +338,9 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
       throw new Error(
         `agent source "${sourceId}" needs a dotted lowercase id, e.g. "tickets.summary"`,
       );
+    }
+    if (source.readOnly !== true) {
+      throw new Error(`agent source "${sourceId}" must declare readOnly: true`);
     }
     if (agentSourceRegistry.has(source.id)) {
       throw new Error(`agent source "${source.id}" is already registered`);
@@ -395,7 +409,18 @@ export async function buildApp(options: BuildOptions): Promise<BuiltApp> {
             registerAgentSource(source);
           },
           agentSources() {
-            return [...agentSourceRegistry.values()];
+            return [...agentSourceRegistry.values()].map((source) => ({
+              id: source.id,
+              label: source.label,
+              description: source.description,
+              args: source.args,
+              ...(source.href ? { href: source.href } : {}),
+            }));
+          },
+          async runAgentSource(sourceId, rawArgs) {
+            const source = agentSourceRegistry.get(sourceId);
+            if (!source) throw new Error(`agent source "${sourceId}" is not registered`);
+            return await source.run(validateArguments(source.id, source.args, rawArgs));
           },
           migrate(migrations) {
             migrate(db, migrations, `plugin:${manifest.id}`);

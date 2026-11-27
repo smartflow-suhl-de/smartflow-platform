@@ -170,3 +170,24 @@ test('SF_TRUST_PROXY becomes a hop count, not a blanket trust', () => {
     assert.equal(loadConfig({ SF_TRUST_PROXY: v }).trustProxy, 0, v);
   }
 });
+
+test('SF_AGENT_PROVIDER_BASE accepts only /api/v1/<plugin> paths', () => {
+  assert.equal(loadConfig({}).agent.providerBase, '/api/v1/llm');
+  assert.equal(
+    loadConfig({ SF_AGENT_PROVIDER_BASE: '/api/v1/other-llm' }).agent.providerBase,
+    '/api/v1/other-llm',
+  );
+  for (const bad of [
+    '/api/v1/../x',
+    '/api/x?y=1',
+    '/api//v1',
+    '/api/v1/llm/',
+    '/api/v1/llm#a',
+    '/api/v1/LLM',
+    '/apix',
+    'http://evil.example/api/v1/llm',
+    '/api/v1',
+  ]) {
+    assert.throws(() => loadConfig({ SF_AGENT_PROVIDER_BASE: bad }), /SF_AGENT_PROVIDER_BASE/, bad);
+  }
+});

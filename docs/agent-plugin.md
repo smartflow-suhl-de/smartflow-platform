@@ -6,13 +6,18 @@ Tabellen. Erreichbar ist er unter `/agent`, nur für die Rolle `operator`.
 
 ## Aufbau
 
-| Teil              | Ort                                                                     |
-| ----------------- | ----------------------------------------------------------------------- |
-| Quellen-Registry  | `api/src/kernel/context.ts` (`provideAgentSource`, `agentSources`)      |
-| Kernel-Quellen    | `api/src/kernel/app.ts` (`platform.status`, `platform.events`)          |
-| Mandanten-Quellen | `api/src/plugins/tenants/server.ts` (`tenants.summary`, `tenants.list`) |
-| Agent             | `api/src/plugins/agent/`                                                |
-| Seite             | `web/src/pages/Agent.tsx`                                               |
+| Teil              | Ort                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| Quellen-Registry  | `api/src/kernel/context.ts` (`provideAgentSource`, `agentSources`)                 |
+| Kernel-Quellen    | `api/src/kernel/app.ts` (`platform.status`, `platform.plugins`, `platform.events`) |
+| Mandanten-Quellen | `api/src/plugins/tenants/server.ts` (`tenants.summary`, `tenants.list`)            |
+| Agent             | `api/src/plugins/agent/`                                                           |
+| Seite             | `web/src/pages/Agent.tsx`                                                          |
+
+Plugins sehen Quellen nur als Info-Sicht ohne `run` (`ctx.agentSources()`); ausgeführt
+wird eine Quelle ausschließlich über `ctx.runAgentSource(id, args)`, und der Kernel prüft
+die Argumente vorher gegen das Schema. Jede Quelle muss `readOnly: true` angeben, sonst
+bricht die Registrierung ab. Das ist ein Vertrag: `run` liest nur.
 
 Der Agent ruft Quellen **im Prozess** auf. Ein Plugin liest weiterhin nur seine eigenen
 Tabellen; der Agent bekommt nur das Ergebnis von `run`.
@@ -22,6 +27,7 @@ Tabellen; der Agent bekommt nur das Ergebnis von `run`.
 ```ts
 ctx.provideAgentSource({
   id: 'tickets.summary', // punktiert, eindeutig
+  readOnly: true, // Vertrag: nur lesen
   label: 'Tickets',
   description: 'Offene und geschlossene Tickets, optional je Mandant.',
   args: {
@@ -49,51 +55,79 @@ Regeln:
 
 ## Provider-Vertrag
 
-Das Modell kommt aus einem eigenen Plugin. Der Agent spricht es über einen internen
-Aufruf an (`callInternal`, Header `x-internal-token`); der Browser erreicht diese Routen
-nicht. Basis ist `SF_AGENT_PROVIDER_BASE` (Default `/api/v1/llm`).
+Das Modell kommt aus dem Plugin `llm-providers`. Der Agent spricht dessen interne Routen
+über `callInternal` an (Header `x-internal-token`, Aufrufer `agent`); der Browser erreicht
+sie nicht. Basis ist `SF_AGENT_PROVIDER_BASE` (Default `/api/v1/llm`, erlaubt nur
+`/api/v1/<plugin>` mit Kleinbuchstaben, Ziffern und `-`).
 
-### `GET {base}/status`
+Voraussetzung im Provider: Zweck **`agent`** ist einem Modell mit Tool-Calling zugeordnet,
+und der Provider erlaubt den Aufrufer `agent` (`allowed_plugins`, sonst
+`llm_caller_not_allowed`). Der Agent gilt nur dann als konfiguriert, wenn genau dieser
+Zweck ein Modell hat — ein anderer konfigurierter Zweck genügt nicht.
 
-```json
-{ "configured": true, "model": "…" }
-```
+### `GET {base}/internal/status`
 
-`configured: false` heißt: kein Modell hinterlegt. Die Seite zeigt das statt einer Antwort.
-Ein nicht erreichbarer Provider gilt ebenfalls als nicht konfiguriert.
-
-### `POST {base}/complete`
+Der Agent liest den Eintrag mit `purpose: "agent"` aus `purposes[]`:
 
 ```json
 {
+  "configured": true,
+  "providers": 1,
+  "purposes": [{ "purpose": "agent", "configured": true, "model": { "modelKey": "…" } }]
+}
+```
+
+Ohne Modell oder bei nicht erreichbarem Provider zeigt die Seite `configured: false`.
+
+### `POST {base}/internal/complete`
+
+Der Agent sendet die Form der Provider-Route (Adapter: `plugins/agent/provider.ts`):
+
+```json
+{
+  "purpose": "agent",
   "messages": [
     { "role": "system", "content": "…" },
     { "role": "user", "content": "…" },
     {
       "role": "assistant",
       "content": "",
-      "toolCalls": [{ "id": "c1", "name": "tenants__summary", "arguments": "{}" }]
+      "tool_calls": [
+        {
+          "id": "c1",
+          "type": "function",
+          "function": { "name": "tenants__summary", "arguments": "{}" }
+        }
+      ]
     },
-    { "role": "tool", "content": "{\"total\":3}", "toolCallId": "c1" }
+    { "role": "tool", "content": "{\"total\":3}", "tool_call_id": "c1" }
   ],
-  "tools": [{ "name": "tenants__summary", "description": "…", "parameters": { "type": "object" } }],
-  "maxOutputTokens": 800
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "tenants__summary",
+        "description": "…",
+        "parameters": { "type": "object" }
+      }
+    }
+  ],
+  "maxTokens": 800,
+  "timeoutMs": 30000
 }
 ```
 
-Antwort:
+Antwort (gelesen werden `message` und `model.modelKey`):
 
 ```json
 {
-  "content": "Es sind drei Mandanten aktiv.",
-  "toolCalls": [],
-  "model": "…",
-  "usage": { "inputTokens": 0, "outputTokens": 0 }
+  "message": { "role": "assistant", "content": "…", "toolCalls": [] },
+  "model": { "modelKey": "…" }
 }
 ```
 
-`usage` ist optional. Werkzeugnamen sind Quell-IDs mit `__` statt Sonderzeichen
-(`tenants.summary` → `tenants__summary`). Der Provider muss Tool-Calling unterstützen.
+Werkzeugnamen sind Quell-IDs mit `__` statt Sonderzeichen (`tenants.summary` →
+`tenants__summary`).
 
 Fehler: gemeinsame Form `{ "error": { "code", "message" } }` mit 4xx/5xx. Der Agent macht
 daraus `502 agent_provider_failed`; ein Zeitlimit `504 agent_provider_timeout`.
@@ -116,7 +150,9 @@ Kein Schlüssel liegt im Agenten: Endpunkt, Modell und Credential gehören dem P
 
 Plattform-DB, plugin-eigene Tabellen:
 
-- `agent_runs`: Frage, Antwort, Status, Fehlercode, Modell, Dauer, Zeitpunkte.
+- `agent_runs`: Frage, Antwort, Status, Fehlercode, Modell, Dauer, Zeitpunkte. Fragen und
+  Antworten sind Klartext und können Personenbezug enthalten; sie werden nach
+  `SF_AGENT_RETENTION_DAYS` gelöscht.
 - `agent_steps`: je Quellenaufruf Nummer, Quelle, Argumente, Status, Dauer, Größe,
   Kürzung, Fehlercode.
 

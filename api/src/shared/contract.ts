@@ -97,6 +97,13 @@ export interface NavResponse {
 export interface AgentDataSource {
   /** Dotted, unique across plugins: `tenants.summary`. */
   id: string;
+  /**
+   * Contract, not a hint: `run` must only read. It must not write, send,
+   * start jobs or return secrets, sessions or personal data beyond what the
+   * operator sees on `href`. The kernel only calls it through
+   * `runAgentSource`, after validating the arguments against `args`.
+   */
+  readOnly: true;
   label: string;
   /** One sentence: what this source answers, in the operator's words. */
   description: string;
@@ -112,6 +119,11 @@ export interface AgentSourceInfo {
   label: string;
   description: string;
   href?: string;
+}
+
+/** Info view handed to plugins: a source without its `run` function. */
+export interface AgentSourceView extends AgentSourceInfo {
+  args: Record<string, unknown>;
 }
 
 // --- LLM provider ----------------------------------------------------------

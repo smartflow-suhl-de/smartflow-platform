@@ -169,6 +169,7 @@ export function register(ctx: PluginContext): void {
    */
   ctx.provideAgentSource({
     id: 'tenants.summary',
+    readOnly: true,
     label: 'Mandanten',
     description: 'Anzahl aller, aktiver und gesperrter Mandanten.',
     args: { type: 'object', additionalProperties: false, properties: {} },
@@ -185,6 +186,7 @@ export function register(ctx: PluginContext): void {
 
   ctx.provideAgentSource({
     id: 'tenants.list',
+    readOnly: true,
     label: 'Mandantenliste',
     description: 'Mandanten mit Slug, Status und Anlagedatum; filterbar nach Status und Name.',
     args: {
@@ -205,8 +207,12 @@ export function register(ctx: PluginContext): void {
         params.push(args.status);
       }
       if (typeof args.q === 'string' && args.q.trim().length > 0) {
-        where.push('(lower(name) like ? or lower(slug) like ?)');
-        const needle = `%${args.q.trim().toLowerCase()}%`;
+        where.push("(lower(name) like ? escape '\\' or lower(slug) like ? escape '\\')");
+        // `%`, `_` and `\` in the search text are literals, not wildcards.
+        const needle = `%${args.q
+          .trim()
+          .toLowerCase()
+          .replace(/[\\%_]/g, '\\$&')}%`;
         params.push(needle, needle);
       }
       const limit = typeof args.limit === 'number' ? Math.min(20, Math.max(1, args.limit)) : 10;
