@@ -42,10 +42,17 @@ services:
       # falsch; die Topologie gehört deshalb zu dieser Datei, nicht in ein
       # Image-Default.
       SF_TRUST_PROXY: '1'
+      # Eine Website, ein Port: die Auslieferung lauscht auf 8801…8820 im
+      # Compose-Netz, `tailscale serve` bildet diese auf 8443…8462 am Knoten ab.
+      # Keine Host-Ports, kein Funnel.
+      SF_SITES_PORT_BASE: ${SF_SITES_PORT_BASE:-8801}
+      SF_SITES_PORT_COUNT: ${SF_SITES_PORT_COUNT:-20}
+      SF_SITES_TAILNET_PORT_BASE: ${SF_SITES_TAILNET_PORT_BASE:-8443}
     volumes:
       - data:/data
     expose:
       - '8790'
+      - '8801-8820'
     # Der Healthcheck stammt aus dem Image und trägt `depends_on` unten.
 
   tailscale:

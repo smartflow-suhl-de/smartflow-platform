@@ -1,0 +1,51 @@
+---
+import '../styles/site.css';
+
+interface NavItem {
+  href: string;
+  title: string;
+}
+
+interface Props {
+  title: string;
+  siteName: string;
+  nav: NavItem[];
+  current: string;
+}
+
+const { title, siteName, nav, current } = Astro.props;
+---
+
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>{title === siteName ? siteName : `${title} · ${siteName}`}</title>
+  </head>
+  <body>
+    <header class="masthead shell">
+      <a class="brand" href="/">{siteName}</a>
+      {
+        nav.length > 0 ? (
+          <ul class="nav">
+            {nav.map((item) => (
+              <li>
+                <a href={item.href} aria-current={item.href === current ? 'page' : undefined}>
+                  {item.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : null
+      }
+    </header>
+    <main class="shell">
+      <slot />
+    </main>
+    <footer class="foot shell">
+      <span>{siteName}</span>
+    </footer>
+  </body>
+</html>

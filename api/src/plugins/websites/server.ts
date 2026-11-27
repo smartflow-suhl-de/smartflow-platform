@@ -1,9 +1,15 @@
+import { newId } from '../../kernel/ids.ts';
 import type { PluginContext } from '../../kernel/context.ts';
 import { manifest } from './manifest.ts';
 import { createRuntime } from './runtime.ts';
 import { registerSites } from './sites.ts';
 import { registerPipeline } from './pipeline.ts';
 import { registerApprovals } from './approvals.ts';
+import { registerPreviews } from './previews.ts';
+import { createSiteBuilds } from './build-worker.ts';
+import { createAiWorker } from './ai-worker.ts';
+import { createDelivery } from './delivery.ts';
+import type { SiteRow } from './store.ts';
 
 /**
  * `websites` keeps the agency's portfolio in its own tenant database. The
@@ -129,12 +135,113 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 2,
+      up(database) {
+        // Delivery is a port per site, not a path prefix: the build keeps
+        // `base: "/"` and a site cannot reach the panel's session cookie.
+        database.exec(`
+          alter table web_sites add column internal_port integer;
+          create unique index web_sites_port on web_sites(internal_port)
+            where internal_port is not null;
+
+          alter table web_site_pages add column body_md text;
+
+          create table web_build_artifacts (
+            build_id text primary key references web_builds(id) on delete cascade,
+            site_id text not null references web_sites(id) on delete cascade,
+            artifact_dir text not null,
+            files integer not null default 0,
+            bytes integer not null default 0,
+            hash text not null,
+            created_at text not null
+          );
+          create index web_build_artifacts_site on web_build_artifacts(site_id);
+        `);
+      },
+    },
+    {
+      version: 3,
+      up(database) {
+        // `deploy_target` started as free text without any effect. It now
+        // decides whether a site is published to the tailnet, so every old row
+        // is moved to the values the delivery understands.
+        database.exec(`
+          update web_sites set deploy_target = 'static'
+            where deploy_target in ('static', 'internal', 'local');
+          update web_sites set deploy_target = 'tailscale'
+            where deploy_target is null or deploy_target not in ('static', 'tailscale');
+        `);
+      },
+    },
+    {
+      version: 4,
+      up(database) {
+        // Staff previews are their own rows: they must not appear as open
+        // approvals and must not be able to satisfy the publish gate.
+        database.exec(`
+          create table web_previews (
+            id text primary key,
+            site_id text not null references web_sites(id) on delete cascade,
+            build_id text not null references web_builds(id) on delete cascade,
+            token_hash text not null,
+            created_by text not null,
+            expires_at text not null,
+            created_at text not null
+          );
+          create unique index web_previews_token on web_previews(token_hash);
+          create index web_previews_site on web_previews(site_id, created_at, id);
+        `);
+      },
+    },
   ]);
 
   const runtime = createRuntime(ctx);
-  registerSites(runtime);
-  registerPipeline(runtime);
-  registerApprovals(runtime);
+  const aiWorker = createAiWorker(runtime);
+  runtime.runJob = (tenantId, job) => aiWorker.run(tenantId, job);
+  const builds = createSiteBuilds(runtime);
+  const delivery = createDelivery(runtime, builds);
+
+  registerSites(runtime, delivery);
+  registerPipeline(runtime, builds);
+  registerApprovals(runtime, delivery);
+  registerPreviews(runtime, delivery);
+
+  // A finished AI job leaves pages behind that nobody has built yet. Queueing
+  // the build here is what turns a plan into a preview a client can open.
+  runtime.onJobSettled = (tenantId, siteId) => {
+    const database = runtime.tenantDb(tenantId);
+    const active = database
+      .prepare("select id from web_builds where site_id = ? and status in ('queued','running')")
+      .get(siteId) as { id: string } | undefined;
+    if (active) return;
+    database
+      .prepare(
+        `insert into web_builds (id, site_id, trigger, status, created_at)
+         values (?, ?, 'ai', 'queued', ?)`,
+      )
+      .run(newId('bld'), siteId, runtime.now().toISOString());
+    builds.kick();
+  };
+  // A site that was just published or had its target changed needs its listener
+  // on the right interface; a build alone does not move it.
+  runtime.onBuildSettled = (tenantId, siteId) => {
+    const database = runtime.tenantDb(tenantId);
+    const site = database
+      .prepare('select * from web_sites where id = ?')
+      .get(siteId) as SiteRow | undefined;
+    if (site) delivery.ensure(tenantId, site);
+  };
+
+  // Listeners first, then the queue: a build that was queued before the restart
+  // must not wait for the next request to be picked up.
+  delivery.start();
+  builds.kick();
+
+  runtime.app.addHook('onClose', async () => {
+    await builds.close();
+    await delivery.stopAll();
+  });
 }
 
 export default { manifest, register };

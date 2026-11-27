@@ -1,9 +1,113 @@
 {
-  "TCP": { "443": { "HTTPS": true } },
+  "TCP": {
+    "443": { "HTTPS": true },
+    "8443": { "HTTPS": true },
+    "8444": { "HTTPS": true },
+    "8445": { "HTTPS": true },
+    "8446": { "HTTPS": true },
+    "8447": { "HTTPS": true },
+    "8448": { "HTTPS": true },
+    "8449": { "HTTPS": true },
+    "8450": { "HTTPS": true },
+    "8451": { "HTTPS": true },
+    "8452": { "HTTPS": true },
+    "8453": { "HTTPS": true },
+    "8454": { "HTTPS": true },
+    "8455": { "HTTPS": true },
+    "8456": { "HTTPS": true },
+    "8457": { "HTTPS": true },
+    "8458": { "HTTPS": true },
+    "8459": { "HTTPS": true },
+    "8460": { "HTTPS": true },
+    "8461": { "HTTPS": true },
+    "8462": { "HTTPS": true }
+  },
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
       "Handlers": { "/": { "Proxy": "http://app:8790" } }
+    },
+    "${TS_CERT_DOMAIN}:8443": {
+      "Handlers": { "/": { "Proxy": "http://app:8801" } }
+    },
+    "${TS_CERT_DOMAIN}:8444": {
+      "Handlers": { "/": { "Proxy": "http://app:8802" } }
+    },
+    "${TS_CERT_DOMAIN}:8445": {
+      "Handlers": { "/": { "Proxy": "http://app:8803" } }
+    },
+    "${TS_CERT_DOMAIN}:8446": {
+      "Handlers": { "/": { "Proxy": "http://app:8804" } }
+    },
+    "${TS_CERT_DOMAIN}:8447": {
+      "Handlers": { "/": { "Proxy": "http://app:8805" } }
+    },
+    "${TS_CERT_DOMAIN}:8448": {
+      "Handlers": { "/": { "Proxy": "http://app:8806" } }
+    },
+    "${TS_CERT_DOMAIN}:8449": {
+      "Handlers": { "/": { "Proxy": "http://app:8807" } }
+    },
+    "${TS_CERT_DOMAIN}:8450": {
+      "Handlers": { "/": { "Proxy": "http://app:8808" } }
+    },
+    "${TS_CERT_DOMAIN}:8451": {
+      "Handlers": { "/": { "Proxy": "http://app:8809" } }
+    },
+    "${TS_CERT_DOMAIN}:8452": {
+      "Handlers": { "/": { "Proxy": "http://app:8810" } }
+    },
+    "${TS_CERT_DOMAIN}:8453": {
+      "Handlers": { "/": { "Proxy": "http://app:8811" } }
+    },
+    "${TS_CERT_DOMAIN}:8454": {
+      "Handlers": { "/": { "Proxy": "http://app:8812" } }
+    },
+    "${TS_CERT_DOMAIN}:8455": {
+      "Handlers": { "/": { "Proxy": "http://app:8813" } }
+    },
+    "${TS_CERT_DOMAIN}:8456": {
+      "Handlers": { "/": { "Proxy": "http://app:8814" } }
+    },
+    "${TS_CERT_DOMAIN}:8457": {
+      "Handlers": { "/": { "Proxy": "http://app:8815" } }
+    },
+    "${TS_CERT_DOMAIN}:8458": {
+      "Handlers": { "/": { "Proxy": "http://app:8816" } }
+    },
+    "${TS_CERT_DOMAIN}:8459": {
+      "Handlers": { "/": { "Proxy": "http://app:8817" } }
+    },
+    "${TS_CERT_DOMAIN}:8460": {
+      "Handlers": { "/": { "Proxy": "http://app:8818" } }
+    },
+    "${TS_CERT_DOMAIN}:8461": {
+      "Handlers": { "/": { "Proxy": "http://app:8819" } }
+    },
+    "${TS_CERT_DOMAIN}:8462": {
+      "Handlers": { "/": { "Proxy": "http://app:8820" } }
     }
   },
-  "AllowFunnel": { "${TS_CERT_DOMAIN}:443": false }
+  "AllowFunnel": {
+    "${TS_CERT_DOMAIN}:443": false,
+    "${TS_CERT_DOMAIN}:8443": false,
+    "${TS_CERT_DOMAIN}:8444": false,
+    "${TS_CERT_DOMAIN}:8445": false,
+    "${TS_CERT_DOMAIN}:8446": false,
+    "${TS_CERT_DOMAIN}:8447": false,
+    "${TS_CERT_DOMAIN}:8448": false,
+    "${TS_CERT_DOMAIN}:8449": false,
+    "${TS_CERT_DOMAIN}:8450": false,
+    "${TS_CERT_DOMAIN}:8451": false,
+    "${TS_CERT_DOMAIN}:8452": false,
+    "${TS_CERT_DOMAIN}:8453": false,
+    "${TS_CERT_DOMAIN}:8454": false,
+    "${TS_CERT_DOMAIN}:8455": false,
+    "${TS_CERT_DOMAIN}:8456": false,
+    "${TS_CERT_DOMAIN}:8457": false,
+    "${TS_CERT_DOMAIN}:8458": false,
+    "${TS_CERT_DOMAIN}:8459": false,
+    "${TS_CERT_DOMAIN}:8460": false,
+    "${TS_CERT_DOMAIN}:8461": false,
+    "${TS_CERT_DOMAIN}:8462": false
+  }
 }

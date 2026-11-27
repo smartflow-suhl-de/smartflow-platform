@@ -10,9 +10,10 @@ export const manifest: PluginManifest = {
   id: 'websites',
   label: 'Webseiten',
   description: 'Own and client websites: Astro projects, AI drafts, previews and approvals.',
-  version: '0.2.0',
+  version: '0.3.0',
   apiVersion: 1,
   scope: 'tenant',
+  dependsOn: ['llm-providers'],
   nav: {
     label: 'Webseiten',
     path: '/websites',
@@ -22,6 +23,8 @@ export const manifest: PluginManifest = {
     roles: ['tenant_admin', 'employee', 'operator'],
     createLabel: 'Neue Website',
     aliases: ['/webseiten'],
+    // Without a tenant the operator works in the own workspace, not a 403.
+    ownWorkspace: true,
   },
 };
 

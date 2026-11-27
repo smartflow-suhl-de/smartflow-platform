@@ -7,6 +7,12 @@ export type BuildStatus = 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
 export type JobStatus = 'queued' | 'running' | 'ok' | 'failed' | 'cancelled';
 export type ApprovalState = 'open' | 'approved' | 'changes' | 'expired';
 export type PageOrigin = 'ai' | 'manual' | 'template';
+/**
+ * Where a site is reachable. `tailscale` publishes the site port to the tailnet
+ * node; `static` keeps the site listener bound to loopback, so only the process
+ * that serves the files can reach it.
+ */
+export type DeployTarget = 'tailscale' | 'static';
 
 export interface ClientRow {
   id: string;
@@ -29,6 +35,8 @@ export interface SiteRow {
   deploy_target: string | null;
   domain: string | null;
   domain_state: string;
+  /** Internal port of the site listener; `null` until the delivery assigns one. */
+  internal_port: number | null;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -40,6 +48,8 @@ export interface PageRow {
   route: string;
   title: string;
   origin: PageOrigin;
+  /** Markdown the AI wrote for this route; `null` while only a title exists. */
+  body_md: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -116,9 +126,12 @@ export const BUILD_STATUSES: readonly BuildStatus[] = [
   'cancelled',
 ];
 export const APPROVAL_STATES: readonly ApprovalState[] = ['open', 'approved', 'changes', 'expired'];
+export const DEPLOY_TARGETS: readonly DeployTarget[] = ['tailscale', 'static'];
 
 export const MAX_ROUTE = 120;
 export const MAX_NAME = 120;
+/** Long enough for a real page, small enough to keep the database slim. */
+export const MAX_PAGE_BODY = 40_000;
 export const ROUTE_PATTERN = /^\/(?:[a-z0-9-]+(?:\/[a-z0-9-]+)*)?$/;
 export const DOMAIN_PATTERN =
   /^(?=.{4,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
@@ -135,6 +148,14 @@ export function isSiteStatus(value: string): value is SiteStatus {
 
 export function isApprovalState(value: string): value is ApprovalState {
   return (APPROVAL_STATES as readonly string[]).includes(value);
+}
+
+/**
+ * Older rows carry free text in `deploy_target`; anything unrecognised is read
+ * as `tailscale`, which is what every site was before the field had a meaning.
+ */
+export function deployTargetOf(site: { deploy_target: string | null }): DeployTarget {
+  return site.deploy_target === 'static' ? 'static' : 'tailscale';
 }
 
 /** Slugs are unique inside one tenant database, so a clash gets a counter. */
@@ -160,7 +181,7 @@ export function findSite(db: Db, siteId: string): SiteRow | undefined {
   return db
     .prepare(
       `select id, client_id, name, slug, status, astro_version, repo, branch, deploy_target,
-              domain, domain_state, created_by, created_at, updated_at
+              domain, domain_state, internal_port, created_by, created_at, updated_at
          from web_sites where id = ?`,
     )
     .get(siteId) as SiteRow | undefined;

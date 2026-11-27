@@ -1,14 +1,17 @@
 import { FieldError } from '../../shared/contract.ts';
 import { decodeCursor, encodeCursor } from '../../kernel/cursor.ts';
-import { AppError, invalidState } from '../../kernel/errors.ts';
+import { AppError, invalidState, notFound } from '../../kernel/errors.ts';
 import { newId } from '../../kernel/ids.ts';
 import {
+  DEPLOY_TARGETS,
   DOMAIN_PATTERN,
   EMAIL_PATTERN,
   MAX_NAME,
+  MAX_PAGE_BODY,
   MAX_ROUTE,
   ROUTE_PATTERN,
   type ClientRow,
+  type PageRow,
   type SiteRow,
   requireSite,
   siteDetail,
@@ -16,8 +19,9 @@ import {
   validSlug,
 } from './store.ts';
 import { errorSchema, optionalText, parseLimit, type Runtime } from './runtime.ts';
+import type { Delivery } from './delivery.ts';
 
-export function registerSites(runtime: Runtime): void {
+export function registerSites(runtime: Runtime, delivery: Delivery): void {
   // --- Sites ---------------------------------------------------------------
 
   runtime.app.get<{
@@ -82,7 +86,7 @@ export function registerSites(runtime: Runtime): void {
       const rows = database
         .prepare(
           `select id, client_id, name, slug, status, astro_version, repo, branch, deploy_target,
-                  domain, domain_state, created_by, created_at, updated_at
+                  domain, domain_state, internal_port, created_by, created_at, updated_at
              from web_sites ${pageFilter} order by created_at desc, id desc limit ?`,
         )
         .all(...pageParams, limit + 1) as SiteRow[];
@@ -91,7 +95,10 @@ export function registerSites(runtime: Runtime): void {
       const page = hasMore ? rows.slice(0, limit) : rows;
       const last = page.at(-1);
       return {
-        items: page.map((row) => runtime.siteListItem(database, row)),
+        items: page.map((row) => ({
+          ...runtime.siteListItem(database, row),
+          url: delivery.publicUrl(row),
+        })),
         total,
         nextCursor:
           hasMore && last ? encodeCursor({ created_at: last.created_at, id: last.id }) : null,
@@ -158,7 +165,7 @@ export function registerSites(runtime: Runtime): void {
             domain: { type: 'string', maxLength: 253 },
             repo: { type: 'string', maxLength: 200 },
             branch: { type: 'string', maxLength: 120 },
-            deploy_target: { type: 'string', maxLength: 80 },
+            deploy_target: { type: 'string', enum: [...DEPLOY_TARGETS] },
           },
         },
         response: { 401: errorSchema, 403: errorSchema, 422: errorSchema },
@@ -215,7 +222,7 @@ export function registerSites(runtime: Runtime): void {
           slug,
           optionalText(request.body.repo, 200),
           optionalText(request.body.branch, 120),
-          optionalText(request.body.deploy_target, 80),
+          optionalText(request.body.deploy_target, 80) ?? 'tailscale',
           domain,
           request.user?.id ?? 'unknown',
           timestamp,
@@ -223,8 +230,11 @@ export function registerSites(runtime: Runtime): void {
         );
 
       const created = requireSite(database, id);
+      // A site becomes reachable as soon as it exists: the preview link is the
+      // first thing anyone opens, and it must not depend on a build.
+      const withPort = delivery.ensure(runtime.tenantIdOf(request), created);
       reply.code(201);
-      return siteDetail(database, created);
+      return { ...siteDetail(database, withPort), url: delivery.publicUrl(withPort) };
     },
   );
 
@@ -236,7 +246,8 @@ export function registerSites(runtime: Runtime): void {
     },
     async (request) => {
       const database = runtime.tenantDatabase(request);
-      return siteDetail(database, requireSite(database, request.params.siteId));
+      const site = requireSite(database, request.params.siteId);
+      return { ...siteDetail(database, site), url: delivery.publicUrl(site) };
     },
   );
 
@@ -265,7 +276,7 @@ export function registerSites(runtime: Runtime): void {
             domain: { type: ['string', 'null'], maxLength: 253 },
             repo: { type: ['string', 'null'], maxLength: 200 },
             branch: { type: ['string', 'null'], maxLength: 120 },
-            deploy_target: { type: ['string', 'null'], maxLength: 80 },
+            deploy_target: { type: ['string', 'null'], enum: [...DEPLOY_TARGETS, null] },
           },
         },
       },
@@ -303,11 +314,16 @@ export function registerSites(runtime: Runtime): void {
         updates.push('domain = ?');
         values.push(domain);
       }
-      for (const key of ['repo', 'branch', 'deploy_target'] as const) {
+      for (const key of ['repo', 'branch'] as const) {
         if (request.body[key] !== undefined) {
           updates.push(`${key} = ?`);
           values.push(optionalText(request.body[key], 200));
         }
+      }
+      if (request.body.deploy_target !== undefined) {
+        // `null` returns the site to the default delivery over the tailnet.
+        updates.push('deploy_target = ?');
+        values.push(request.body.deploy_target ?? 'tailscale');
       }
       if (Object.keys(fields).length > 0) throw new FieldError(fields);
       if (updates.length > 0) {
@@ -315,7 +331,11 @@ export function registerSites(runtime: Runtime): void {
         values.push(runtime.now().toISOString(), site.id);
         database.prepare(`update web_sites set ${updates.join(', ')} where id = ?`).run(...values);
       }
-      return siteDetail(database, requireSite(database, site.id));
+      const updated = requireSite(database, site.id);
+      // A changed target moves the listener between the container interface and
+      // loopback, so the port is re-bound here rather than at the next restart.
+      const withPort = delivery.ensure(runtime.tenantIdOf(request), updated);
+      return { ...siteDetail(database, withPort), url: delivery.publicUrl(withPort) };
     },
   );
 
@@ -335,6 +355,7 @@ export function registerSites(runtime: Runtime): void {
         throw invalidState('A published website cannot be deleted. Archive it instead.');
       }
       database.prepare('delete from web_sites where id = ?').run(site.id);
+      delivery.stop(site.id);
       return reply.code(204).send();
     },
   );
@@ -426,7 +447,10 @@ export function registerSites(runtime: Runtime): void {
     },
   );
 
-  runtime.app.post<{ Params: { siteId: string }; Body: { route?: string; title?: string } }>(
+  runtime.app.post<{
+    Params: { siteId: string };
+    Body: { route?: string; title?: string; body?: string };
+  }>(
     '/websites/:siteId/pages',
     {
       preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
@@ -439,6 +463,7 @@ export function registerSites(runtime: Runtime): void {
           properties: {
             route: { type: 'string', maxLength: MAX_ROUTE },
             title: { type: 'string', minLength: 1, maxLength: MAX_NAME },
+            body: { type: 'string', maxLength: MAX_PAGE_BODY },
           },
         },
       },
@@ -464,12 +489,85 @@ export function registerSites(runtime: Runtime): void {
       const id = newId('page');
       database
         .prepare(
-          `insert into web_site_pages (id, site_id, route, title, origin, created_at, updated_at)
-           values (?, ?, ?, ?, 'manual', ?, ?)`,
+          `insert into web_site_pages
+             (id, site_id, route, title, origin, body_md, created_at, updated_at)
+           values (?, ?, ?, ?, 'manual', ?, ?, ?)`,
         )
-        .run(id, site.id, route, title, timestamp, timestamp);
+        .run(
+          id,
+          site.id,
+          route,
+          title,
+          optionalText(request.body.body, MAX_PAGE_BODY),
+          timestamp,
+          timestamp,
+        );
       reply.code(201);
       return database.prepare('select * from web_site_pages where id = ?').get(id);
+    },
+  );
+
+  runtime.app.patch<{
+    Params: { siteId: string; pageId: string };
+    Body: { title?: string; body?: string | null };
+  }>(
+    '/websites/:siteId/pages/:pageId',
+    {
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
+      schema: {
+        summary: 'Edit the title or the text of a page',
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            title: { type: 'string', minLength: 1, maxLength: MAX_NAME },
+            body: { type: ['string', 'null'], maxLength: MAX_PAGE_BODY },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const database = runtime.tenantDatabase(request);
+      const site = requireSite(database, request.params.siteId);
+      const page = database
+        .prepare('select * from web_site_pages where id = ? and site_id = ?')
+        .get(request.params.pageId, site.id) as PageRow | undefined;
+      if (!page) throw notFound('Page not found.');
+      const updates: string[] = [];
+      const values: unknown[] = [];
+      if (request.body.title !== undefined) {
+        updates.push('title = ?');
+        values.push(request.body.title.trim());
+      }
+      if (request.body.body !== undefined) {
+        updates.push('body_md = ?');
+        values.push(optionalText(request.body.body, MAX_PAGE_BODY));
+      }
+      if (updates.length > 0) {
+        updates.push('updated_at = ?');
+        values.push(runtime.now().toISOString(), page.id);
+        database
+          .prepare(`update web_site_pages set ${updates.join(', ')} where id = ?`)
+          .run(...values);
+      }
+      return database.prepare('select * from web_site_pages where id = ?').get(page.id);
+    },
+  );
+
+  runtime.app.delete<{ Params: { siteId: string; pageId: string } }>(
+    '/websites/:siteId/pages/:pageId',
+    {
+      preHandler: runtime.app.requireRole('tenant_admin', 'employee', 'operator'),
+      schema: { summary: 'Remove a page from the draft' },
+    },
+    async (request, reply) => {
+      const database = runtime.tenantDatabase(request);
+      const site = requireSite(database, request.params.siteId);
+      const removed = database
+        .prepare('delete from web_site_pages where id = ? and site_id = ?')
+        .run(request.params.pageId, site.id);
+      if (removed.changes === 0) throw notFound('Page not found.');
+      return reply.code(204).send();
     },
   );
 }
