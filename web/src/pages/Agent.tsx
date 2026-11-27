@@ -342,7 +342,16 @@ export function AgentPage({ locale, messages }: AgentPageProps) {
         <div className="sf-agent-thread sf-agent-column">
           <div className="sf-agent-examples-head">
             <span className="label">{messages.agent.history}</span>
-            <Button variant="ghost" size="sm" onClick={() => setEntries([])}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={asking}
+              onClick={() => {
+                // A running answer must not attach itself to a cleared list.
+                askController.current?.abort();
+                setEntries([]);
+              }}
+            >
               {messages.agent.clearHistory}
             </Button>
           </div>

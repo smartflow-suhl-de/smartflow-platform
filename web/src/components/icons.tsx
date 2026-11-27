@@ -208,14 +208,14 @@ export function navIconByName(name: string, size = 15) {
       return <BuildingIcon size={size} />;
     case 'activity':
       return <ActivityIcon size={size} />;
-    case 'compass':
-      return <CompassIcon size={size} />;
     case 'settings':
       return <SettingsIcon size={size} />;
     case 'sparkles':
       return <SparklesIcon size={size} />;
     case 'circle-help':
       return <CircleHelpIcon size={size} />;
+    case 'compass':
+      return <CompassIcon size={size} />;
     case 'globe':
       return <GlobeIcon size={size} />;
     default:

@@ -408,6 +408,7 @@ test('the plugin source lists what is registered', async (t) => {
     'automation-discovery',
     'llm-providers',
     'tenants',
+    'websites',
   ]);
 });
 

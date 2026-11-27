@@ -361,7 +361,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         messages={messages}
       />
     );
-} else if (
+  } else if (
     pathname === '/websites' &&
     (auth.user.role === 'tenant_admin' || auth.user.role === 'employee')
   ) {

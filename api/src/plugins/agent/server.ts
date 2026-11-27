@@ -236,12 +236,17 @@ export function register(ctx: PluginContext): void {
   }
 
   function pruneOldRuns(): void {
-    const cutoff = new Date(
-      ctx.now().getTime() - config.retentionDays * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const removed = db.prepare('delete from agent_runs where created_at < ?').run(cutoff);
-    if (removed.changes > 0) {
-      log.info({ count: removed.changes, cutoff }, 'agent: removed expired runs');
+    try {
+      const cutoff = new Date(
+        ctx.now().getTime() - config.retentionDays * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      const removed = db.prepare('delete from agent_runs where created_at < ?').run(cutoff);
+      if (removed.changes > 0) {
+        log.info({ count: removed.changes, cutoff }, 'agent: removed expired runs');
+      }
+    } catch (error) {
+      // A busy or closing database must not take the process down with it.
+      log.warn({ err: error }, 'agent: retention sweep failed');
     }
   }
 

@@ -15,13 +15,13 @@ import type {
   WebsiteSettings,
   WebsiteStatus,
   WebsiteSummary,
-
   AgentAskResponse,
   AgentRun,
   AgentRunListResponse,
   AgentSourceInfo,
   AgentStatus,
-  AgentStep,  AuthMe,
+  AgentStep,
+  AuthMe,
   DiscoveryInvite,
   DiscoveryInviteCreated,
   DiscoveryInviteDetail,
@@ -60,6 +60,9 @@ import type {
 
 const API_PREFIX = '/api/v1';
 /** A question may take several model rounds; the server caps the total. */
+/** A status probe is cheap; answer before the browser gives up. */
+export const AGENT_STATUS_TIMEOUT_MS = 4_000;
+
 export const AGENT_TIMEOUT_MS = 60_000;
 
 /**
@@ -1391,10 +1394,13 @@ export const api = {
     if (!isRecord(raw) || !isWebsiteApprovalState(raw.state)) {
       throw new ApiError(500, 'invalid_response', 'Invalid decision payload');
     }
-    return { state: raw.state };  },
+    return { state: raw.state };
+  },
 
   async agentStatus(signal?: AbortSignal): Promise<AgentStatus> {
-    return parseAgentStatus(await requestJson('/agent/status', { signal }));
+    return parseAgentStatus(
+      await requestJson('/agent/status', { signal, timeoutMs: AGENT_STATUS_TIMEOUT_MS }),
+    );
   },
 
   /**
@@ -1426,7 +1432,8 @@ export const api = {
   },
 
   async agentRun(id: string, signal?: AbortSignal): Promise<AgentRun> {
-    return parseAgentRun(await requestJson(`/agent/runs/${encodeURIComponent(id)}`, { signal }));  },
+    return parseAgentRun(await requestJson(`/agent/runs/${encodeURIComponent(id)}`, { signal }));
+  },
 };
 
 export interface DiscoveryPublicResponse {
