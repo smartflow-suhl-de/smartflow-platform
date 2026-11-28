@@ -465,6 +465,55 @@ test('master data validation rejects bad email and overlong fields', async (t) =
   );
 });
 
+test('a suspended tenant keeps its profile in sync after the resume', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const tenant = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Südpark Handel', city: 'Altstadt' },
+    })
+  ).json() as Tenant;
+
+  const suspended = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/tenants/${tenant.id}/suspend`,
+    headers: { cookie },
+  });
+  assert.equal(suspended.statusCode, 200);
+
+  // The platform row is editable while suspended; the tenant database is not
+  // reachable through tenantDb, so the copy can only be written on resume.
+  const patched = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: 'Neustadt' },
+  });
+  assert.equal(patched.statusCode, 200);
+  assert.equal((patched.json() as Tenant).details.city, 'Neustadt');
+
+  const resumed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/tenants/${tenant.id}/resume`,
+    headers: { cookie },
+  });
+  assert.equal(resumed.statusCode, 200);
+
+  const { openDatabase } = await import('../../src/kernel/db.ts');
+  const database = openDatabase(join(ctx.dataDir, 'tenants', `${tenant.id}.sqlite`));
+  t.after(() => database.close());
+  const profile = database
+    .prepare('select display_name, city from tenant_profile where id = ?')
+    .get(tenant.id) as { display_name: string | null; city: string | null };
+  assert.equal(profile.display_name, 'Südpark Handel');
+  assert.equal(profile.city, 'Neustadt');
+});
+
 test('transitions reject unknown tenants with 404', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());

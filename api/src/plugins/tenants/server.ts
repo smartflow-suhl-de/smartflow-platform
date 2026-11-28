@@ -1,5 +1,5 @@
 import { FieldError, type Tenant, type TenantStatus } from '../../shared/contract.ts';
-import type { PluginContext } from '../../kernel/context.ts';
+import type { PluginContext, TenantRef } from '../../kernel/context.ts';
 import { AppError } from '../../kernel/errors.ts';
 import { SLUG_PATTERN, newId, slugFrom } from '../../kernel/ids.ts';
 import { manifest } from './manifest.ts';
@@ -211,6 +211,26 @@ function validateSlug(raw: unknown): string {
   return slug;
 }
 
+const slugTaken = () =>
+  new AppError('slug_taken', 'This slug is already taken.', 409, {
+    fields: { slug: 'This slug is already taken.' },
+  });
+
+/**
+ * A slug can be taken between the pre-check and the write when two processes
+ * share the SQLite file; the unique index then raises a constraint error. Both
+ * come out as 409 so the client sees one answer.
+ */
+function isSlugConstraint(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code: unknown }).code === 'string' &&
+    (error as { code: string }).code.startsWith('SQLITE_CONSTRAINT')
+  );
+}
+
 export function register(ctx: PluginContext): void {
   const { app, db, log, now } = ctx;
 
@@ -288,9 +308,11 @@ export function register(ctx: PluginContext): void {
       return row ? { id: row.id, name: row.name, slug: row.slug, status: row.status } : null;
     },
     list() {
+      // `TenantRef` on purpose: the kernel directory needs no master data, and
+      // the detail columns are not selected here.
       const rows = db
-        .prepare(`select id, name, slug, status, created_at from tenants order by name`)
-        .all() as TenantRow[];
+        .prepare('select id, name, slug, status from tenants order by name')
+        .all() as TenantRef[];
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -388,11 +410,12 @@ export function register(ctx: PluginContext): void {
   }
 
   /**
-   * Mirrors the platform row into the tenant database. A suspended tenant
-   * cannot be opened, so this is best effort: the platform row stays the
-   * source of truth and the copy catches up on the next successful provision.
+   * Mirrors the platform row into the tenant database. Returns `false` when the
+   * tenant database cannot be opened — a suspended tenant has no handle — so
+   * the caller knows the copy is behind. The platform row stays the source of
+   * truth; `setStatus(..., 'active')` replays the sync on resume.
    */
-  function syncProfile(tenant: TenantRow): void {
+  function syncProfile(tenant: TenantRow): boolean {
     try {
       const database = ctx.tenantDb(tenant.id);
       const assignments = ['display_name = ?', ...DETAIL_FIELDS.map((field) => `${field} = ?`)];
@@ -400,12 +423,13 @@ export function register(ctx: PluginContext): void {
       const changed = database
         .prepare(`update tenant_profile set ${assignments.join(', ')} where id = ?`)
         .run(...values);
-      if (changed.changes === 0) {
-        provision(tenant);
-        return;
-      }
+      if (changed.changes === 0) provision(tenant);
+      return true;
     } catch (error) {
-      log.warn({ err: error, tenantId: tenant.id }, 'tenant profile sync skipped');
+      // Only the tenant boundary may fail here; anything else is a real bug.
+      if (!(error instanceof AppError) || error.code !== 'tenant_suspended') throw error;
+      log.debug({ tenantId: tenant.id }, 'tenant profile sync deferred until resume');
+      return false;
     }
   }
 
@@ -541,11 +565,7 @@ export function register(ctx: PluginContext): void {
 
       const taken = db.prepare('select id from tenants where slug = ?').get(slug) as
         { id: string } | undefined;
-      if (taken) {
-        throw new AppError('slug_taken', 'This slug is already taken.', 409, {
-          fields: { slug: 'This slug is already taken.' },
-        });
-      }
+      if (taken) throw slugTaken();
 
       const details = validateDetails(request.body);
 
@@ -570,15 +590,20 @@ export function register(ctx: PluginContext): void {
         ...DETAIL_FIELDS,
       ];
       const placeholders = columns.map(() => '?').join(', ');
-      db.prepare(`insert into tenants (${columns.join(', ')}) values (${placeholders})`).run(
-        row.id,
-        row.name,
-        row.slug,
-        row.status,
-        row.created_at,
-        createdAt,
-        ...DETAIL_FIELDS.map((field) => row[field]),
-      );
+      try {
+        db.prepare(`insert into tenants (${columns.join(', ')}) values (${placeholders})`).run(
+          row.id,
+          row.name,
+          row.slug,
+          row.status,
+          row.created_at,
+          createdAt,
+          ...DETAIL_FIELDS.map((field) => row[field]),
+        );
+      } catch (error) {
+        if (isSlugConstraint(error)) throw slugTaken();
+        throw error;
+      }
 
       try {
         provision(row);
@@ -655,11 +680,7 @@ export function register(ctx: PluginContext): void {
         const taken = db
           .prepare('select id from tenants where slug = ? and id <> ?')
           .get(slug, row.id) as { id: string } | undefined;
-        if (taken) {
-          throw new AppError('slug_taken', 'This slug is already taken.', 409, {
-            fields: { slug: 'This slug is already taken.' },
-          });
-        }
+        if (taken) throw slugTaken();
       }
 
       const assignments: string[] = ['name = ?', 'slug = ?', 'updated_at = ?'];
@@ -671,7 +692,12 @@ export function register(ctx: PluginContext): void {
       }
       values.push(row.id);
 
-      db.prepare(`update tenants set ${assignments.join(', ')} where id = ?`).run(...values);
+      try {
+        db.prepare(`update tenants set ${assignments.join(', ')} where id = ?`).run(...values);
+      } catch (error) {
+        if (isSlugConstraint(error)) throw slugTaken();
+        throw error;
+      }
 
       const updated: TenantRow = { ...row, name, slug, ...details };
       syncProfile(updated);
@@ -692,6 +718,10 @@ export function register(ctx: PluginContext): void {
       id,
     );
     const updated: TenantRow = { ...row, status };
+    // The tenant database is unreachable while suspended, so a master-data
+    // change made in the meantime is replayed here. `syncProfile` updates the
+    // row and inserts it when it is still missing.
+    if (status === 'active') syncProfile(updated);
     ctx.emit(status === 'suspended' ? 'tenant.suspended' : 'tenant.resumed', { tenantId: id });
     return toTenant(updated);
   }
