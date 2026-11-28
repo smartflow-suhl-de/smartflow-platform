@@ -476,7 +476,9 @@ export interface Messages {
     colStatus: string;
     colProgress: string;
     colAiBudget: string;
+    colAiStepBudget: string;
     aiBudgetSummary: (used: number, assessments: number) => string;
+    aiStepBudget: (used: number, blocked: boolean) => string;
     colExpires: string;
     colActions: string;
     statusOpen: string;
@@ -1182,7 +1184,12 @@ const DE: Messages = {
     colStatus: 'Status',
     colProgress: 'Fortschritt',
     colAiBudget: 'KI-Aufrufe',
+    colAiStepBudget: 'KI-Aufrufe aktuelle Frage',
     aiBudgetSummary: (used, assessments) => `${used} gesamt, ${assessments} für die Auswertung`,
+    aiStepBudget: (used, blocked) =>
+      blocked
+        ? `${used} für die aktuelle Frage — Limit erreicht, der Kunde sieht 429`
+        : `${used} für die aktuelle Frage`,
     colExpires: 'Gültig bis',
     colActions: 'Aktionen',
     statusOpen: 'Offen',
@@ -1919,7 +1926,12 @@ const EN: Messages = {
     colStatus: 'Status',
     colProgress: 'Progress',
     colAiBudget: 'AI calls',
+    colAiStepBudget: 'AI calls (current question)',
     aiBudgetSummary: (used, assessments) => `${used} in total, ${assessments} for the assessment`,
+    aiStepBudget: (used, blocked) =>
+      blocked
+        ? `${used} for the current question — limit reached, the customer sees 429`
+        : `${used} for the current question`,
     colExpires: 'Valid until',
     colActions: 'Actions',
     statusOpen: 'Open',

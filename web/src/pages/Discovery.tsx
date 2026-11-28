@@ -728,6 +728,17 @@ function DiscoveryDetail({
               </dd>
             </div>
             <div className="sf-kv-row">
+              <dt>{m.discovery.colAiStepBudget}</dt>
+              <dd>
+                {invite.session
+                  ? m.discovery.aiStepBudget(
+                      invite.session.aiStepAttempts,
+                      invite.session.stepBlocked,
+                    )
+                  : '—'}
+              </dd>
+            </div>
+            <div className="sf-kv-row">
               <dt>{m.discovery.colExpires}</dt>
               <dd>{formatDateTime(invite.expiresAt, locale)}</dd>
             </div>

@@ -46,6 +46,7 @@ import {
   newToken,
   nowIso,
   parseJson,
+  STEP_ATTEMPT_LIMIT,
   toInviteDto,
   type AnswerRow,
   type InviteRow,
@@ -73,15 +74,7 @@ const RATE_WINDOW_MS = 60_000;
 export const COMPLETE_ATTEMPT_LIMIT = 5;
 /** Slack on top of the calculated need, for retries after counted failures. */
 const AI_BUDGET_SLACK = 6;
-/**
- * How often the same step may ask the model.
- *
- * The total budget alone would still let one link spend its whole allowance on
- * a single step: thirty `advance` calls on the same question were thirty model
- * calls. A step needs one hint, so a small number is enough, and it leaves room
- * for a retry after a counted failure.
- */
-export const STEP_ATTEMPT_LIMIT = 4;
+export { STEP_ATTEMPT_LIMIT };
 
 /**
  * How many model calls one invitation may make in total, hints included.
@@ -93,6 +86,21 @@ export const STEP_ATTEMPT_LIMIT = 4;
  * of that mode needs — eleven map hints, one cluster suggestion, seven deepen
  * hints per cluster, plus the assessment budget and some slack — so a real
  * customer never meets it and an abusive link stops early.
+ *
+ * The unit is a **logical** model call, one per reserved request of the plugin,
+ * not one per HTTP request to the provider:
+ *
+ * - A cut-off answer is retried once inside `complete()`, so one reserved call
+ *   can cost two provider calls. The worst case is therefore about twice the
+ *   budget. Counting the retry separately was rejected: a legitimate retry
+ *   would eat one of the customer's four attempts for the same question.
+ * - A timed-out call is refunded (`isProviderOutage`) although the provider may
+ *   invoice it, and a provider error that never produced an answer is refunded
+ *   for the same reason. So a link can spend a little more at the provider than
+ *   the budget says while it is failing, and never more while it works.
+ *
+ * The point of the cap is a bound on abuse by a link, and both effects keep the
+ * real provider spend within a small multiple of it.
  */
 export function aiAttemptLimit(mode: Mode): number {
   const clusters = mode === 'full' ? 5 : mode === 'standard' ? 3 : 0;
@@ -1063,6 +1071,8 @@ export function register(ctx: PluginContext): void {
       suggestions_json: null,
       complete_attempts: 0,
       ai_attempts: 0,
+      ai_step_key: null,
+      ai_step_attempts: 0,
     };
     db.prepare(
       `insert into discovery_session
@@ -1189,7 +1199,7 @@ export function register(ctx: PluginContext): void {
   }
 
   /**
-   * Counts one model call against the link's budget before it happens.
+   * Counts one logical model call against the link's budget before it happens.
    *
    * Both checks and both counters move inside one synchronous transaction, so
    * no second request can pass the check in between and the limits hold. A
@@ -1197,8 +1207,9 @@ export function register(ctx: PluginContext): void {
    *
    * `stepKey` identifies the question being served. Calls for the same step add
    * up in `ai_step_attempts`, a different step starts that counter over. The
-   * assessment passes `perStep: false` and relies on its own counter, because
-   * asking for the report again after a counted failure is legitimate.
+   * assessment passes `perStep: false`: it has its own `COMPLETE_ATTEMPT_LIMIT`
+   * and repeating it after a counted failure is legitimate, so it must not
+   * write the question counter.
    */
   function reserveAiAttempt(
     invite: InviteRow,
@@ -1218,6 +1229,12 @@ export function register(ctx: PluginContext): void {
       if (row.ai_attempts >= budget) return 'budget';
       const sameStep = row.ai_step_key === stepKey;
       if (perStep && sameStep && row.ai_step_attempts >= STEP_ATTEMPT_LIMIT) return 'step';
+      if (!perStep) {
+        db.prepare('update discovery_session set ai_attempts = ai_attempts + 1 where id = ?').run(
+          session.id,
+        );
+        return 'ok';
+      }
       db.prepare(
         `update discovery_session
             set ai_attempts = ai_attempts + 1,
@@ -1248,12 +1265,55 @@ export function register(ctx: PluginContext): void {
     session.ai_attempts += 1;
   }
 
-  /** Gives a reserved attempt back, for failures that never reached the model. */
-  function releaseAiAttempt(session: SessionRow): void {
+  /**
+   * Gives a reserved attempt back after a provider outage.
+   *
+   * The link's total budget always comes back. The step counter comes back too
+   * when the outage happened on the step it currently belongs to, so four
+   * provider hiccups on one question cannot lock that question for good: no
+   * call succeeded, so nothing was spent. `stepKey` must be the key that was
+   * reserved, otherwise a late response cannot touch another step's counter.
+   *
+   * Hard failures (`truncated`, `invalid_output`, `filtered`) do not come
+   * through here: those reached the model and the step counter keeps counting
+   * them, so a link cannot buy an unlimited number of paid answers by looping
+   * the same question.
+   */
+  function releaseAiAttempt(session: SessionRow, stepKey: string): void {
+    const refund = db.transaction(() => {
+      db.prepare(
+        'update discovery_session set ai_attempts = ai_attempts - 1 where id = ? and ai_attempts > 0',
+      ).run(session.id);
+      db.prepare(
+        `update discovery_session
+            set ai_step_attempts = ai_step_attempts - 1
+          where id = ? and ai_step_key = ? and ai_step_attempts > 0`,
+      ).run(session.id, stepKey);
+      return db
+        .prepare(
+          'select ai_attempts, ai_step_key, ai_step_attempts from discovery_session where id = ?',
+        )
+        .get(session.id) as
+        { ai_attempts: number; ai_step_key: string | null; ai_step_attempts: number } | undefined;
+    });
+    const row = refund();
+    session.ai_attempts = row?.ai_attempts ?? Math.max(0, session.ai_attempts - 1);
+  }
+
+  /**
+   * Closes a successful, paid model call for that step.
+   *
+   * The answers arrived, so the question is done with its allowance: a later
+   * return to the same step (a revisit in the deep phase, or `deepen` coming
+   * back to it) starts with a full `STEP_ATTEMPT_LIMIT` again instead of
+   * inheriting the old count and blocking a customer who did nothing wrong.
+   */
+  function finishAiAttempt(session: SessionRow, stepKey: string): void {
     db.prepare(
-      'update discovery_session set ai_attempts = ai_attempts - 1 where id = ? and ai_attempts > 0',
-    ).run(session.id);
-    session.ai_attempts = Math.max(0, session.ai_attempts - 1);
+      `update discovery_session
+          set ai_step_key = null, ai_step_attempts = 0
+        where id = ? and ai_step_key = ?`,
+    ).run(session.id, stepKey);
   }
 
   /**
@@ -1265,10 +1325,11 @@ export function register(ctx: PluginContext): void {
    * good. `truncated`, `invalid_output` and `filtered` did reach the model and
    * cost tokens, so they stay counted.
    *
-   * Only the token budgets are refunded. The per-step counter keeps counting
-   * requests for the same question, because refunding that one too would let a
-   * broken step be re-requested without bound — the very loop this budget
-   * exists to stop. A link can always be rotated by the operator.
+   * An outage also gives the question its attempt back, but only through
+   * `releaseAiAttempt` and only when the reservation actually belongs to that
+   * question: no answer arrived, so nothing was spent. Counted failures
+   * (`truncated`, `invalid_output`, `filtered`) keep the question counter, which
+   * is what stops a loop on a question the model cannot answer.
    */
   function isProviderOutage(error: unknown): boolean {
     return (
@@ -1306,7 +1367,8 @@ export function register(ctx: PluginContext): void {
       const next = session.current_step + 1;
       if (next < 12) {
         let hint: { text: string; examples: string[] } | null = null;
-        reserveAiAttempt(invite, session, `map:${next}`);
+        const stepKey = `map:${next}`;
+        reserveAiAttempt(invite, session, stepKey);
         try {
           const result = await interviewHint(call, {
             locale: invite.locale,
@@ -1321,11 +1383,12 @@ export function register(ctx: PluginContext): void {
             showIdeas: false,
             log,
           });
+          finishAiAttempt(session, stepKey);
           if (result.hint || result.examples.length > 0) {
             hint = { text: result.hint ?? '', examples: result.examples };
           }
         } catch (error) {
-          if (isProviderOutage(error)) releaseAiAttempt(session);
+          if (isProviderOutage(error)) releaseAiAttempt(session, stepKey);
           if (error instanceof AiUnavailable && error.reason === 'filtered') {
             // The hint is a comfort feature; a filtered hint must not stop the
             // interview. Move on without one.
@@ -1359,7 +1422,8 @@ export function register(ctx: PluginContext): void {
       }
 
       let suggested: SuggestedCluster[];
-      reserveAiAttempt(invite, session, 'clusters');
+      const stepKey = 'clusters';
+      reserveAiAttempt(invite, session, stepKey);
       try {
         suggested = await suggestClusters(call, {
           locale: invite.locale,
@@ -1367,8 +1431,9 @@ export function register(ctx: PluginContext): void {
           answers: interviewHistory(answers),
           log,
         });
+        finishAiAttempt(session, stepKey);
       } catch (error) {
-        if (isProviderOutage(error)) releaseAiAttempt(session);
+        if (isProviderOutage(error)) releaseAiAttempt(session, stepKey);
         if (error instanceof AiUnavailable && error.reason === 'filtered') {
           // The customer still has to pick topics, so the interview continues:
           // the catalogue is always selectable without a suggestion.
@@ -1457,7 +1522,8 @@ export function register(ctx: PluginContext): void {
       const nextEntry = steps[session.current_step + 1];
       const nextQuestion = nextEntry?.step.fields[0]?.label ?? { de: '', en: '' };
       let hint: { text: string; examples: string[] } | null = null;
-      reserveAiAttempt(invite, session, `deepen:${session.current_step}`);
+      const stepKey = `deepen:${cluster}:${within}`;
+      reserveAiAttempt(invite, session, stepKey);
       try {
         const result = await interviewHint(call, {
           locale: invite.locale,
@@ -1469,6 +1535,7 @@ export function register(ctx: PluginContext): void {
           showIdeas: isLastQuestion,
           log,
         });
+        finishAiAttempt(session, stepKey);
         if (isLastQuestion && result.ideas.length > 0) {
           const catalogue = result.ideas.map((title, index) => ({
             id: `i${index + 1}`,
@@ -1499,7 +1566,7 @@ export function register(ctx: PluginContext): void {
           return { state: buildPublicState(invite, session, answers, null), hint };
         }
       } catch (error) {
-        if (isProviderOutage(error)) releaseAiAttempt(session);
+        if (isProviderOutage(error)) releaseAiAttempt(session, stepKey);
         if (error instanceof AiUnavailable && error.reason === 'filtered') {
           // A filtered hint must not block the step: the customer can answer
           // without one, so the interview moves on.
@@ -2118,6 +2185,8 @@ export function register(ctx: PluginContext): void {
           429,
         );
       }
+      // The assessment is not a step: repeating it after a counted failure is
+      // legitimate, and `COMPLETE_ATTEMPT_LIMIT` already caps it.
       reserveAiAttempt(invite, session, 'assessment', false);
       const attempt = db
         .prepare(
@@ -2125,7 +2194,7 @@ export function register(ctx: PluginContext): void {
         )
         .run(session.id, COMPLETE_ATTEMPT_LIMIT);
       if (attempt.changes === 0) {
-        releaseAiAttempt(session);
+        releaseAiAttempt(session, 'assessment');
         log.warn(
           { inviteId: invite.id, sessionId: session.id, limit: COMPLETE_ATTEMPT_LIMIT },
           'discovery assessment refused: attempt limit reached',
@@ -2158,7 +2227,7 @@ export function register(ctx: PluginContext): void {
             'update discovery_session set complete_attempts = complete_attempts - 1 where id = ? and complete_attempts > 0',
           ).run(session.id);
           session.complete_attempts = Math.max(0, session.complete_attempts - 1);
-          releaseAiAttempt(session);
+          releaseAiAttempt(session, 'assessment');
         }
         throw aiError(error);
       }

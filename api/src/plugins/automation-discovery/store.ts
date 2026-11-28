@@ -42,6 +42,9 @@ export interface SessionRow {
    * route it uses.
    */
   ai_attempts: number;
+  /** The question the step counter below belongs to, null when none is open. */
+  ai_step_key: string | null;
+  ai_step_attempts: number;
 }
 
 export interface AnswerRow {
@@ -98,6 +101,10 @@ export interface InviteDto {
     /** Model calls this link made, and how often it asked for the assessment. */
     aiAttempts: number;
     assessmentAttempts: number;
+    /** Model calls spent on the question currently on screen. */
+    aiStepAttempts: number;
+    /** True while that question has used up its own allowance. */
+    stepBlocked: boolean;
   } | null;
   reportAvailable: boolean;
 }
@@ -118,6 +125,15 @@ export function nowIso(now: Date): string {
 export function addDays(now: Date, days: number): string {
   return new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 }
+
+/**
+ * How often the same question may ask the model before it stops.
+ *
+ * One hint is all a question needs; the rest is room for a counted failure
+ * (a cut-off or filtered answer). A successful answer resets the counter, so a
+ * later return to the question starts with a full allowance again.
+ */
+export const STEP_ATTEMPT_LIMIT = 4;
 
 export function parseJson<T>(raw: string | null): T | null {
   if (!raw) return null;
@@ -156,6 +172,9 @@ export function toInviteDto(
           completedAt: session.completed_at,
           aiAttempts: session.ai_attempts,
           assessmentAttempts: session.complete_attempts,
+          aiStepAttempts: session.ai_step_attempts,
+          stepBlocked:
+            session.ai_step_key !== null && session.ai_step_attempts >= STEP_ATTEMPT_LIMIT,
         }
       : null,
     reportAvailable,

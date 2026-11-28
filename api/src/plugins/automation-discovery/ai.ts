@@ -304,6 +304,10 @@ function truncatedError(): AiUnavailable {
  *
  * The whole call, retry included, is bounded by `withDeadline`, so the
  * browser's own timeout is never reached first.
+ *
+ * A retry is one more provider call, but the caller reserved only one logical
+ * call for this question: see `aiAttemptLimit` in `server.ts` for why the
+ * budget counts logical calls and what that means for the real spend.
  */
 async function complete(
   request: CompleteRequest,

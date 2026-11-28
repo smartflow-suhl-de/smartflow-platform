@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import test, { beforeEach } from 'node:test';
 import { createTestApp, type TestApp } from './helpers.ts';
 import {
+  aiAttemptLimit,
   COMPLETE_ATTEMPT_LIMIT,
   PublicRateLimiter,
   publicRateLimiter,
+  STEP_ATTEMPT_LIMIT,
 } from '../../src/plugins/automation-discovery/server.ts';
 import {
   analyse,
@@ -980,39 +982,233 @@ test('repeating the same interview step stops at the step budget, not at 25 call
     if (system.includes('structured automation assessment')) return llmReply(payload);
     if (system.includes('pick automation topics')) return llmReply(payload);
     hintCalls += 1;
-    // The hint fails, so the step is not advanced and every call serves the
-    // same question: exactly the cheap loop the security review measured.
-    return { status: 503, body: JSON.stringify({ error: { code: 'llm_provider_error' } }) };
+    // A counted failure: the model answered but produced nothing usable, so
+    // the step stays and every request serves the same question. This is the
+    // cheap loop the security review measured.
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'stop',
+      }),
+    };
   });
 
-  // Into the map phase: consent, then the first question is answered.
+  // Into the map phase: consent, then the first question is opened.
   await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
-  const opened = await advance(ctx, invite.token);
-  assert.equal(opened.statusCode, 200);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
 
   const statuses: number[] = [];
   for (let index = 0; index < 25; index += 1) {
     statuses.push((await advance(ctx, invite.token)).statusCode);
   }
-  // A provider outage is refunded, so the step counter is the limit that
-  // bites: four counted calls, then 429 for the rest.
-  assert.equal(hintCalls, 4);
-  assert.deepEqual(
-    statuses.slice(0, 4).every((status) => status === 503),
+  // 25 requests, exactly STEP_ATTEMPT_LIMIT provider calls, then 429 for the
+  // rest: the loop no longer scales with requests.
+  assert.equal(hintCalls, STEP_ATTEMPT_LIMIT);
+  assert.equal(
+    statuses.slice(0, STEP_ATTEMPT_LIMIT).every((status) => status === 502),
     true,
   );
   assert.equal(
-    statuses.slice(4).every((status) => status === 429),
+    statuses.slice(STEP_ATTEMPT_LIMIT).every((status) => status === 429),
     true,
   );
-  const last = await advance(ctx, invite.token);
-  assert.equal(last.statusCode, 429);
+
+  // A hard failure keeps the step blocked: the operator sees why.
+  const step = ctx.db
+    .prepare('select ai_step_key, ai_step_attempts from discovery_session')
+    .get() as { ai_step_key: string | null; ai_step_attempts: number };
+  assert.ok(step.ai_step_key);
+  assert.equal(step.ai_step_attempts, STEP_ATTEMPT_LIMIT);
+});
+
+test('a provider outage on one step does not lock that step for the customer', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let providerDown = true;
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    const request = payload as { messages?: Array<{ content?: string }> } | undefined;
+    const system = request?.messages?.[0]?.content ?? '';
+    if (system.includes('structured automation assessment')) return llmReply(payload);
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    hintCalls += 1;
+    if (!providerDown) return llmReply(payload);
+    return { status: 503, body: JSON.stringify({ error: { code: 'llm_provider_error' } }) };
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  // Five provider outages on the same question: no answer, so nothing is
+  // spent and the question stays usable.
+  for (let index = 0; index < 5; index += 1) {
+    assert.equal((await advance(ctx, invite.token)).statusCode, 503);
+  }
+  assert.equal(hintCalls, 5);
+
+  providerDown = false;
+  const recovered = await advance(ctx, invite.token);
+  assert.equal(recovered.statusCode, 200);
+  assert.ok((recovered.body as { hint?: { text: string } | null }).hint);
+});
+
+test('a successful answer gives the question a fresh allowance when it comes back', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let mode: 'ok' | 'fail' = 'ok';
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    const request = payload as { messages?: Array<{ content?: string }> } | undefined;
+    const system = request?.messages?.[0]?.content ?? '';
+    if (system.includes('structured automation assessment')) return llmReply(payload);
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    hintCalls += 1;
+    if (mode === 'ok') return llmReply(payload);
+    // A counted failure, so the step counter fills instead of being refunded.
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'stop',
+      }),
+    };
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+  // The successful answer closed the question: nothing left over.
+  const after = ctx.db
+    .prepare('select current_step, ai_step_key, ai_step_attempts from discovery_session')
+    .get() as { current_step: number; ai_step_key: string | null; ai_step_attempts: number };
+  assert.equal(after.ai_step_key, null);
+  assert.equal(after.ai_step_attempts, 0);
+
+  // A revisit of the same question (an operator going back, `deepen` returning
+  // to a question) must start with a full allowance, not inherit the old count.
+  ctx.db.prepare('update discovery_session set current_step = ?').run(after.current_step - 1);
+  mode = 'fail';
+  const before = hintCalls;
+  for (let index = 0; index < STEP_ATTEMPT_LIMIT; index += 1) {
+    assert.equal((await advance(ctx, invite.token)).statusCode, 502);
+  }
+  // Four model calls, not an immediate 429: the allowance is fresh.
+  assert.equal(hintCalls - before, STEP_ATTEMPT_LIMIT);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 429);
+});
+
+test('the whole AI budget of a link is what stops an endless interview', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  // Three counted failures, then a good answer, on every question: four real
+  // model calls per question, so the interview walks the map and spends its
+  // budget at the honest rate, without the step cap ever blocking a question.
+  let failures = 0;
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    const request = payload as { messages?: Array<{ content?: string }> } | undefined;
+    const system = request?.messages?.[0]?.content ?? '';
+    if (system.includes('structured automation assessment')) return llmReply(payload);
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    hintCalls += 1;
+    if (failures >= 3) {
+      failures = 0;
+      return llmReply(payload);
+    }
+    failures += 1;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'stop',
+      }),
+    };
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  const budget = aiAttemptLimit('standard');
+  let advanced = 0;
+  for (let guard = 0; guard < 60 && hintCalls < budget; guard += 1) {
+    const response = await advance(ctx, invite.token);
+    assert.ok(
+      response.statusCode === 200 || response.statusCode === 502,
+      `unexpected ${response.statusCode}: ${JSON.stringify(response.body)}`,
+    );
+    if (response.statusCode === 200) advanced += 1;
+  }
+  // The honest interview spent the budget in model calls, not in requests.
+  assert.equal(hintCalls, budget);
+  assert.ok(advanced >= 11, `only ${advanced} questions were passed`);
+
+  // The next request is refused by the total budget, and it costs nothing.
+  const exhausted = await advance(ctx, invite.token);
+  assert.equal(exhausted.statusCode, 429);
   assert.equal(
-    (last.body as { error: { code: string } }).error.code,
+    (exhausted.body as { error: { code: string } }).error.code,
     'discovery_complete_limit_reached',
   );
-  // 25 calls, four provider calls: the loop no longer scales with requests.
-  assert.equal(hintCalls, 4);
+  assert.equal(hintCalls, budget);
+});
+
+test('the operator sees why a step is blocked, not just a 429', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  stubLlm(ctx, (payload) => {
+    const request = payload as { messages?: Array<{ content?: string }> } | undefined;
+    const system = request?.messages?.[0]?.content ?? '';
+    if (system.includes('structured automation assessment')) return llmReply(payload);
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'stop',
+      }),
+    };
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  await advance(ctx, invite.token);
+  for (let index = 0; index < STEP_ATTEMPT_LIMIT; index += 1) {
+    await advance(ctx, invite.token);
+  }
+  assert.equal((await advance(ctx, invite.token)).statusCode, 429);
+
+  const detail = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/discovery/invites/${invite.id}`,
+    headers: { cookie },
+  });
+  assert.equal(detail.statusCode, 200);
+  const session = (
+    detail.json() as {
+      invite: {
+        session: { aiStepAttempts: number; stepBlocked: boolean; aiAttempts: number } | null;
+      };
+    }
+  ).invite.session;
+  assert.ok(session);
+  // The operator sees the cause: this question used up its allowance.
+  assert.equal(session.stepBlocked, true);
+  assert.equal(session.aiStepAttempts, STEP_ATTEMPT_LIMIT);
 });
 
 test('repeated complete calls stop at the attempt limit, and a report still wins', async (t) => {

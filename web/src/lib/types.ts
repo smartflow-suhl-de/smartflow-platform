@@ -188,6 +188,10 @@ export interface DiscoveryInvite {
     aiAttempts: number;
     /** Model calls of the assessment, capped by the plugin. */
     assessmentAttempts: number;
+    /** Model calls spent on the question currently on screen. */
+    aiStepAttempts: number;
+    /** True while that question has used up its own allowance. */
+    stepBlocked: boolean;
     startedAt: string;
     lastSeenAt: string;
     completedAt: string | null;
