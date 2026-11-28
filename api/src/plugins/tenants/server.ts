@@ -4,23 +4,74 @@ import { AppError } from '../../kernel/errors.ts';
 import { SLUG_PATTERN, newId, slugFrom } from '../../kernel/ids.ts';
 import { manifest } from './manifest.ts';
 import {
+  DETAIL_FIELDS,
+  DETAIL_SELECT,
   decodeCursor,
+  emptyDetails,
   encodeCursor,
   toTenant,
+  type DetailField,
   type TenantListQuery,
   type TenantRow,
 } from './store.ts';
 
+/** Max length per master-data field; the browser enforces the same numbers. */
+const DETAIL_LIMITS: Record<DetailField, number> = {
+  legal_name: 160,
+  legal_form: 60,
+  customer_number: 40,
+  industry: 80,
+  street: 120,
+  address_extra: 120,
+  postal_code: 12,
+  city: 80,
+  country: 60,
+  contact_name: 120,
+  contact_role: 80,
+  contact_email: 160,
+  contact_phone: 40,
+  contact_mobile: 40,
+  email: 160,
+  phone: 40,
+  website: 160,
+  vat_id: 32,
+  tax_number: 32,
+  register_court: 80,
+  register_number: 60,
+  notes: 2000,
+};
+
+const EMAIL_FIELDS = new Set<DetailField>(['contact_email', 'email']);
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const POSTAL_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 -]{0,11}$/;
+
+const detailProperties = Object.fromEntries(
+  DETAIL_FIELDS.map((field) => [
+    field,
+    { type: ['string', 'null'], maxLength: DETAIL_LIMITS[field] },
+  ]),
+);
+
+const detailsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [...DETAIL_FIELDS],
+  properties: Object.fromEntries(
+    DETAIL_FIELDS.map((field) => [field, { type: ['string', 'null'] }]),
+  ),
+} as const;
+
 const tenantSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['id', 'name', 'slug', 'status', 'created_at'],
+  required: ['id', 'name', 'slug', 'status', 'created_at', 'details'],
   properties: {
     id: { type: 'string' },
     name: { type: 'string' },
     slug: { type: 'string' },
     status: { type: 'string', enum: ['active', 'suspended'] },
     created_at: { type: 'string' },
+    details: detailsSchema,
   },
 } as const;
 
@@ -96,6 +147,70 @@ function validateCreate(body: { name?: string; slug?: string }): { name: string;
   return { name, slug };
 }
 
+/**
+ * Trims and validates the provided master-data fields. Absent keys stay
+ * untouched (a PATCH that only changes the phone number must not wipe the
+ * address); an empty string clears the field to `null`.
+ */
+function validateDetails(
+  body: Record<string, unknown>,
+): Partial<Record<DetailField, string | null>> {
+  const fields: Record<string, string> = {};
+  const values: Partial<Record<DetailField, string | null>> = {};
+
+  for (const field of DETAIL_FIELDS) {
+    if (!(field in body)) continue;
+    const raw = body[field];
+    if (raw === null || raw === undefined) {
+      values[field] = null;
+      continue;
+    }
+    if (typeof raw !== 'string') {
+      fields[field] = 'Please enter text.';
+      continue;
+    }
+    const value = raw.trim();
+    if (value.length === 0) {
+      values[field] = null;
+      continue;
+    }
+    if (value.length > DETAIL_LIMITS[field]) {
+      fields[field] = `Please use at most ${DETAIL_LIMITS[field]} characters.`;
+      continue;
+    }
+    if (EMAIL_FIELDS.has(field) && !EMAIL_PATTERN.test(value)) {
+      fields[field] = 'Please enter a valid email address.';
+      continue;
+    }
+    if (field === 'postal_code' && !POSTAL_CODE_PATTERN.test(value)) {
+      fields[field] = 'Please enter a valid postal code.';
+      continue;
+    }
+    values[field] = value;
+  }
+
+  if (Object.keys(fields).length > 0) throw new FieldError(fields);
+  return values;
+}
+
+function validateName(raw: unknown): string {
+  const name = typeof raw === 'string' ? raw.trim() : '';
+  if (name.length < 2 || name.length > 80) {
+    throw new FieldError({ name: 'Please enter a name of 2 to 80 characters.' });
+  }
+  return name;
+}
+
+function validateSlug(raw: unknown): string {
+  const slug = typeof raw === 'string' ? raw.trim() : '';
+  if (!SLUG_PATTERN.test(slug) || slug.length < 2 || slug.length > 48) {
+    throw new FieldError({
+      slug: 'Lowercase letters, digits and hyphens only (2–48 characters).',
+    });
+  }
+  return slug;
+}
+
 export function register(ctx: PluginContext): void {
   const { app, db, log, now } = ctx;
 
@@ -115,6 +230,16 @@ export function register(ctx: PluginContext): void {
           create index tenants_created on tenants(created_at, id);
           create index tenants_status on tenants(status);
         `);
+      },
+    },
+    {
+      version: 2,
+      up(database) {
+        // Master data of the tenant itself, kept next to the row because the
+        // operator directory lists and edits it before a tenant context exists.
+        for (const field of DETAIL_FIELDS) {
+          database.exec(`alter table tenants add column ${field} text`);
+        }
       },
     },
   ]);
@@ -137,11 +262,24 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 2,
+      up(database) {
+        // The tenant's own database keeps a copy of its master data so
+        // tenant-scoped plugins can read the address without the platform DB.
+        for (const field of DETAIL_FIELDS) {
+          database.exec(`alter table tenant_profile add column ${field} text`);
+        }
+      },
+    },
   ]);
 
   const findById = (id: string): TenantRow | undefined =>
-    db.prepare('select id, name, slug, status, created_at from tenants where id = ?').get(id) as
-      TenantRow | undefined;
+    db
+      .prepare(
+        `select id, name, slug, status, created_at, ${DETAIL_SELECT} from tenants where id = ?`,
+      )
+      .get(id) as TenantRow | undefined;
 
   /** The kernel asks the owning plugin; it never reads this table itself. */
   ctx.provideTenantDirectory({
@@ -151,7 +289,7 @@ export function register(ctx: PluginContext): void {
     },
     list() {
       const rows = db
-        .prepare('select id, name, slug, status, created_at from tenants order by name')
+        .prepare(`select id, name, slug, status, created_at from tenants order by name`)
         .all() as TenantRow[];
       return rows.map((row) => ({
         id: row.id,
@@ -234,11 +372,41 @@ export function register(ctx: PluginContext): void {
 
   function provision(tenant: TenantRow): void {
     const database = ctx.tenantDb(tenant.id);
+    const columns = ['id', 'display_name', 'created_at', ...DETAIL_FIELDS];
+    const placeholders = columns.map(() => '?').join(', ');
+    const values = [
+      tenant.id,
+      tenant.name,
+      tenant.created_at,
+      ...DETAIL_FIELDS.map((field) => tenant[field]),
+    ];
     database
       .prepare(
-        'insert or ignore into tenant_profile (id, display_name, created_at) values (?, ?, ?)',
+        `insert or ignore into tenant_profile (${columns.join(', ')}) values (${placeholders})`,
       )
-      .run(tenant.id, tenant.name, tenant.created_at);
+      .run(...values);
+  }
+
+  /**
+   * Mirrors the platform row into the tenant database. A suspended tenant
+   * cannot be opened, so this is best effort: the platform row stays the
+   * source of truth and the copy catches up on the next successful provision.
+   */
+  function syncProfile(tenant: TenantRow): void {
+    try {
+      const database = ctx.tenantDb(tenant.id);
+      const assignments = ['display_name = ?', ...DETAIL_FIELDS.map((field) => `${field} = ?`)];
+      const values = [tenant.name, ...DETAIL_FIELDS.map((field) => tenant[field]), tenant.id];
+      const changed = database
+        .prepare(`update tenant_profile set ${assignments.join(', ')} where id = ?`)
+        .run(...values);
+      if (changed.changes === 0) {
+        provision(tenant);
+        return;
+      }
+    } catch (error) {
+      log.warn({ err: error, tenantId: tenant.id }, 'tenant profile sync skipped');
+    }
   }
 
   app.get<{ Querystring: { status?: string; q?: string; limit?: string; cursor?: string } }>(
@@ -301,7 +469,7 @@ export function register(ctx: PluginContext): void {
 
       const rows = db
         .prepare(
-          `select id, name, slug, status, created_at from tenants ${pageFilter}
+          `select id, name, slug, status, created_at, ${DETAIL_SELECT} from tenants ${pageFilter}
            order by created_at desc, id desc limit ?`,
         )
         .all(...pageParams, query.limit + 1) as TenantRow[];
@@ -342,7 +510,7 @@ export function register(ctx: PluginContext): void {
     },
   );
 
-  app.post<{ Body: { name?: string; slug?: string } }>(
+  app.post<{ Body: Record<string, unknown> }>(
     '/tenants',
     {
       preHandler: app.requireRole('operator'),
@@ -356,6 +524,7 @@ export function register(ctx: PluginContext): void {
           properties: {
             name: { type: 'string', minLength: 2, maxLength: 80 },
             slug: { type: 'string', maxLength: 48 },
+            ...detailProperties,
           },
         },
         response: {
@@ -378,6 +547,8 @@ export function register(ctx: PluginContext): void {
         });
       }
 
+      const details = validateDetails(request.body);
+
       const createdAt = now().toISOString();
       const row: TenantRow = {
         id: newId('ten'),
@@ -385,11 +556,29 @@ export function register(ctx: PluginContext): void {
         slug,
         status: 'active',
         created_at: createdAt,
+        ...emptyDetails(),
+        ...details,
       };
 
-      db.prepare(
-        'insert into tenants (id, name, slug, status, created_at, updated_at) values (?, ?, ?, ?, ?, ?)',
-      ).run(row.id, row.name, row.slug, row.status, row.created_at, createdAt);
+      const columns = [
+        'id',
+        'name',
+        'slug',
+        'status',
+        'created_at',
+        'updated_at',
+        ...DETAIL_FIELDS,
+      ];
+      const placeholders = columns.map(() => '?').join(', ');
+      db.prepare(`insert into tenants (${columns.join(', ')}) values (${placeholders})`).run(
+        row.id,
+        row.name,
+        row.slug,
+        row.status,
+        row.created_at,
+        createdAt,
+        ...DETAIL_FIELDS.map((field) => row[field]),
+      );
 
       try {
         provision(row);
@@ -424,6 +613,69 @@ export function register(ctx: PluginContext): void {
       const row = findById(request.params.id);
       if (!row) throw new AppError('tenant_not_found', 'Tenant not found.', 404);
       return toTenant(row);
+    },
+  );
+
+  app.patch<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    '/tenants/:id',
+    {
+      preHandler: app.requireRole('operator'),
+      schema: {
+        summary: 'Update a tenant name and master data',
+        tags: ['tenants'],
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            name: { type: 'string', minLength: 2, maxLength: 80 },
+            slug: { type: 'string', minLength: 2, maxLength: 48 },
+            ...detailProperties,
+          },
+        },
+        response: {
+          200: tenantSchema,
+          401: errorSchema,
+          403: errorSchema,
+          404: errorSchema,
+          409: errorSchema,
+          422: errorSchema,
+        },
+      },
+    },
+    async (request) => {
+      const row = findById(request.params.id);
+      if (!row) throw new AppError('tenant_not_found', 'Tenant not found.', 404);
+
+      const details = validateDetails(request.body);
+      const name = 'name' in request.body ? validateName(request.body.name) : row.name;
+      const slug = 'slug' in request.body ? validateSlug(request.body.slug) : row.slug;
+
+      if (slug !== row.slug) {
+        const taken = db
+          .prepare('select id from tenants where slug = ? and id <> ?')
+          .get(slug, row.id) as { id: string } | undefined;
+        if (taken) {
+          throw new AppError('slug_taken', 'This slug is already taken.', 409, {
+            fields: { slug: 'This slug is already taken.' },
+          });
+        }
+      }
+
+      const assignments: string[] = ['name = ?', 'slug = ?', 'updated_at = ?'];
+      const values: unknown[] = [name, slug, now().toISOString()];
+      for (const field of DETAIL_FIELDS) {
+        if (!(field in details)) continue;
+        assignments.push(`${field} = ?`);
+        values.push(details[field] ?? null);
+      }
+      values.push(row.id);
+
+      db.prepare(`update tenants set ${assignments.join(', ')} where id = ?`).run(...values);
+
+      const updated: TenantRow = { ...row, name, slug, ...details };
+      syncProfile(updated);
+      return toTenant(updated);
     },
   );
 
