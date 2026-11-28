@@ -19,6 +19,7 @@ import type {
   TenantStats,
 } from './lib/types';
 import { BUILTIN_THEMES, CUSTOM_THEME_ID, defaultTheme, type ThemeDefinition } from './lib/themes';
+import { themeForAppearance, type AppearancePair } from './lib/appearance';
 import { DiscoveryPage } from './pages/Discovery';
 import { HelpPage } from './pages/Help';
 import { LlmProviderDetailPage, LlmProviderFormPage, LlmProvidersPage } from './pages/LlmProviders';
@@ -135,6 +136,18 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
     setTheme(next);
     if (next.id === 'custom') setCustomTheme(next);
   }, []);
+
+  // One click in the footer switch moves theme and mode together, in the order
+  // of `appearanceCycle`. Both values go through the same setters the settings
+  // page uses, so the persisted state stays the single source of truth.
+  const handleAppearanceChange = useCallback(
+    (next: AppearancePair) => {
+      const nextTheme = themeForAppearance(next, customTheme);
+      if (nextTheme) setTheme(nextTheme);
+      setMode(next.mode);
+    },
+    [customTheme],
+  );
 
   const handleRemoveCustomTheme = useCallback(() => {
     clearCustomTheme();
@@ -526,6 +539,9 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         healthError={healthError}
         stats={stats}
         mode={mode}
+        theme={theme}
+        customTheme={customTheme}
+        locale={locale}
         messages={messages}
         loggingOut={loggingOut}
         logoutError={logoutError}
@@ -533,6 +549,7 @@ function SessionApp({ pathname: rawPathname, search }: { pathname: string; searc
         onOpenTenantSwitcher={handleOpenSwitcher}
         onClearTenantContext={handleClearContext}
         onModeChange={handleModeChange}
+        onAppearanceChange={handleAppearanceChange}
         onRetryHealth={retryHealth}
         onLogout={handleLogout}
       >

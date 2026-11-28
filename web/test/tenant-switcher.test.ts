@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import './helpers/browser.ts';
 import type { AuthMe, SessionUser, Tenant } from '../src/lib/types.ts';
+import { defaultTheme } from '../src/lib/themes.ts';
 
 interface Call {
   url: string;
@@ -231,6 +232,9 @@ describe('tenant switcher component rendering', () => {
           healthError: false,
           stats: null,
           mode: 'light',
+          theme: defaultTheme(),
+          customTheme: null,
+          locale: 'de',
           messages,
           loggingOut: false,
           logoutError: null,
@@ -238,6 +242,7 @@ describe('tenant switcher component rendering', () => {
           onOpenTenantSwitcher: () => undefined,
           onClearTenantContext: () => undefined,
           onModeChange: () => undefined,
+          onAppearanceChange: () => undefined,
           onRetryHealth: () => undefined,
           onLogout: () => undefined,
           children: createElement('div', null, 'Content'),
@@ -258,6 +263,9 @@ describe('tenant switcher component rendering', () => {
           healthError: false,
           stats: null,
           mode: 'light',
+          theme: defaultTheme(),
+          customTheme: null,
+          locale: 'de',
           messages,
           loggingOut: false,
           logoutError: null,
@@ -265,6 +273,7 @@ describe('tenant switcher component rendering', () => {
           onOpenTenantSwitcher: () => undefined,
           onClearTenantContext: () => undefined,
           onModeChange: () => undefined,
+          onAppearanceChange: () => undefined,
           onRetryHealth: () => undefined,
           onLogout: () => undefined,
           children: createElement('div', null, 'Content'),
