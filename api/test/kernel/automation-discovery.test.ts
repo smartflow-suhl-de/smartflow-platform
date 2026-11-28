@@ -1057,6 +1057,64 @@ test('a provider outage on one step does not lock that step for the customer', a
   assert.ok((recovered.body as { hint?: { text: string } | null }).hint);
 });
 
+/** Walks the map phase and returns at the first deepen question of cluster A. */
+async function runToFirstDeepenQuestion(ctx: TestApp, token: string): Promise<void> {
+  await postAnswers(ctx, token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, token)).statusCode, 200);
+  for (let index = 0; index < 12; index += 1) {
+    const state = await getState(ctx, token);
+    assert.ok(state.step);
+    await postAnswers(
+      ctx,
+      token,
+      state.step.fields
+        .filter((field) => field.required)
+        .map((field) => ({ key: field.key, value: answerFor(field) })),
+    );
+    assert.equal((await advance(ctx, token)).statusCode, 200);
+  }
+  assert.equal((await getState(ctx, token)).phase, 'clusters');
+  await postAnswers(ctx, token, [{ key: 'clusters.selected', value: ['A'] }]);
+  const started = await advance(ctx, token);
+  assert.equal(started.statusCode, 200, JSON.stringify(started.body));
+  assert.equal(started.state.step?.key, 'deep.A.q1');
+}
+
+/** A model answer that is cut off: counted against the budget, never refunded. */
+function emptyAnswer(): LlmReply {
+  return {
+    status: 200,
+    body: JSON.stringify({
+      message: { content: '' },
+      model: { modelKey: 'test-model' },
+      finishReason: 'stop',
+    }),
+  };
+}
+
+function providerDown(): LlmReply {
+  return { status: 503, body: JSON.stringify({ error: { code: 'llm_provider_error' } }) };
+}
+
+function providerTimeout(): LlmReply {
+  return { status: 504, body: '' };
+}
+
+function systemOf(payload: unknown): string {
+  return (
+    (payload as { messages?: Array<{ content?: string }> } | undefined)?.messages?.[0]?.content ??
+    ''
+  );
+}
+
+function isHintRequest(payload: unknown): boolean {
+  const system = systemOf(payload);
+  return (
+    !system.includes('structured automation assessment') &&
+    !system.includes('pick automation topics')
+  );
+}
+
 test('a successful answer gives the question a fresh allowance when it comes back', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -1105,6 +1163,297 @@ test('a successful answer gives the question a fresh allowance when it comes bac
   assert.equal((await advance(ctx, invite.token)).statusCode, 429);
 });
 
+test('a provider that stays down cannot be hammered: sixty attempts stop after eight calls', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    if (systemOf(payload).includes('structured automation assessment')) return llmReply(payload);
+    if (systemOf(payload).includes('pick automation topics')) return llmReply(payload);
+    hintCalls += 1;
+    return providerDown();
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  // The provider never answers. Four outages of this question are forgiven so a
+  // hiccup does not lock the customer out; after that an outage counts like any
+  // other failure and the question's allowance runs out.
+  const statuses: number[] = [];
+  for (let index = 0; index < 60; index += 1) {
+    statuses.push((await advance(ctx, invite.token)).statusCode);
+  }
+  assert.equal(
+    hintCalls,
+    STEP_ATTEMPT_LIMIT * 2,
+    'four forgiven plus four counted provider calls, then the plugin stops',
+  );
+  assert.equal(
+    statuses.slice(0, STEP_ATTEMPT_LIMIT * 2).every((status) => status === 503),
+    true,
+  );
+  // The stop is defined and has its own message, not a generic 429.
+  assert.equal(
+    statuses.slice(STEP_ATTEMPT_LIMIT * 2).every((status) => status === 429),
+    true,
+  );
+  const blocked = await advance(ctx, invite.token);
+  assert.equal(blocked.statusCode, 429);
+  const error = (blocked.body as { error: { code: string; message: string } }).error;
+  assert.equal(error.code, 'discovery_complete_limit_reached');
+  assert.match(error.message, /asked the AI too often/);
+  assert.equal(hintCalls, STEP_ATTEMPT_LIMIT * 2);
+
+  const row = ctx.db
+    .prepare(
+      'select ai_attempts, ai_step_refunds, ai_step_attempts from discovery_session where invite_id = ?',
+    )
+    .get(invite.id) as { ai_attempts: number; ai_step_refunds: number; ai_step_attempts: number };
+  // Every one of those calls went out to the provider, so every one is counted.
+  assert.equal(row.ai_attempts, STEP_ATTEMPT_LIMIT * 2);
+  assert.equal(row.ai_step_refunds, STEP_ATTEMPT_LIMIT);
+  assert.equal(row.ai_step_attempts, STEP_ATTEMPT_LIMIT);
+});
+
+test('the fifth outage of a question costs an attempt, the first four do not', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    if (!isHintRequest(payload)) return llmReply(payload);
+    hintCalls += 1;
+    return providerDown();
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  const row = () =>
+    ctx.db
+      .prepare(
+        'select ai_attempts, ai_step_attempts, ai_step_refunds from discovery_session where invite_id = ?',
+      )
+      .get(invite.id) as { ai_attempts: number; ai_step_attempts: number; ai_step_refunds: number };
+
+  for (let index = 0; index < STEP_ATTEMPT_LIMIT; index += 1) {
+    assert.equal((await advance(ctx, invite.token)).statusCode, 503);
+    // The question keeps a full allowance, the link pays for the call.
+    assert.equal(row().ai_step_attempts, 0, `question allowance after outage ${index + 1}`);
+    assert.equal(row().ai_attempts, index + 1);
+  }
+  assert.equal(row().ai_step_refunds, STEP_ATTEMPT_LIMIT);
+
+  // The forgiveness is used up: this outage stays on the question's account.
+  assert.equal((await advance(ctx, invite.token)).statusCode, 503);
+  assert.equal(row().ai_step_attempts, 1);
+  assert.equal(row().ai_step_refunds, STEP_ATTEMPT_LIMIT);
+  assert.equal(hintCalls, STEP_ATTEMPT_LIMIT + 1);
+});
+
+test('a timeout is billed by the provider, so it costs a budget unit', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    if (!isHintRequest(payload)) return llmReply(payload);
+    hintCalls += 1;
+    return providerTimeout();
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  const timedOut = await advance(ctx, invite.token);
+  assert.equal(timedOut.statusCode, 503);
+  assert.equal((timedOut.body as { error: { reason?: string } }).error.reason, 'timeout');
+  assert.equal(hintCalls, 1);
+
+  const row = ctx.db
+    .prepare('select ai_attempts, ai_step_attempts from discovery_session where invite_id = ?')
+    .get(invite.id) as { ai_attempts: number; ai_step_attempts: number };
+  // The provider worked on the request and bills it: the link's budget keeps
+  // the unit. The question itself gets its attempt back, because the customer
+  // did nothing wrong.
+  assert.equal(row.ai_attempts, 1);
+  assert.equal(row.ai_step_attempts, 0);
+});
+
+test('two questions of the same cluster do not share their allowance', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let healthy = true;
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    if (!isHintRequest(payload)) return llmReply(payload);
+    hintCalls += 1;
+    return healthy ? llmReply(payload) : emptyAnswer();
+  });
+
+  await runToFirstDeepenQuestion(ctx, invite.token);
+
+  // The first question of the cluster burns its whole allowance.
+  healthy = false;
+  const before = hintCalls;
+  for (let index = 0; index < STEP_ATTEMPT_LIMIT; index += 1) {
+    assert.equal((await advance(ctx, invite.token)).statusCode, 502);
+  }
+  assert.equal(hintCalls - before, STEP_ATTEMPT_LIMIT);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 429);
+
+  // Answering it moves the interview to the next question of the same cluster.
+  // That one has its own counter and must still reach the model — the exhausted
+  // question must not hand its count to its neighbour.
+  healthy = true;
+  const answered = await postAnswers(ctx, invite.token, [
+    { key: 'deep.A.q1', value: 'Der Kunde fragt per E-Mail an.' },
+  ]);
+  assert.equal(answered.statusCode, 200);
+  const callsBeforeNextQuestion = hintCalls;
+  const second = await advance(ctx, invite.token);
+  assert.equal(second.statusCode, 200, JSON.stringify(second.body));
+  assert.equal(hintCalls, callsBeforeNextQuestion + 1, 'the next question got its own call');
+
+  const row = ctx.db
+    .prepare('select ai_step_key, ai_step_attempts from discovery_session where invite_id = ?')
+    .get(invite.id) as { ai_step_key: string | null; ai_step_attempts: number };
+  // The finished question no longer holds the step counter.
+  assert.equal(row.ai_step_key, null);
+  assert.equal(row.ai_step_attempts, 0);
+});
+
+test('a rotated link reports neither a blocked step nor an old budget', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  stubLlm(ctx, (payload) => (isHintRequest(payload) ? emptyAnswer() : llmReply(payload)));
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+  for (let index = 0; index < STEP_ATTEMPT_LIMIT; index += 1) {
+    assert.equal((await advance(ctx, invite.token)).statusCode, 502);
+  }
+  assert.equal((await advance(ctx, invite.token)).statusCode, 429);
+
+  const rotated = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/invites/${invite.id}/resend`,
+    headers: { cookie },
+  });
+  assert.equal(rotated.statusCode, 200);
+  // The response is built from the invitation it just reset, so it may not
+  // repeat the counters of the old link.
+  const session = (rotated.json() as { invite: { session: Record<string, number | boolean> } })
+    .invite.session;
+  assert.ok(session);
+  assert.equal(session.stepBlocked, false);
+  assert.equal(session.aiStepAttempts, 0);
+  assert.equal(session.aiAttempts, 0);
+});
+
+test('parallel outages give back exactly what was reserved, never more', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let reachable = false;
+  stubLlm(ctx, (payload) => {
+    if (!isHintRequest(payload)) return llmReply(payload);
+    if (reachable) return llmReply(payload);
+    // Not configured: the model was never called, so nothing was spent.
+    return { status: 409, body: JSON.stringify({ error: { code: 'llm_purpose_unmapped' } }) };
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  const row = () =>
+    ctx.db
+      .prepare('select ai_attempts, ai_step_attempts from discovery_session where invite_id = ?')
+      .get(invite.id) as { ai_attempts: number; ai_step_attempts: number };
+
+  const before = row().ai_attempts;
+  const parallel = await Promise.all(
+    Array.from(
+      { length: 6 },
+      () => advance(ctx, invite.token),
+      () => undefined,
+    ),
+  );
+  for (const response of parallel) {
+    assert.equal(response.statusCode, 503);
+    assert.equal((response.body as { error: { reason?: string } }).error.reason, 'not_configured');
+  }
+  // Six reservations, six refunds, and not one refund more: a refund is bound to
+  // its own reservation, so a parallel request cannot give back someone else's.
+  assert.equal(row().ai_attempts, before);
+  assert.equal(row().ai_step_attempts, 0);
+
+  reachable = true;
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+});
+
+test('an old step key from an earlier build never reports a blocked question', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  stubLlm(ctx, llmReply);
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  // A link that started life under an older key format: the counter is full but
+  // belongs to a question the key no longer names.
+  ctx.db
+    .prepare(
+      "update discovery_session set ai_step_key = 'deepen:0', ai_step_attempts = ? where invite_id = ?",
+    )
+    .run(STEP_ATTEMPT_LIMIT, invite.id);
+
+  const detail = () =>
+    ctx.app.inject({
+      method: 'GET',
+      url: `/api/v1/discovery/invites/${invite.id}`,
+      headers: { cookie },
+    });
+  const read = async () => {
+    const response = await detail();
+    assert.equal(response.statusCode, 200);
+    return (
+      response.json() as {
+        invite: { session: { stepBlocked: boolean; aiStepAttempts: number } };
+      }
+    ).invite.session;
+  };
+
+  // The question on screen is not blocked, so the operator must not be told it is.
+  assert.equal((await read()).stepBlocked, false);
+
+  // The next request drops the key that belongs to no question, and works.
+  const moved = await advance(ctx, invite.token);
+  assert.equal(moved.statusCode, 200, JSON.stringify(moved.body));
+  const after = ctx.db
+    .prepare('select ai_step_key, ai_step_attempts from discovery_session where invite_id = ?')
+    .get(invite.id) as { ai_step_key: string | null; ai_step_attempts: number };
+  assert.notEqual(after.ai_step_key, 'deepen:0');
+  assert.equal((await read()).stepBlocked, false);
+});
+
 test('the whole AI budget of a link is what stops an endless interview', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -1150,9 +1499,16 @@ test('the whole AI budget of a link is what stops an endless interview', async (
     );
     if (response.statusCode === 200) advanced += 1;
   }
-  // The honest interview spent the budget in model calls, not in requests.
-  assert.equal(hintCalls, budget);
   assert.ok(advanced >= 11, `only ${advanced} questions were passed`);
+
+  // The budget is really written to the link, not just a loop condition here:
+  // the stored counter has reached the limit while no question was blocked.
+  const spent = ctx.db
+    .prepare('select ai_attempts, ai_step_attempts from discovery_session where invite_id = ?')
+    .get(invite.id) as { ai_attempts: number; ai_step_attempts: number };
+  assert.equal(spent.ai_attempts, budget);
+  assert.equal(hintCalls, budget);
+  assert.ok(spent.ai_step_attempts < STEP_ATTEMPT_LIMIT);
 
   // The next request is refused by the total budget, and it costs nothing.
   const exhausted = await advance(ctx, invite.token);
@@ -1161,6 +1517,7 @@ test('the whole AI budget of a link is what stops an endless interview', async (
     (exhausted.body as { error: { code: string } }).error.code,
     'discovery_complete_limit_reached',
   );
+  // No model call for the refused request: the budget is a hard ceiling.
   assert.equal(hintCalls, budget);
 });
 
@@ -1284,7 +1641,7 @@ test('repeated complete calls stop at the attempt limit, and a report still wins
   assert.equal(analysisCalls, callsBefore);
 });
 
-test('a provider outage costs no budget, so the link still works afterwards', async (t) => {
+test('five provider outages in a row still let the assessment succeed afterwards', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
   const cookie = await ctx.signIn();
@@ -1312,12 +1669,18 @@ test('a provider outage costs no budget, so the link still works afterwards', as
       .prepare('select complete_attempts, ai_attempts from discovery_session where invite_id = ?')
       .get(invite.id) as { complete_attempts: number; ai_attempts: number };
 
-  // The provider is down for six requests. None of them produced an answer, so
-  // none of them may cost the link its budget.
-  for (let index = 0; index < 6; index += 1) {
+  // What the interview itself spent, so the outages below can be counted apart.
+  const spentByInterview = counters().ai_attempts;
+
+  // Five outages in a row: the assessment counter is forgiven each time, so the
+  // customer is not locked out, but every one of them reached the provider and
+  // is therefore counted against the link's total budget — an outage is a call
+  // the provider bills, not a free retry.
+  for (let index = 0; index < 5; index += 1) {
     const failed = await complete();
     assert.equal(failed.statusCode, 503);
     assert.equal((failed.json() as { error: { reason?: string } }).error.reason, 'unavailable');
+    assert.equal(counters().ai_attempts, spentByInterview + index + 1);
   }
   assert.equal(counters().complete_attempts, 0);
 
@@ -1325,6 +1688,7 @@ test('a provider outage costs no budget, so the link still works afterwards', as
   const recovered = await complete();
   assert.equal(recovered.statusCode, 200);
   assert.equal(counters().complete_attempts, 1);
+  assert.equal(counters().ai_attempts, spentByInterview + 6);
 });
 
 test('five real assessments still use up the assessment budget', async (t) => {

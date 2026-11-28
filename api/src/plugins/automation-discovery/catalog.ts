@@ -524,6 +524,17 @@ const DEEP_PROMPTS: Array<{ label: Localized; key: string }> = [
   },
 ];
 
+/**
+ * How many questions one cluster asks, and how many steps that phase costs.
+ *
+ * The step count is the questions plus the idea card that closes the cluster.
+ * Both numbers are derived from the catalogue, not written down at the place
+ * that walks the phase: a further question must not silently fold two cluster
+ * steps onto one slot.
+ */
+export const DEEP_QUESTIONS_PER_CLUSTER = DEEP_PROMPTS.length;
+export const DEEPEN_STEPS_PER_CLUSTER = DEEP_QUESTIONS_PER_CLUSTER + 1;
+
 /** The seven standard questions of one cluster. */
 export function clusterSteps(clusterId: string): StepDef[] {
   return DEEP_PROMPTS.map((prompt) => ({

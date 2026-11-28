@@ -45,6 +45,14 @@ export interface SessionRow {
   /** The question the step counter below belongs to, null when none is open. */
   ai_step_key: string | null;
   ai_step_attempts: number;
+  /**
+   * How many outages of this question already got their step attempt back.
+   *
+   * Refunding without a limit would remove the step cap entirely: a provider that
+   * keeps failing would let one question run forever. Each question may forgive
+   * `STEP_ATTEMPT_LIMIT` outages, then its outages count like any other failure.
+   */
+  ai_step_refunds: number;
 }
 
 export interface AnswerRow {
@@ -144,10 +152,19 @@ export function parseJson<T>(raw: string | null): T | null {
   }
 }
 
+/**
+ * The API shape of an invitation.
+ *
+ * `activeStepKey` is the budget key of the question the customer sees right now,
+ * when the caller knows it. Without it `stepBlocked` stays false: a key left over
+ * from an older question (an old build, a question the customer already passed)
+ * must not report a blocked link.
+ */
 export function toInviteDto(
   invite: InviteRow,
   session: SessionRow | null,
   reportAvailable: boolean,
+  activeStepKey: string | null = null,
 ): InviteDto {
   return {
     id: invite.id,
@@ -174,7 +191,9 @@ export function toInviteDto(
           assessmentAttempts: session.complete_attempts,
           aiStepAttempts: session.ai_step_attempts,
           stepBlocked:
-            session.ai_step_key !== null && session.ai_step_attempts >= STEP_ATTEMPT_LIMIT,
+            activeStepKey !== null &&
+            session.ai_step_key === activeStepKey &&
+            session.ai_step_attempts >= STEP_ATTEMPT_LIMIT,
         }
       : null,
     reportAvailable,

@@ -19,6 +19,8 @@ import {
   CLUSTERS,
   CLUSTERS_BY_ID,
   CONFIRM_STEPS,
+  DEEPEN_STEPS_PER_CLUSTER,
+  DEEP_QUESTIONS_PER_CLUSTER,
   MAP_STEPS,
   MAX_TEXT_LENGTH,
   clusterIdeasStep,
@@ -88,19 +90,24 @@ export { STEP_ATTEMPT_LIMIT };
  * customer never meets it and an abusive link stops early.
  *
  * The unit is a **logical** model call, one per reserved request of the plugin,
- * not one per HTTP request to the provider:
+ * and it is a hard limit on provider calls as well:
  *
+ * - A call that went out stays counted, whatever came back — answer, refusal,
+ *   provider error or timeout. A timeout is billed by the provider, so a link
+ *   cannot repeat one for free. Only the two reasons that never left the
+ *   building (`not_configured`, `caller_not_allowed`) are refunded.
  * - A cut-off answer is retried once inside `complete()`, so one reserved call
- *   can cost two provider calls. The worst case is therefore about twice the
- *   budget. Counting the retry separately was rejected: a legitimate retry
- *   would eat one of the customer's four attempts for the same question.
- * - A timed-out call is refunded (`isProviderOutage`) although the provider may
- *   invoice it, and a provider error that never produced an answer is refunded
- *   for the same reason. So a link can spend a little more at the provider than
- *   the budget says while it is failing, and never more while it works.
+ *   can cost two provider calls: the ceiling is `2 × aiAttemptLimit(mode)`.
+ *   Counting the retry separately was rejected — it would eat one of the
+ *   customer's four attempts for the same question.
+ * - The question cap of `STEP_ATTEMPT_LIMIT` forgives an outage, but only
+ *   `STEP_ATTEMPT_LIMIT` times per question (`ai_step_refunds`). After that the
+ *   outages of that question count like any other failure, which is what stops a
+ *   loop against a provider that keeps failing.
  *
- * The point of the cap is a bound on abuse by a link, and both effects keep the
- * real provider spend within a small multiple of it.
+ * So a link of mode `m` can cause at most `2 × aiAttemptLimit(m)` provider calls
+ * while the provider answers, and at most one question's forgive-and-retry cycle
+ * per question while it does not.
  */
 export function aiAttemptLimit(mode: Mode): number {
   const clusters = mode === 'full' ? 5 : mode === 'standard' ? 3 : 0;
@@ -218,7 +225,7 @@ function deepenSteps(
 function totalSteps(mode: Mode, clusters: number, shortcut: boolean): number {
   const confirm = CONFIRM_STEPS.length;
   if (shortcut || mode === 'short') return 1 + 12 + confirm;
-  const deepen = clusters === 0 ? 0 : clusters * 8;
+  const deepen = clusters === 0 ? 0 : clusters * DEEPEN_STEPS_PER_CLUSTER;
   return 1 + 12 + 1 + deepen + confirm;
 }
 
@@ -725,6 +732,17 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 5,
+      up(database) {
+        // A provider outage gives the question its attempt back, so the step cap
+        // would never bite against a dead provider. This counter caps how often
+        // one question may be forgiven.
+        database.exec(`
+          alter table discovery_session add column ai_step_refunds integer not null default 0;
+        `);
+      },
+    },
   ]);
 
   const call: CallInternal = (caller, request) => ctx.callInternal(caller, request);
@@ -1073,6 +1091,7 @@ export function register(ctx: PluginContext): void {
       ai_attempts: 0,
       ai_step_key: null,
       ai_step_attempts: 0,
+      ai_step_refunds: 0,
     };
     db.prepare(
       `insert into discovery_session
@@ -1199,32 +1218,75 @@ export function register(ctx: PluginContext): void {
   }
 
   /**
+   * Reservations that are still in flight, by token.
+   *
+   * A refund must be able to prove it belongs to the reservation it undoes. Two
+   * parallel requests of the same link would otherwise both give back a unit and
+   * the counter could drop below what was really spent — measured as four model
+   * calls leaving `ai_attempts` at 2. Every reservation files one token here and
+   * the refund redeems it; redeeming twice does nothing. The map lives in the
+   * process that serves the request, which is where the counters live as well.
+   *
+   * An entry that is never redeemed (a crash mid-request) only means the attempt
+   * stays counted — the safe direction — and is dropped when it gets old.
+   */
+  const reservations = new Map<string, { sessionId: string; at: number }>();
+  const RESERVATION_MAX_AGE_MS = 10 * 60_000;
+
+  function fileReservation(session: SessionRow): string {
+    const token = newId('rsv');
+    if (reservations.size >= 5_000) {
+      const cutoff = now().getTime() - RESERVATION_MAX_AGE_MS;
+      for (const [key, held] of reservations) if (held.at < cutoff) reservations.delete(key);
+    }
+    reservations.set(token, { sessionId: session.id, at: now().getTime() });
+    return token;
+  }
+
+  /** Redeems a reservation token; false when it was already settled. */
+  function redeemReservation(token: string, sessionId: string): boolean {
+    const held = reservations.get(token);
+    if (!held || held.sessionId !== sessionId) return false;
+    reservations.delete(token);
+    return true;
+  }
+
+  /**
    * Counts one logical model call against the link's budget before it happens.
    *
    * Both checks and both counters move inside one synchronous transaction, so
-   * no second request can pass the check in between and the limits hold. A
-   * refusal changes nothing: the caller gets 429 and no model is called.
+   * no second request can pass a check in between and the limits hold. A
+   * refusal changes nothing: the caller gets a defined error and no model is
+   * called. A successful reservation returns its token, which is the only way to
+   * give the attempt back later.
    *
-   * `stepKey` identifies the question being served. Calls for the same step add
-   * up in `ai_step_attempts`, a different step starts that counter over. The
-   * assessment passes `perStep: false`: it has its own `COMPLETE_ATTEMPT_LIMIT`
-   * and repeating it after a counted failure is legitimate, so it must not
-   * write the question counter.
+   * `stepKey` names the question being served, so it is that question's own key
+   * (`map:map.q3`, `deepen:deep.A.q2`). Calls for the same key add up in
+   * `ai_step_attempts`; a different question starts that counter over and gets a
+   * fresh allowance of forgiven outages. The assessment passes `perStep: false`:
+   * it has its own `COMPLETE_ATTEMPT_LIMIT` and repeating it after a counted
+   * failure is legitimate, so it must not write the question counter.
    */
   function reserveAiAttempt(
     invite: InviteRow,
     session: SessionRow,
     stepKey: string,
     perStep = true,
-  ): void {
+  ): string {
     const budget = aiAttemptLimit(invite.mode);
     const claim = db.transaction((): 'ok' | 'budget' | 'step' => {
       const row = db
         .prepare(
-          'select ai_attempts, ai_step_key, ai_step_attempts from discovery_session where id = ?',
+          `select ai_attempts, ai_step_key, ai_step_attempts
+             from discovery_session where id = ?`,
         )
         .get(session.id) as
-        { ai_attempts: number; ai_step_key: string | null; ai_step_attempts: number } | undefined;
+        | {
+            ai_attempts: number;
+            ai_step_key: string | null;
+            ai_step_attempts: number;
+          }
+        | undefined;
       if (!row) return 'budget';
       if (row.ai_attempts >= budget) return 'budget';
       const sameStep = row.ai_step_key === stepKey;
@@ -1235,13 +1297,23 @@ export function register(ctx: PluginContext): void {
         );
         return 'ok';
       }
-      db.prepare(
-        `update discovery_session
-            set ai_attempts = ai_attempts + 1,
-                ai_step_key = ?,
-                ai_step_attempts = ?
-          where id = ?`,
-      ).run(stepKey, sameStep ? row.ai_step_attempts + 1 : 1, session.id);
+      if (sameStep) {
+        db.prepare(
+          `update discovery_session
+              set ai_attempts = ai_attempts + 1, ai_step_attempts = ai_step_attempts + 1
+            where id = ?`,
+        ).run(session.id);
+      } else {
+        // A new question starts with a clean allowance, forgiven outages included.
+        db.prepare(
+          `update discovery_session
+              set ai_attempts = ai_attempts + 1,
+                  ai_step_key = ?,
+                  ai_step_attempts = 1,
+                  ai_step_refunds = 0
+            where id = ?`,
+        ).run(stepKey, session.id);
+      }
       return 'ok';
     });
     const verdict = claim();
@@ -1263,24 +1335,95 @@ export function register(ctx: PluginContext): void {
       );
     }
     session.ai_attempts += 1;
+    return fileReservation(session);
   }
 
   /**
-   * Gives a reserved attempt back after a provider outage.
+   * Books a provider outage: forgives the question, keeps what was really spent.
    *
-   * The link's total budget always comes back. The step counter comes back too
-   * when the outage happened on the step it currently belongs to, so four
-   * provider hiccups on one question cannot lock that question for good: no
-   * call succeeded, so nothing was spent. `stepKey` must be the key that was
-   * reserved, otherwise a late response cannot touch another step's counter.
+   * `token` must be the reservation this request made. An already settled token
+   * makes the whole call a no-op, so two parallel failures can never give back
+   * more than was reserved.
    *
-   * Hard failures (`truncated`, `invalid_output`, `filtered`) do not come
-   * through here: those reached the model and the step counter keeps counting
-   * them, so a link cannot buy an unlimited number of paid answers by looping
-   * the same question.
+   * - **Total budget:** only `not_configured` and `caller_not_allowed` come back.
+   *   They never reached the provider. Everything else — `unavailable`,
+   *   `timeout`, provider rate limiting — sent a call out and may be billed, so
+   *   the attempt stays counted and the provider spend is bounded by the budget.
+   * - **Question counter:** the attempt comes back, otherwise four hiccups would
+   *   block that question for good. This is limited to `STEP_ATTEMPT_LIMIT`
+   *   forgiven outages per question (`ai_step_refunds`); after that an outage
+   *   counts like any other failure and the question cap ends the loop. The
+   *   limit applies only to outages that really reached the provider — for the
+   *   two reasons above both counters are simply undone, because a call that
+   *   never left the building cannot be repeated against anyone's bill.
    */
-  function releaseAiAttempt(session: SessionRow, stepKey: string): void {
+  function recordOutage(session: SessionRow, stepKey: string, token: string, error: unknown): void {
+    const reachedProvider =
+      !(error instanceof AiUnavailable) ||
+      (error.reason !== 'not_configured' && error.reason !== 'caller_not_allowed');
+    const book = db.transaction(() => {
+      if (!redeemReservation(token, session.id)) return null;
+      if (!reachedProvider) {
+        // Nothing left the building, so nothing needs a ceiling: both counters
+        // are simply undone and the refund allowance is not used up.
+        db.prepare(
+          'update discovery_session set ai_attempts = ai_attempts - 1 where id = ? and ai_attempts > 0',
+        ).run(session.id);
+        db.prepare(
+          `update discovery_session
+              set ai_step_attempts = ai_step_attempts - 1
+            where id = ? and ai_step_key = ? and ai_step_attempts > 0`,
+        ).run(session.id, stepKey);
+      } else {
+        db.prepare(
+          `update discovery_session
+              set ai_step_attempts = ai_step_attempts - 1,
+                  ai_step_refunds = ai_step_refunds + 1
+            where id = ? and ai_step_key = ? and ai_step_attempts > 0
+              and ai_step_refunds < ?`,
+        ).run(session.id, stepKey, STEP_ATTEMPT_LIMIT);
+      }
+      return db
+        .prepare(
+          `select ai_attempts, ai_step_attempts, ai_step_refunds
+             from discovery_session where id = ?`,
+        )
+        .get(session.id) as
+        { ai_attempts: number; ai_step_attempts: number; ai_step_refunds: number } | undefined;
+    });
+    const booked = book();
+    if (!booked) {
+      log.debug(
+        { inviteId: session.invite_id, sessionId: session.id, step: stepKey },
+        'discovery outage refund skipped: reservation already settled',
+      );
+      return;
+    }
+    session.ai_attempts = booked.ai_attempts;
+    log.warn(
+      {
+        inviteId: session.invite_id,
+        sessionId: session.id,
+        step: stepKey,
+        attempts: booked.ai_attempts,
+        stepAttempts: booked.ai_step_attempts,
+        stepRefunds: booked.ai_step_refunds,
+        limit: STEP_ATTEMPT_LIMIT,
+        billed: reachedProvider,
+      },
+      'discovery provider outage: counted as spent',
+    );
+  }
+
+  /**
+   * Gives a reservation back on both counters, without calling it an outage.
+   *
+   * Used where the reservation is replaced by another check that then refuses
+   * the request, so the attempt must not be charged.
+   */
+  function refundAiAttempt(session: SessionRow, stepKey: string, token: string): void {
     const refund = db.transaction(() => {
+      if (!redeemReservation(token, session.id)) return null;
       db.prepare(
         'update discovery_session set ai_attempts = ai_attempts - 1 where id = ? and ai_attempts > 0',
       ).run(session.id);
@@ -1290,46 +1433,111 @@ export function register(ctx: PluginContext): void {
           where id = ? and ai_step_key = ? and ai_step_attempts > 0`,
       ).run(session.id, stepKey);
       return db
-        .prepare(
-          'select ai_attempts, ai_step_key, ai_step_attempts from discovery_session where id = ?',
-        )
-        .get(session.id) as
-        { ai_attempts: number; ai_step_key: string | null; ai_step_attempts: number } | undefined;
+        .prepare('select ai_attempts from discovery_session where id = ?')
+        .get(session.id) as { ai_attempts: number } | undefined;
     });
     const row = refund();
-    session.ai_attempts = row?.ai_attempts ?? Math.max(0, session.ai_attempts - 1);
+    if (!row) return;
+    session.ai_attempts = row.ai_attempts;
   }
 
   /**
    * Closes a successful, paid model call for that step.
    *
    * The answers arrived, so the question is done with its allowance: a later
-   * return to the same step (a revisit in the deep phase, or `deepen` coming
-   * back to it) starts with a full `STEP_ATTEMPT_LIMIT` again instead of
-   * inheriting the old count and blocking a customer who did nothing wrong.
+   * return to the same step starts with a full `STEP_ATTEMPT_LIMIT` again and
+   * with the full allowance of forgiven outages, instead of inheriting the old
+   * counts and blocking a customer who did nothing wrong.
    */
   function finishAiAttempt(session: SessionRow, stepKey: string): void {
     db.prepare(
       `update discovery_session
-          set ai_step_key = null, ai_step_attempts = 0
+          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
         where id = ? and ai_step_key = ?`,
     ).run(session.id, stepKey);
+  }
+
+  /**
+   * The budget key of the question the customer sees right now.
+   *
+   * A key stored on the session says nothing about the current question once the
+   * customer moved on, an older build wrote a different key format (`deepen:0`),
+   * or a failed call left the key behind. The DTO and the stale-key cleanup
+   * compare against this, so `stepBlocked` only ever describes the question on
+   * screen.
+   */
+  function activeStepKey(session: SessionRow, answers: Map<string, unknown>): string | null {
+    if (session.phase === 'clusters') return 'clusters';
+    const { step } = currentStepOf(session, answers);
+    if (!step) return null;
+    if (session.phase === 'map') return `map:${step.key}`;
+    if (session.phase === 'deepen') return `deepen:${step.key}`;
+    return null;
+  }
+
+  /**
+   * Closes the model-call counter of a question the customer has answered.
+   *
+   * The counter belongs to the work done on the question on screen: four calls
+   * without an answer are a loop. Once the customer has answered that question,
+   * its budget is used up in the honest sense and the next `advance` asks for the
+   * next question's hint, so the old count must not block it. This is why a
+   * question that ran out of allowance stays recoverable: answer it and the
+   * interview continues.
+   */
+  function clearAnsweredStep(session: SessionRow, keys: string[]): void {
+    const stored = session.ai_step_key;
+    if (!stored) return;
+    const prefix = session.phase === 'deepen' ? 'deepen' : session.phase === 'map' ? 'map' : null;
+    if (!prefix) return;
+    if (!keys.some((key) => `${prefix}:${key}` === stored)) return;
+    db.prepare(
+      `update discovery_session
+          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
+        where id = ? and ai_step_key = ?`,
+    ).run(session.id, stored);
+    session.ai_step_key = null;
+    session.ai_step_attempts = 0;
+    session.ai_step_refunds = 0;
+  }
+
+  /**
+   * Drops a step key that does not belong to the question on screen.
+   *
+   * Cheap hygiene with a real effect: an old link carries a key from an older
+   * build (`deepen:0`), and the operator page would report a blocked question
+   * that is not blocked. The counters are reset together with the key, because
+   * they belong to it; the link's total budget is not touched.
+   */
+  function discardStaleStepKey(session: SessionRow, answers: Map<string, unknown>): void {
+    if (!session.ai_step_key || session.ai_step_key === activeStepKey(session, answers)) return;
+    const stale = session.ai_step_key;
+    db.prepare(
+      `update discovery_session
+          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
+        where id = ? and ai_step_key = ?`,
+    ).run(session.id, stale);
+    session.ai_step_key = null;
+    session.ai_step_attempts = 0;
+    session.ai_step_refunds = 0;
+    log.debug(
+      { inviteId: session.invite_id, sessionId: session.id, stale },
+      'discovery step budget dropped: the key belongs to another question',
+    );
   }
 
   /**
    * Did the provider fail, rather than the conversation?
    *
    * These are outages on our side: the customer's answers are fine, the model
-   * was down, rate limited or too slow. They must not cost the link its token
-   * budget, otherwise five provider hiccups lock a paying customer out for
-   * good. `truncated`, `invalid_output` and `filtered` did reach the model and
-   * cost tokens, so they stay counted.
+   * was down, rate limited or too slow. `truncated`, `invalid_output` and
+   * `filtered` reached the model and produced something, so they are not outages
+   * here and stay counted.
    *
-   * An outage also gives the question its attempt back, but only through
-   * `releaseAiAttempt` and only when the reservation actually belongs to that
-   * question: no answer arrived, so nothing was spent. Counted failures
-   * (`truncated`, `invalid_output`, `filtered`) keep the question counter, which
-   * is what stops a loop on a question the model cannot answer.
+   * What an outage gives back is decided in `recordOutage`, and only when the
+   * reservation belongs to that request: the question gets its attempt back so a
+   * hiccup does not lock it, bounded by `ai_step_refunds`; the link's total
+   * budget only comes back when no provider call happened at all.
    */
   function isProviderOutage(error: unknown): boolean {
     return (
@@ -1347,6 +1555,9 @@ export function register(ctx: PluginContext): void {
     body: { shortcut?: boolean },
   ): Promise<{ state: PublicState; hint: { text: string; examples: string[] } | null }> {
     const answers = answerMap(answerRows(db, session.id));
+    // A key from an older question or an older build must not linger and does
+    // not belong to what the customer is looking at now.
+    discardStaleStepKey(session, answers);
     const current = currentStepOf(session, answers);
 
     if (session.phase === 'consent') {
@@ -1367,8 +1578,12 @@ export function register(ctx: PluginContext): void {
       const next = session.current_step + 1;
       if (next < 12) {
         let hint: { text: string; examples: string[] } | null = null;
-        const stepKey = `map:${next}`;
-        reserveAiAttempt(invite, session, stepKey);
+        // The key is the question on screen, the one whose answer this call is
+        // serving. A repeated `advance` without an answer serves the same
+        // question and therefore hits the same counter; a question that has been
+        // answered closes its counter, see `clearAnsweredStep`.
+        const stepKey = `map:${MAP_STEPS[session.current_step + 1]?.key ?? session.current_step}`;
+        const token = reserveAiAttempt(invite, session, stepKey);
         try {
           const result = await interviewHint(call, {
             locale: invite.locale,
@@ -1388,7 +1603,7 @@ export function register(ctx: PluginContext): void {
             hint = { text: result.hint ?? '', examples: result.examples };
           }
         } catch (error) {
-          if (isProviderOutage(error)) releaseAiAttempt(session, stepKey);
+          if (isProviderOutage(error)) recordOutage(session, stepKey, token, error);
           if (error instanceof AiUnavailable && error.reason === 'filtered') {
             // The hint is a comfort feature; a filtered hint must not stop the
             // interview. Move on without one.
@@ -1423,7 +1638,7 @@ export function register(ctx: PluginContext): void {
 
       let suggested: SuggestedCluster[];
       const stepKey = 'clusters';
-      reserveAiAttempt(invite, session, stepKey);
+      const token = reserveAiAttempt(invite, session, stepKey);
       try {
         suggested = await suggestClusters(call, {
           locale: invite.locale,
@@ -1433,7 +1648,7 @@ export function register(ctx: PluginContext): void {
         });
         finishAiAttempt(session, stepKey);
       } catch (error) {
-        if (isProviderOutage(error)) releaseAiAttempt(session, stepKey);
+        if (isProviderOutage(error)) recordOutage(session, stepKey, token, error);
         if (error instanceof AiUnavailable && error.reason === 'filtered') {
           // The customer still has to pick topics, so the interview continues:
           // the catalogue is always selectable without a suggestion.
@@ -1497,9 +1712,12 @@ export function register(ctx: PluginContext): void {
       }
 
       const cluster = entry.cluster;
-      const within = session.current_step % 8;
-      const isLastQuestion = within === 6;
-      const isIdeas = within === 7;
+      // The slot inside one cluster, derived from the catalogue: seven questions
+      // and the idea card that closes the cluster. A further question must not
+      // shift two cluster steps onto the same slot.
+      const within = session.current_step % DEEPEN_STEPS_PER_CLUSTER;
+      const isLastQuestion = within === DEEP_QUESTIONS_PER_CLUSTER - 1;
+      const isIdeas = within === DEEPEN_STEPS_PER_CLUSTER - 1;
 
       if (isIdeas) {
         db.prepare(
@@ -1522,8 +1740,11 @@ export function register(ctx: PluginContext): void {
       const nextEntry = steps[session.current_step + 1];
       const nextQuestion = nextEntry?.step.fields[0]?.label ?? { de: '', en: '' };
       let hint: { text: string; examples: string[] } | null = null;
-      const stepKey = `deepen:${cluster}:${within}`;
-      reserveAiAttempt(invite, session, stepKey);
+      // The key is the question on screen, taking the place of the old magic slot
+      // arithmetic: two questions of the same cluster can never share a counter,
+      // however many questions a cluster has.
+      const stepKey = `deepen:${entry.step.key}`;
+      const token = reserveAiAttempt(invite, session, stepKey);
       try {
         const result = await interviewHint(call, {
           locale: invite.locale,
@@ -1566,7 +1787,7 @@ export function register(ctx: PluginContext): void {
           return { state: buildPublicState(invite, session, answers, null), hint };
         }
       } catch (error) {
-        if (isProviderOutage(error)) releaseAiAttempt(session, stepKey);
+        if (isProviderOutage(error)) recordOutage(session, stepKey, token, error);
         if (error instanceof AiUnavailable && error.reason === 'filtered') {
           // A filtered hint must not block the step: the customer can answer
           // without one, so the interview moves on.
@@ -1847,8 +2068,9 @@ export function register(ctx: PluginContext): void {
       const invite = requireInvite(db, id);
       const session = findSession(db, invite.id);
       const reportRow = session ? findReport(db, session.id) : null;
+      const answerRowsOfSession = session ? answerRows(db, session.id) : [];
       const answers = session
-        ? answerRows(db, session.id).map((row) => ({
+        ? answerRowsOfSession.map((row) => ({
             key: row.question_key,
             label: answerLabel(row.question_key),
             value: parseJson<unknown>(row.value_json),
@@ -1857,7 +2079,14 @@ export function register(ctx: PluginContext): void {
           }))
         : [];
       return {
-        invite: toInviteDto(invite, session, Boolean(reportRow)),
+        // The step budget is only meaningful for the question on screen, so the
+        // DTO gets that key and cannot report a block that is not there.
+        invite: toInviteDto(
+          invite,
+          session,
+          Boolean(reportRow),
+          session ? activeStepKey(session, answerMap(answerRowsOfSession)) : null,
+        ),
         answers,
         report: reportRow ? reportOf(reportRow) : null,
         reportModel: reportRow?.model ?? null,
@@ -1938,17 +2167,21 @@ export function register(ctx: PluginContext): void {
       invite.expires_at = expiresAt;
       const session = findSession(db, invite.id);
       if (session) {
-        // The customer gets a fresh link, so the attempt budget starts over:
-        // the old link's failures must not block the new one.
         // A new link gets a fresh budget: the old link's failures, its step
-        // counter and its used-up token budget must not carry over.
+        // counter, its outage burst and its used-up token budget must not carry
+        // over. The response below is built from this in-memory row, so every
+        // field the operator sees is reset here as well, not just in the DB.
         db.prepare(
           `update discovery_session
-              set complete_attempts = 0, ai_attempts = 0, ai_step_key = null, ai_step_attempts = 0
+              set complete_attempts = 0, ai_attempts = 0,
+                  ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
             where id = ?`,
         ).run(session.id);
         session.complete_attempts = 0;
         session.ai_attempts = 0;
+        session.ai_step_key = null;
+        session.ai_step_attempts = 0;
+        session.ai_step_refunds = 0;
       }
       log.info({ inviteId: invite.id, at: stamp }, 'discovery invite link rotated');
       return {
@@ -2059,6 +2292,9 @@ export function register(ctx: PluginContext): void {
         'customer',
       );
       for (const [key, value] of Object.entries(cleaned)) answers.set(key, value);
+      // The customer answered the question on screen, so its call counter is
+      // settled: the next hint belongs to the next question.
+      clearAnsweredStep(session, Object.keys(cleaned));
       db.prepare('update discovery_session set last_seen_at = ? where id = ?').run(
         nowIso(now()),
         session.id,
@@ -2187,14 +2423,14 @@ export function register(ctx: PluginContext): void {
       }
       // The assessment is not a step: repeating it after a counted failure is
       // legitimate, and `COMPLETE_ATTEMPT_LIMIT` already caps it.
-      reserveAiAttempt(invite, session, 'assessment', false);
+      const reservation = reserveAiAttempt(invite, session, 'assessment', false);
       const attempt = db
         .prepare(
           'update discovery_session set complete_attempts = complete_attempts + 1 where id = ? and complete_attempts < ?',
         )
         .run(session.id, COMPLETE_ATTEMPT_LIMIT);
       if (attempt.changes === 0) {
-        releaseAiAttempt(session, 'assessment');
+        refundAiAttempt(session, 'assessment', reservation);
         log.warn(
           { inviteId: invite.id, sessionId: session.id, limit: COMPLETE_ATTEMPT_LIMIT },
           'discovery assessment refused: attempt limit reached',
@@ -2227,7 +2463,7 @@ export function register(ctx: PluginContext): void {
             'update discovery_session set complete_attempts = complete_attempts - 1 where id = ? and complete_attempts > 0',
           ).run(session.id);
           session.complete_attempts = Math.max(0, session.complete_attempts - 1);
-          releaseAiAttempt(session, 'assessment');
+          recordOutage(session, 'assessment', reservation, error);
         }
         throw aiError(error);
       }
@@ -2245,6 +2481,8 @@ export function register(ctx: PluginContext): void {
         ).run(stamp, invite.id);
       });
       complete();
+      // The model answered, so the outage burst is over here too.
+      finishAiAttempt(session, 'assessment');
       invite.status = 'completed';
       invite.completed_at = stamp;
       session.completed_at = stamp;
