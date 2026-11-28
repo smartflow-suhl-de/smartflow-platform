@@ -65,6 +65,33 @@ Zwei Fehlerquellen bei diesem zusammengesetzten Wert:
 - Das Tailscale-Image ist auf Version und Digest gepinnt (`deploy/tailscale/Dockerfile`);
   ein Update ist eine bewusste Änderung.
 
+### Websites ausliefern
+
+Jede Website läuft auf einem eigenen internen Port (`8801`…`8820`), damit sie eine eigene
+Origin hat und der Astro-Build `base: "/"` behalten kann. `tailscale serve` bildet diese
+Ports auf `8443`…`8462` am Knoten ab; erreichbar ist eine Website also unter
+`https://<SF_TS_NODE_NAME>.<SF_TAILNET_DOMAIN>:8443/`. Der Port steht an der Website in der
+Plattform, die Zuordnung in `deploy/tailscale/serve.json`.
+
+- Die Ports sind **nicht** auf dem Host veröffentlicht, sondern nur im Compose-Netz.
+- Vorschau und Livegang teilen sich den Port: mit gültigem Freigabe-Cookie zeigt der
+  Listener den Build aus der Freigabe, ohne Cookie den jüngsten Release.
+- `SF_SITES_PORT_BASE`, `SF_SITES_PORT_COUNT` und `SF_SITES_TAILNET_PORT_BASE` halten die
+  Bereiche zusammen; eine Änderung braucht immer auch eine neue `serve.json` und damit
+  einen Rebuild des Tailscale-Images.
+- Reicht der Bereich nicht, steigt `SF_SITES_PORT_COUNT` — dann müssen `serve.json` und
+  `expose` in `compose.yaml` mitwachsen.
+
+`deploy_target` an einer Website entscheidet, ob dieser Port im Tailnet erreichbar ist:
+
+- `tailscale` (Standard): der Listener bindet im Compose-Netz, `tailscale serve` reicht ihn
+  als `https://<Knoten>:8443/` weiter.
+- `static`: der Listener bindet nur auf `127.0.0.1`. Die Seiten werden ausgeliefert, sind
+  aber nicht über den Tailnet-Port erreichbar; die Plattform zeigt dafür keine Adresse an.
+
+Ein KI-Auftrag, der Seiten schreibt, reiht anschließend automatisch einen Build ein, damit
+Plan und Markdown im nächsten Build landen.
+
 ### Ersteinrichtung
 
 Nach dem ersten Start hat die Plattform **kein Konto**. `https://<SF_TS_NODE_NAME>.<SF_TAILNET_DOMAIN>` öffnen, dann

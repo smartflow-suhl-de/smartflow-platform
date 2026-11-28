@@ -1,4 +1,6 @@
 node_modules/
+# The site template is its own package with its own formatter settings.
+templates/
 dist/
 web/dist/
 data/

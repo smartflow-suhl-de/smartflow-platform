@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import { fileURLToPath } from 'node:url';
 import type { Db } from '../../kernel/db.ts';
 import type { PluginContext } from '../../kernel/context.ts';
 import type { SessionUser } from '../../kernel/auth.ts';
 import { AppError, forbidden, unauthorized } from '../../kernel/errors.ts';
-import type { BuildRow, ClientRow, PageRow, SettingsRow, SiteRow } from './store.ts';
+import { OWN_WORKSPACE_ID } from '../../shared/contract.ts';
+import type { BuildRow, ClientRow, JobRow, PageRow, SettingsRow, SiteRow } from './store.ts';
 
 export const MAX_LIMIT = 100;
 export const DEFAULT_LIMIT = 25;
@@ -11,6 +13,45 @@ export const DEFAULT_APPROVAL_DAYS = 14;
 export const MAX_APPROVAL_DAYS = 60;
 export const MAX_PAGES_PER_JOB = 40;
 export const MAX_JOB_GOAL = 2_000;
+/** A build that runs longer than this is killed; CI images differ by machine. */
+export const DEFAULT_BUILD_TIMEOUT_MS = 120_000;
+/** Finished builds kept per site; the release and open approval are exempt. */
+export const DEFAULT_BUILD_KEEP = 3;
+
+/**
+ * Port assignment for the delivered sites. One site, one port, one origin: the
+ * API keeps 8790, the sites start at 8801 and are only reachable through
+ * `tailscale serve`, which maps them to ports 8443… on the node.
+ *
+ * The values are read here rather than in the kernel config because they belong
+ * to this plugin's deployment shape and every other plugin runs fine without
+ * them.
+ */
+export interface SitesConfig {
+  enabled: boolean;
+  host: string;
+  portBase: number;
+  portCount: number;
+  tailnetPortBase: number;
+}
+
+function envInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function sitesConfig(config: PluginContext['config']): SitesConfig {
+  const env = process.env;
+  return {
+    // Tests must not open ports; the same switch turns delivery off on a host
+    // that only wants the panel.
+    enabled: env.SF_SITES_ENABLED === '0' ? false : config.env !== 'test',
+    host: env.SF_SITES_HOST ?? config.host,
+    portBase: envInt(env.SF_SITES_PORT_BASE, 8801),
+    portCount: envInt(env.SF_SITES_PORT_COUNT, 20),
+    tailnetPortBase: envInt(env.SF_SITES_TAILNET_PORT_BASE, 8443),
+  };
+}
 
 export const errorSchema = {
   type: 'object',
@@ -57,6 +98,18 @@ export interface Runtime {
   tenantDb(tenantId: string): Db;
   settings(database: Db): SettingsRow;
   monthStart(): string;
+  /** Template the build worker copies into a build directory. */
+  templateDir: string;
+  buildTimeoutMs: number;
+  /** Finished builds kept per site; the release and open approvals are exempt. */
+  buildKeepPerSite: number;
+  sites: SitesConfig;
+  /** Consumes one queued AI job; wired by `server.ts` to the AI worker. */
+  runJob(tenantId: string, job: JobRow): Promise<void>;
+  /** Called after a build changed the site status. */
+  onBuildSettled?: (tenantId: string, siteId: string) => void;
+  /** Called after an AI job wrote pages; the tenant names the database. */
+  onJobSettled?: (tenantId: string, siteId: string) => void;
   clientName(database: Db, site: SiteRow): string | null;
   siteListItem(
     database: Db,
@@ -73,7 +126,12 @@ export function createRuntime(ctx: PluginContext): Runtime {
 
   function tenantIdOf(request: { user: SessionUser | null }): string {
     if (!request.user) throw unauthorized();
-    const tenantId = request.user.activeTenantId ?? request.user.tenantId;
+    // An operator without a chosen tenant works in the own workspace: the
+    // agency's own sites are not a customer project and need no tenant.
+    const tenantId =
+      request.user.activeTenantId ??
+      request.user.tenantId ??
+      (request.user.role === 'operator' ? OWN_WORKSPACE_ID : null);
     if (!tenantId) throw forbidden('Select a tenant first.');
     return tenantId;
   }
@@ -142,6 +200,16 @@ export function createRuntime(ctx: PluginContext): Runtime {
     clientName,
     siteListItem,
     pageRows,
+    templateDir:
+      process.env.SF_SITE_TEMPLATE ??
+      fileURLToPath(new URL('../../../../templates/astro-site', import.meta.url)),
+    buildTimeoutMs:
+      Number.parseInt(process.env.SF_BUILD_TIMEOUT_MS ?? '', 10) || DEFAULT_BUILD_TIMEOUT_MS,
+    buildKeepPerSite: Number.parseInt(process.env.SF_BUILD_KEEP ?? '', 10) || DEFAULT_BUILD_KEEP,
+    sites: sitesConfig(ctx.config),
+    async runJob() {
+      throw new AppError('job_runner_missing', 'The AI worker is not configured.', 500);
+    },
   };
 }
 

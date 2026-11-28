@@ -19,8 +19,9 @@ import {
   tenantIdFromBody,
   type Runtime,
 } from './runtime.ts';
+import type { SiteBuilds } from './build-worker.ts';
 
-export function registerPipeline(runtime: Runtime): void {
+export function registerPipeline(runtime: Runtime, builds: SiteBuilds): void {
   // --- Builds --------------------------------------------------------------
 
   runtime.app.get<{ Params: { siteId: string }; Querystring: { limit?: string } }>(
@@ -74,6 +75,9 @@ export function registerPipeline(runtime: Runtime): void {
            values (?, ?, ?, 'queued', ?)`,
         )
         .run(id, site.id, request.body.trigger ?? 'manual', runtime.now().toISOString());
+      // The worker runs in this process, so queueing is enough: no poll interval
+      // and no runner token are involved.
+      builds.kick();
       reply.code(202);
       return database.prepare('select * from web_builds where id = ?').get(id);
     },
@@ -109,6 +113,8 @@ export function registerPipeline(runtime: Runtime): void {
       database
         .prepare("update web_builds set status = 'cancelled', finished_at = ? where id = ?")
         .run(runtime.now().toISOString(), build.id);
+      // The row is already final; this only stops the child from burning time.
+      builds.cancel(build.id);
       return database.prepare('select * from web_builds where id = ?').get(build.id);
     },
   );
@@ -291,6 +297,7 @@ export function registerPipeline(runtime: Runtime): void {
           timestamp,
           timestamp,
         );
+      builds.kick();
       reply.code(202);
       return {
         id,

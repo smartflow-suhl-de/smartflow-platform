@@ -16,6 +16,12 @@ RUN npm ci
 COPY --chown=node:node web ./web
 RUN npm run build --workspace @smartflow/web
 
+# The site template is a separate package: its dependencies are installed once
+# here, so a build never runs `npm ci` and never needs a registry. The build
+# worker copies this directory and symlinks the dependencies in.
+COPY --chown=node:node templates/astro-site ./templates/astro-site
+RUN cd templates/astro-site && npm ci --omit=dev --no-audit --no-fund
+
 # The runtime image keeps the dependencies of both workspaces minus the
 # toolchain; `tsx` is a regular dependency because the server is run through it.
 RUN npm prune --omit=dev
@@ -34,6 +40,7 @@ WORKDIR /app
 
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/web/dist ./web/dist
+COPY --from=build --chown=node:node /app/templates/astro-site ./templates/astro-site
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node api/package.json api/tsconfig.json ./api/
 COPY --chown=node:node api/scripts ./api/scripts

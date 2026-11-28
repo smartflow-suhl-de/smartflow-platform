@@ -15,6 +15,8 @@ export interface TenantRef {
   name: string;
   slug: string;
   status: TenantStatus;
+  /** The operator's own workspace, not a customer tenant. */
+  own?: boolean;
 }
 
 /**
