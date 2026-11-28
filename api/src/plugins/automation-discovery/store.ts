@@ -169,16 +169,20 @@ export function parseJson<T>(raw: string | null): T | null {
 /**
  * The API shape of an invitation.
  *
- * `activeStepKey` is the budget key of the question the customer sees right now,
- * when the caller knows it. Without it `stepBlocked` stays false: a key left over
- * from an older question (an old build, a question the customer already passed)
- * must not report a blocked link.
+ * `requestedStepKey` is the budget key the **next** model call of this link would
+ * reserve — not necessarily the question on screen. At the end of the map phase
+ * that is the cluster suggestion (`clusters`), while the question on screen is
+ * still the last map question. The callers pass the same prediction that
+ * `advance` uses, so `stepBlocked` describes the request the customer would send
+ * next. Without it `stepBlocked` stays false: a key left over from an older
+ * question (an old build, a question the customer already passed) must not
+ * report a blocked link.
  */
 export function toInviteDto(
   invite: InviteRow,
   session: SessionRow | null,
   reportAvailable: boolean,
-  activeStepKey: string | null = null,
+  requestedStepKey: string | null = null,
 ): InviteDto {
   return {
     id: invite.id,
@@ -205,8 +209,8 @@ export function toInviteDto(
           assessmentAttempts: session.complete_attempts,
           aiStepAttempts: session.ai_step_attempts,
           stepBlocked:
-            activeStepKey !== null &&
-            session.ai_step_key === activeStepKey &&
+            requestedStepKey !== null &&
+            session.ai_step_key === requestedStepKey &&
             session.ai_step_attempts >= STEP_ATTEMPT_LIMIT &&
             // The block expires: after the cooldown the same request is served
             // again, so reporting it would be wrong.

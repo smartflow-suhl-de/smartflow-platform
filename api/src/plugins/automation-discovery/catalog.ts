@@ -365,6 +365,17 @@ export const MAP_STEPS: StepDef[] = [
   },
 ];
 
+/**
+ * How many questions the map phase asks.
+ *
+ * `MAP_STEPS` also carries the consent step, so the count is one less than its
+ * length. Anything that walks the map — the progress bar, the step count, the
+ * budget key of the question on screen, and the branch that decides whether the
+ * next question or the cluster suggestion is served — uses this instead of a
+ * literal, because a drift there would quietly disable the per-question cap.
+ */
+export const MAP_QUESTIONS = MAP_STEPS.length - 1;
+
 export interface ClusterDef {
   id: string;
   label: Localized;

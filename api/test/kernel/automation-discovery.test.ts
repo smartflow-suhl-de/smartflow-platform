@@ -8,6 +8,7 @@ import {
   COMPLETE_ATTEMPT_LIMIT,
   PublicRateLimiter,
   publicRateLimiter,
+  reservationStats,
   STEP_ATTEMPT_LIMIT,
 } from '../../src/plugins/automation-discovery/server.ts';
 import { STEP_COOLDOWN_MS } from '../../src/plugins/automation-discovery/store.ts';
@@ -1059,6 +1060,28 @@ test('a provider outage on one step does not lock that step for the customer', a
   assert.ok((recovered.body as { hint?: { text: string } | null }).hint);
 });
 
+/** Walks the map phase up to its last question, without asking for the clusters. */
+async function walkToLastMapStep(ctx: TestApp, token: string): Promise<void> {
+  await postAnswers(ctx, token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, token)).statusCode, 200);
+  for (let index = 0; index < 11; index += 1) {
+    const state = await getState(ctx, token);
+    assert.ok(state.step);
+    await postAnswers(
+      ctx,
+      token,
+      state.step.fields
+        .filter((field) => field.required)
+        .map((field) => ({ key: field.key, value: answerFor(field) })),
+    );
+    const moved = await advance(ctx, token);
+    assert.equal(moved.statusCode, 200, JSON.stringify(moved.body));
+  }
+  const last = await getState(ctx, token);
+  assert.equal(last.phase, 'map');
+  assert.equal(last.step?.key, 'map.q12');
+}
+
 /** Walks the map phase and returns at the first deepen question of cluster A. */
 async function runToFirstDeepenQuestion(ctx: TestApp, token: string): Promise<void> {
   await postAnswers(ctx, token, [{ key: 'consent', value: true }]);
@@ -1080,6 +1103,23 @@ async function runToFirstDeepenQuestion(ctx: TestApp, token: string): Promise<vo
   const started = await advance(ctx, token);
   assert.equal(started.statusCode, 200, JSON.stringify(started.body));
   assert.equal(started.state.step?.key, 'deep.A.q1');
+}
+
+/**
+ * A model answer that was cut off by its token budget.
+ *
+ * `truncated`, so the one allowed retry runs — a counted failure that reached the
+ * model and never gets a refund.
+ */
+function cutOffAnswer(): LlmReply {
+  return {
+    status: 200,
+    body: JSON.stringify({
+      message: { content: '' },
+      model: { modelKey: 'test-model' },
+      finishReason: 'length',
+    }),
+  };
 }
 
 /** A model answer that is cut off: counted against the budget, never refunded. */
@@ -1366,6 +1406,44 @@ test('a rotated link reports neither a blocked step nor an old budget', async (t
   assert.equal(session.aiAttempts, 0);
 });
 
+test('the first paid call of a step already anchors its cooldown', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  stubLlm(ctx, (payload) => (isHintRequest(payload) ? providerDown() : llmReply(payload)));
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  const read = () =>
+    ctx.db
+      .prepare(
+        'select ai_step_key, ai_step_attempts, ai_step_at from discovery_session where invite_id = ?',
+      )
+      .get(invite.id) as {
+      ai_step_key: string | null;
+      ai_step_attempts: number;
+      ai_step_at: string | null;
+    };
+  // Entering the map reserves nothing, so there is no anchor yet.
+  assert.equal(read().ai_step_at, null);
+
+  // The very first call of the question writes the anchor. A later call could
+  // not repair a missing write, because the same-step branch only fills it in
+  // with `coalesce` — the mutation that drops it from the new-step branch must
+  // therefore fail here, not three calls later.
+  assert.equal((await advance(ctx, invite.token)).statusCode, 503);
+  const first = read();
+  assert.equal(first.ai_step_key, 'map:map.q1');
+  // The outage forgave the attempt but spent one forgiveness, so the counter is
+  // back at zero — the key and the anchor stay, they belong to the question.
+  assert.equal(first.ai_step_attempts, 0);
+  assert.notEqual(first.ai_step_at, null, 'the new-step branch must write ai_step_at itself');
+  assert.equal(new Date(first.ai_step_at as string).toISOString(), first.ai_step_at);
+  assert.ok(Date.now() - Date.parse(first.ai_step_at as string) < 60_000);
+});
+
 test('the cluster suggestion stops after four calls, and the same step still works later', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -1423,13 +1501,14 @@ test('the cluster suggestion stops after four calls, and the same step still wor
   assert.equal(clusterCalls - beforeCalls, STEP_ATTEMPT_LIMIT * 2);
   const blocked = ctx.db
     .prepare(
-      'select ai_step_key, ai_step_attempts, ai_step_refunds, ai_attempts from discovery_session where invite_id = ?',
+      'select ai_step_key, ai_step_attempts, ai_step_refunds, ai_attempts, ai_step_at from discovery_session where invite_id = ?',
     )
     .get(invite.id) as {
     ai_step_key: string | null;
     ai_step_attempts: number;
     ai_step_refunds: number;
     ai_attempts: number;
+    ai_step_at: string | null;
   };
   assert.equal(blocked.ai_step_key, 'clusters');
   assert.equal(blocked.ai_step_attempts, STEP_ATTEMPT_LIMIT);
@@ -1467,6 +1546,16 @@ test('the cluster suggestion stops after four calls, and the same step still wor
   assert.equal((await advance(ctx, invite.token)).statusCode, 429);
   assert.equal(clusterCalls - beforeCalls, STEP_ATTEMPT_LIMIT * 2);
 
+  // The cooldown anchor has to come from the code, not from this test: if
+  // `reserveAiAttempt` stopped writing `ai_step_at`, the cap would be permanent
+  // again and this test would still pass by rewriting the column itself.
+  assert.notEqual(blocked.ai_step_at, null, 'the step cap must anchor its own cooldown');
+  assert.equal(new Date(blocked.ai_step_at as string).toISOString(), blocked.ai_step_at);
+  assert.ok(
+    Date.now() - Date.parse(blocked.ai_step_at as string) < 60_000,
+    'the anchor is the moment the question ran out of allowance, not an old value',
+  );
+
   // The block expires: the same request is served, and the customer reaches the
   // cluster suggestion instead of losing the whole interview.
   clusterDown = false;
@@ -1477,6 +1566,137 @@ test('the cluster suggestion stops after four calls, and the same step still wor
   assert.equal(recovered.statusCode, 200, JSON.stringify(recovered.body));
   assert.equal(recovered.state.phase, 'clusters');
   assert.equal(clusterCalls - beforeCalls, STEP_ATTEMPT_LIMIT * 2 + 1);
+});
+
+test('every exit settles its reservation, also the ones that charge the call', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  // `filtered` and `truncated` reach the model and stay counted, so they have no
+  // refunding exit of their own. The token used to stay in the reservation map
+  // on exactly those paths (measured: filtered hint filed 2, redeemed 1).
+  let mode: 'filtered' | 'cutOff' | 'ok' = 'ok';
+  let hintCalls = 0;
+  let analysisCalls = 0;
+  stubLlm(ctx, (payload) => {
+    const system = systemOf(payload);
+    if (system.includes('structured automation assessment')) {
+      analysisCalls += 1;
+      return mode === 'cutOff' ? cutOffAnswer() : llmReply(payload);
+    }
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    hintCalls += 1;
+    if (mode === 'filtered') {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          message: { content: '' },
+          model: { modelKey: 'test-model' },
+          finishReason: 'content_filter',
+        }),
+      };
+    }
+    if (mode === 'cutOff') return cutOffAnswer();
+    return llmReply(payload);
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+
+  const start = { ...reservationStats };
+  const expectSettled = (label: string) => {
+    const filed = reservationStats.filed - start.filed;
+    const redeemed = reservationStats.redeemed - start.redeemed;
+    assert.equal(filed, redeemed, `${label}: ${filed} filed, ${redeemed} settled`);
+  };
+
+  // A filtered hint is a soft error, not an exit with a refund.
+  mode = 'filtered';
+  const filtered = await advance(ctx, invite.token);
+  assert.equal(filtered.statusCode, 200);
+  assert.equal((filtered.body as { hint?: unknown }).hint, null);
+  expectSettled('filtered hint');
+
+  // A cut-off hint is a counted failure that leaves the request through an error.
+  mode = 'cutOff';
+  const beforeCalls = hintCalls;
+  assert.equal((await advance(ctx, invite.token)).statusCode, 502);
+  // One reserved call, two provider calls: the truncation retry.
+  assert.equal(hintCalls - beforeCalls, 2);
+  expectSettled('cut-off hint');
+
+  // The assessment fails the same way and must settle as well.
+  mode = 'ok';
+  await runInterview(ctx, invite.token);
+  mode = 'cutOff';
+  analysisCalls = 0;
+  const failed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+    payload: {},
+  });
+  assert.equal(failed.statusCode, 502, failed.payload);
+  assert.equal(analysisCalls, 2);
+  expectSettled('cut-off assessment');
+
+  // And a successful path still settles exactly once, not twice.
+  mode = 'ok';
+  const done = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+    payload: {},
+  });
+  assert.equal(done.statusCode, 200, done.payload);
+  expectSettled('successful assessment');
+});
+
+test('the predicted step key is the one each step really reserves', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const keyOf = (inviteId: string): string | null =>
+    (
+      ctx.db
+        .prepare('select ai_step_key from discovery_session where invite_id = ?')
+        .get(inviteId) as { ai_step_key: string | null }
+    ).ai_step_key;
+
+  // The prediction has to match the reservation of the request that follows it,
+  // otherwise the stale-key cleanup throws away a counter that is about to be
+  // used again — which is how the step cap silently stopped working at the end
+  // of the map phase. Each branch of `advance` is checked against the key the
+  // step counter really stores.
+  let down = true;
+  stubLlm(ctx, (payload) => (down ? providerDown() : llmReply(payload)));
+
+  // map: the question on screen owns the key.
+  const mapInvite = await createInvite(ctx, cookie);
+  await postAnswers(ctx, mapInvite.token, [{ key: 'consent', value: true }]);
+  assert.equal(keyOf(mapInvite.id), null, 'consent reserves nothing');
+  assert.equal((await advance(ctx, mapInvite.token)).statusCode, 200);
+  assert.equal(keyOf(mapInvite.id), null, 'entering the map reserves nothing');
+  assert.equal((await advance(ctx, mapInvite.token)).statusCode, 503);
+  assert.equal(keyOf(mapInvite.id), 'map:map.q1');
+
+  // clusters: at the last map step the next request is the cluster suggestion,
+  // so that is the key it reserves — not one of the map questions.
+  const clusterInvite = await createInvite(ctx, cookie);
+  down = false;
+  await walkToLastMapStep(ctx, clusterInvite.token);
+  down = true;
+  assert.equal((await advance(ctx, clusterInvite.token)).statusCode, 503);
+  assert.equal(keyOf(clusterInvite.id), 'clusters');
+
+  // deepen: the question of the cluster, not a slot index.
+  const deepInvite = await createInvite(ctx, cookie);
+  down = false;
+  await runToFirstDeepenQuestion(ctx, deepInvite.token);
+  down = true;
+  assert.equal((await advance(ctx, deepInvite.token)).statusCode, 503);
+  assert.equal(keyOf(deepInvite.id), 'deepen:deep.A.q1');
 });
 
 test('parallel outages give back exactly what was reserved, never more', async (t) => {

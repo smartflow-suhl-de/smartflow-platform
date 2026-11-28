@@ -21,6 +21,7 @@ import {
   CONFIRM_STEPS,
   DEEPEN_STEPS_PER_CLUSTER,
   DEEP_QUESTIONS_PER_CLUSTER,
+  MAP_QUESTIONS,
   MAP_STEPS,
   MAX_TEXT_LENGTH,
   clusterIdeasStep,
@@ -112,7 +113,14 @@ export { STEP_ATTEMPT_LIMIT };
  *   never more than the link's total budget allows.
  *
  * So a link of mode `m` can cause at most `2 × aiAttemptLimit(m)` provider calls
- * in total, and on a single step at most `2 × STEP_ATTEMPT_LIMIT` per cooldown.
+ * in total. A single step is bounded by `STEP_ATTEMPT_LIMIT` per cooldown, but
+ * that is a bound on reserved calls, not on provider calls: the first
+ * `STEP_ATTEMPT_LIMIT` outages are forgiven and cost one call each (they reached
+ * the provider, so only the question counter comes back), and the
+ * `STEP_ATTEMPT_LIMIT` counted failures after them can each be retried once, so
+ * they cost two calls each. A step therefore costs at most
+ * `3 × STEP_ATTEMPT_LIMIT` provider calls per cooldown — four plus eight here —
+ * and the link's total budget caps that again.
  */
 export function aiAttemptLimit(mode: Mode): number {
   const clusters = mode === 'full' ? 5 : mode === 'standard' ? 3 : 0;
@@ -229,9 +237,9 @@ function deepenSteps(
 
 function totalSteps(mode: Mode, clusters: number, shortcut: boolean): number {
   const confirm = CONFIRM_STEPS.length;
-  if (shortcut || mode === 'short') return 1 + 12 + confirm;
+  if (shortcut || mode === 'short') return 1 + MAP_QUESTIONS + confirm;
   const deepen = clusters === 0 ? 0 : clusters * DEEPEN_STEPS_PER_CLUSTER;
-  return 1 + 12 + 1 + deepen + confirm;
+  return 1 + MAP_QUESTIONS + 1 + deepen + confirm;
 }
 
 function progressOf(phase: Phase, stepIndex: number, total: number): number {
@@ -239,8 +247,8 @@ function progressOf(phase: Phase, stepIndex: number, total: number): number {
   const doneByPhase: Record<Phase, number> = {
     consent: 0,
     map: 1,
-    clusters: 1 + 12,
-    deepen: 1 + 12 + 1,
+    clusters: 1 + MAP_QUESTIONS,
+    deepen: 1 + MAP_QUESTIONS + 1,
     confirm: Math.max(0, total - 3),
   };
   const done = doneByPhase[phase] + stepIndex;
@@ -617,6 +625,16 @@ export class PublicRateLimiter {
 }
 
 export const publicRateLimiter = new PublicRateLimiter();
+
+/**
+ * How many reservations were filed and how many of them were settled.
+ *
+ * The map itself belongs to a `register()` call, so a test cannot look into it.
+ * These two counters are global on purpose: they only ever grow and a test
+ * compares them before and after. `filed === redeemed` is the invariant that
+ * says a served request left no token behind, whatever path it took.
+ */
+export const reservationStats = { filed: 0, redeemed: 0 };
 
 function publicRateLimit(): (request: FastifyRequest, reply: FastifyReply) => Promise<void> {
   return async (request, reply) => {
@@ -1249,9 +1267,13 @@ export function register(ctx: PluginContext): void {
    * nothing behind:
    * - success: `finishAiAttempt` — the normal case,
    * - provider outage: `recordOutage`,
-   * - a check that refunds and then re-reserves: `refundAiAttempt`.
+   * - a check that refunds and then re-reserves: `refundAiAttempt`,
+   * - any other failure: the `finally` that wraps each model call, through
+   *   `settleReservation`. A call that reached the model and failed — `filtered`,
+   *   `truncated`, `invalid_output` — stays counted on both counters, but its
+   *   token must not stay in the map either.
    *
-   * Only a crash mid-request skips all three. Such an entry is never redeemable
+   * Only a crash mid-request skips all four. Such an entry is never redeemable
    * again, so it would only hold memory; the sweep below drops it once it is older
    * than `RESERVATION_MAX_AGE_MS` (10 minutes). Ten minutes is generous: one
    * request's whole model budget is 40 s (`AI_CALL_BUDGET_MS` in `ai.ts`), so a
@@ -1268,6 +1290,7 @@ export function register(ctx: PluginContext): void {
       for (const [key, held] of reservations) if (held.at < cutoff) reservations.delete(key);
     }
     reservations.set(token, { sessionId: session.id, at: now().getTime() });
+    reservationStats.filed += 1;
     return token;
   }
 
@@ -1276,7 +1299,22 @@ export function register(ctx: PluginContext): void {
     const held = reservations.get(token);
     if (!held || held.sessionId !== sessionId) return false;
     reservations.delete(token);
+    reservationStats.redeemed += 1;
     return true;
+  }
+
+  /**
+   * Closes a reservation without touching a counter.
+   *
+   * For the exits that charge the attempt as spent: the call reached the model
+   * and failed (`filtered`, `truncated`, `invalid_output`) or the request is
+   * rejected for another reason. Those tokens used to stay in the map forever,
+   * because only the three refunding exits redeemed them. Called from the
+   * `finally` of every model call, so it is also the safe net for a path that
+   * throws before its own settlement.
+   */
+  function settleReservation(token: string, session: SessionRow): void {
+    redeemReservation(token, session.id);
   }
 
   /**
@@ -1540,7 +1578,7 @@ export function register(ctx: PluginContext): void {
     if (session.phase === 'clusters') return 'clusters';
     if (session.phase === 'map') {
       const next = session.current_step + 1;
-      if (next < 12) {
+      if (next < MAP_QUESTIONS) {
         return `map:${MAP_STEPS[session.current_step + 1]?.key ?? session.current_step}`;
       }
       const shortcut =
@@ -1669,7 +1707,7 @@ export function register(ctx: PluginContext): void {
 
     if (session.phase === 'map') {
       const next = session.current_step + 1;
-      if (next < 12) {
+      if (next < MAP_QUESTIONS) {
         let hint: { text: string; examples: string[] } | null = null;
         // The key is the question on screen, the one whose answer this call is
         // serving. A repeated `advance` without an answer serves the same
@@ -1709,6 +1747,11 @@ export function register(ctx: PluginContext): void {
           } else {
             throw aiError(error);
           }
+        } finally {
+          // Whatever happened, this reservation is over. The refunding exits
+          // above already redeemed the token; for a counted failure this is the
+          // only settlement, so the map cannot fill up with dead entries.
+          settleReservation(token, session);
         }
         db.prepare(
           'update discovery_session set current_step = ?, last_seen_at = ? where id = ?',
@@ -1755,6 +1798,8 @@ export function register(ctx: PluginContext): void {
         } else {
           throw aiError(error);
         }
+      } finally {
+        settleReservation(token, session);
       }
       if (invite.mode !== 'full' && suggested.length > 3) suggested = suggested.slice(0, 3);
       db.prepare(
@@ -1895,6 +1940,8 @@ export function register(ctx: PluginContext): void {
         } else {
           throw aiError(error);
         }
+      } finally {
+        settleReservation(token, session);
       }
 
       const target = resultNextIndex(steps, session.current_step, answers, cluster);
@@ -2573,6 +2620,10 @@ export function register(ctx: PluginContext): void {
           recordOutage(session, 'assessment', reservation, error);
         }
         throw aiError(error);
+      } finally {
+        // Also on success: `finishAiAttempt` below redeems the same token, and
+        // redeeming twice is a no-op, so every exit closes the reservation.
+        settleReservation(reservation, session);
       }
 
       const stamp = nowIso(now());
