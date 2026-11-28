@@ -49,6 +49,7 @@ import {
   nowIso,
   parseJson,
   STEP_ATTEMPT_LIMIT,
+  STEP_COOLDOWN_MS,
   toInviteDto,
   type AnswerRow,
   type InviteRow,
@@ -104,10 +105,14 @@ export { STEP_ATTEMPT_LIMIT };
  *   `STEP_ATTEMPT_LIMIT` times per question (`ai_step_refunds`). After that the
  *   outages of that question count like any other failure, which is what stops a
  *   loop against a provider that keeps failing.
+ * - The question cap expires after `STEP_COOLDOWN_MS`, because the cluster
+ *   suggestion is a step the customer cannot answer: a permanent cap there would
+ *   end the interview without a single call the customer could have avoided. So
+ *   one question may spend its allowance again after ten minutes — at most, and
+ *   never more than the link's total budget allows.
  *
  * So a link of mode `m` can cause at most `2 × aiAttemptLimit(m)` provider calls
- * while the provider answers, and at most one question's forgive-and-retry cycle
- * per question while it does not.
+ * in total, and on a single step at most `2 × STEP_ATTEMPT_LIMIT` per cooldown.
  */
 export function aiAttemptLimit(mode: Mode): number {
   const clusters = mode === 'full' ? 5 : mode === 'standard' ? 3 : 0;
@@ -743,6 +748,18 @@ export function register(ctx: PluginContext): void {
         `);
       },
     },
+    {
+      version: 6,
+      up(database) {
+        // The step cap must bite without ever becoming a dead end: the cluster
+        // suggestion has no answer the customer could give, so a permanent block
+        // would end the interview. `ai_step_at` anchors a cooldown after which the
+        // question gets its allowance back.
+        database.exec(`
+          alter table discovery_session add column ai_step_at text;
+        `);
+      },
+    },
   ]);
 
   const call: CallInternal = (caller, request) => ctx.callInternal(caller, request);
@@ -1092,6 +1109,7 @@ export function register(ctx: PluginContext): void {
       ai_step_key: null,
       ai_step_attempts: 0,
       ai_step_refunds: 0,
+      ai_step_at: null,
     };
     db.prepare(
       `insert into discovery_session
@@ -1227,8 +1245,18 @@ export function register(ctx: PluginContext): void {
    * the refund redeems it; redeeming twice does nothing. The map lives in the
    * process that serves the request, which is where the counters live as well.
    *
-   * An entry that is never redeemed (a crash mid-request) only means the attempt
-   * stays counted — the safe direction — and is dropped when it gets old.
+   * Every way out of a reservation settles its token, so a served request leaves
+   * nothing behind:
+   * - success: `finishAiAttempt` — the normal case,
+   * - provider outage: `recordOutage`,
+   * - a check that refunds and then re-reserves: `refundAiAttempt`.
+   *
+   * Only a crash mid-request skips all three. Such an entry is never redeemable
+   * again, so it would only hold memory; the sweep below drops it once it is older
+   * than `RESERVATION_MAX_AGE_MS` (10 minutes). Ten minutes is generous: one
+   * request's whole model budget is 40 s (`AI_CALL_BUDGET_MS` in `ai.ts`), so a
+   * token older than that cannot belong to a live request any more. Until the
+   * sweep runs, the attempt simply stays counted — the safe direction.
    */
   const reservations = new Map<string, { sessionId: string; at: number }>();
   const RESERVATION_MAX_AGE_MS = 10 * 60_000;
@@ -1274,10 +1302,11 @@ export function register(ctx: PluginContext): void {
     perStep = true,
   ): string {
     const budget = aiAttemptLimit(invite.mode);
+    const cooldownCutoff = new Date(now().getTime() - STEP_COOLDOWN_MS).toISOString();
     const claim = db.transaction((): 'ok' | 'budget' | 'step' => {
       const row = db
         .prepare(
-          `select ai_attempts, ai_step_key, ai_step_attempts
+          `select ai_attempts, ai_step_key, ai_step_attempts, ai_step_refunds, ai_step_at
              from discovery_session where id = ?`,
         )
         .get(session.id) as
@@ -1285,24 +1314,37 @@ export function register(ctx: PluginContext): void {
             ai_attempts: number;
             ai_step_key: string | null;
             ai_step_attempts: number;
+            ai_step_refunds: number;
+            ai_step_at: string | null;
           }
         | undefined;
       if (!row) return 'budget';
       if (row.ai_attempts >= budget) return 'budget';
       const sameStep = row.ai_step_key === stepKey;
-      if (perStep && sameStep && row.ai_step_attempts >= STEP_ATTEMPT_LIMIT) return 'step';
+      const exhausted = perStep && sameStep && row.ai_step_attempts >= STEP_ATTEMPT_LIMIT;
+      // The cap bites, but only for a while: a step whose customer can give no
+      // answer (the cluster suggestion) would otherwise be a dead end, and the
+      // link would be lost over a bad ten minutes at the provider. After the
+      // cooldown the question starts over with its full allowance; the link's
+      // total budget stays the hard ceiling either way.
+      const cooled = exhausted && row.ai_step_at !== null && row.ai_step_at <= cooldownCutoff;
+      if (exhausted && !cooled) return 'step';
       if (!perStep) {
         db.prepare('update discovery_session set ai_attempts = ai_attempts + 1 where id = ?').run(
           session.id,
         );
         return 'ok';
       }
-      if (sameStep) {
+      if (sameStep && !cooled) {
+        // `ai_step_at` only recollects the start of a running allowance: it
+        // anchors the cooldown, not the last call.
         db.prepare(
           `update discovery_session
-              set ai_attempts = ai_attempts + 1, ai_step_attempts = ai_step_attempts + 1
+              set ai_attempts = ai_attempts + 1,
+                  ai_step_attempts = ai_step_attempts + 1,
+                  ai_step_at = coalesce(ai_step_at, ?)
             where id = ?`,
-        ).run(session.id);
+        ).run(nowIso(now()), session.id);
       } else {
         // A new question starts with a clean allowance, forgiven outages included.
         db.prepare(
@@ -1310,9 +1352,16 @@ export function register(ctx: PluginContext): void {
               set ai_attempts = ai_attempts + 1,
                   ai_step_key = ?,
                   ai_step_attempts = 1,
-                  ai_step_refunds = 0
+                  ai_step_refunds = 0,
+                  ai_step_at = ?
             where id = ?`,
-        ).run(stepKey, session.id);
+        ).run(stepKey, nowIso(now()), session.id);
+        if (cooled) {
+          log.info(
+            { inviteId: invite.id, sessionId: session.id, step: stepKey },
+            'discovery step budget: cooldown over, the question gets its allowance back',
+          );
+        }
       }
       return 'ok';
     });
@@ -1448,30 +1497,65 @@ export function register(ctx: PluginContext): void {
    * return to the same step starts with a full `STEP_ATTEMPT_LIMIT` again and
    * with the full allowance of forgiven outages, instead of inheriting the old
    * counts and blocking a customer who did nothing wrong.
+   *
+   * The reservation token is redeemed here too. A successful call is the normal
+   * way out of a reservation, so leaving its token behind would fill the map with
+   * settled reservations until the age limit swept them.
    */
-  function finishAiAttempt(session: SessionRow, stepKey: string): void {
+  function finishAiAttempt(session: SessionRow, stepKey: string, token: string): void {
+    redeemReservation(token, session.id);
     db.prepare(
       `update discovery_session
-          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
+          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0, ai_step_at = null
         where id = ? and ai_step_key = ?`,
     ).run(session.id, stepKey);
+    if (session.ai_step_key === stepKey) {
+      session.ai_step_key = null;
+      session.ai_step_attempts = 0;
+      session.ai_step_refunds = 0;
+      session.ai_step_at = null;
+    }
   }
 
   /**
-   * The budget key of the question the customer sees right now.
+   * The budget key the next `advance` of this link would reserve, if any.
    *
-   * A key stored on the session says nothing about the current question once the
-   * customer moved on, an older build wrote a different key format (`deepen:0`),
-   * or a failed call left the key behind. The DTO and the stale-key cleanup
-   * compare against this, so `stepBlocked` only ever describes the question on
-   * screen.
+   * This is the question on screen for a hint, `clusters` for the cluster
+   * suggestion and null for the steps that never ask the model (consent, the
+   * idea card, confirmation). It is a prediction of the request, not of the
+   * phase: at the last map step the next thing asked is the cluster suggestion,
+   * which is a `clusters` reservation, and a key stored under such a step must
+   * not be thrown away as stale.
+   *
+   * Kitchen sink avoided on purpose: the branches below mirror the ones in
+   * `advance`, and the test `the predicted step key is the one each step really
+   * reserves` fails if they ever drift apart.
    */
-  function activeStepKey(session: SessionRow, answers: Map<string, unknown>): string | null {
+  function requestedStepKey(
+    invite: InviteRow,
+    session: SessionRow,
+    answers: Map<string, unknown>,
+  ): string | null {
+    if (session.phase === 'consent') return null;
     if (session.phase === 'clusters') return 'clusters';
-    const { step } = currentStepOf(session, answers);
-    if (!step) return null;
-    if (session.phase === 'map') return `map:${step.key}`;
-    if (session.phase === 'deepen') return `deepen:${step.key}`;
+    if (session.phase === 'map') {
+      const next = session.current_step + 1;
+      if (next < 12) {
+        return `map:${MAP_STEPS[session.current_step + 1]?.key ?? session.current_step}`;
+      }
+      const shortcut =
+        (answers.get('meta.shortcut') === true || invite.mode === 'short') &&
+        invite.mode !== 'full';
+      return shortcut ? null : 'clusters';
+    }
+    if (session.phase === 'deepen') {
+      const steps = deepenSteps(selectedClusterIds(answers));
+      const entry = steps[session.current_step];
+      if (!entry || entry.isIdeas) return null;
+      // A pending follow-up is a question of its own that never asks the model.
+      if (parseJson<PendingQuestion>(session.pending_json)) return null;
+      return `deepen:${entry.step.key}`;
+    }
     return null;
   }
 
@@ -1493,33 +1577,41 @@ export function register(ctx: PluginContext): void {
     if (!keys.some((key) => `${prefix}:${key}` === stored)) return;
     db.prepare(
       `update discovery_session
-          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
+          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0, ai_step_at = null
         where id = ? and ai_step_key = ?`,
     ).run(session.id, stored);
     session.ai_step_key = null;
     session.ai_step_attempts = 0;
     session.ai_step_refunds = 0;
+    session.ai_step_at = null;
   }
 
   /**
-   * Drops a step key that does not belong to the question on screen.
+   * Drops a step key that belongs to no request of this link.
+   *
+   * `expected` is the key this request actually reserves, decided by the branch
+   * that serves the step. Comparing against anything else would delete the key of
+   * the step being served: at the last map step the next thing asked is the
+   * cluster suggestion (`clusters`), and the previous question's key must still
+   * be cleared, so the decision has to come from the request, not from the phase.
    *
    * Cheap hygiene with a real effect: an old link carries a key from an older
    * build (`deepen:0`), and the operator page would report a blocked question
    * that is not blocked. The counters are reset together with the key, because
    * they belong to it; the link's total budget is not touched.
    */
-  function discardStaleStepKey(session: SessionRow, answers: Map<string, unknown>): void {
-    if (!session.ai_step_key || session.ai_step_key === activeStepKey(session, answers)) return;
+  function discardStaleStepKey(session: SessionRow, expected: string | null): void {
+    if (!session.ai_step_key || session.ai_step_key === expected) return;
     const stale = session.ai_step_key;
     db.prepare(
       `update discovery_session
-          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
+          set ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0, ai_step_at = null
         where id = ? and ai_step_key = ?`,
     ).run(session.id, stale);
     session.ai_step_key = null;
     session.ai_step_attempts = 0;
     session.ai_step_refunds = 0;
+    session.ai_step_at = null;
     log.debug(
       { inviteId: session.invite_id, sessionId: session.id, stale },
       'discovery step budget dropped: the key belongs to another question',
@@ -1555,9 +1647,10 @@ export function register(ctx: PluginContext): void {
     body: { shortcut?: boolean },
   ): Promise<{ state: PublicState; hint: { text: string; examples: string[] } | null }> {
     const answers = answerMap(answerRows(db, session.id));
-    // A key from an older question or an older build must not linger and does
-    // not belong to what the customer is looking at now.
-    discardStaleStepKey(session, answers);
+    // A key that belongs to no request of this link — an older question, an older
+    // build, a finished step — is dropped before anything is reserved, so it can
+    // neither block nor excuse the step this request serves.
+    discardStaleStepKey(session, requestedStepKey(invite, session, answers));
     const current = currentStepOf(session, answers);
 
     if (session.phase === 'consent') {
@@ -1583,6 +1676,7 @@ export function register(ctx: PluginContext): void {
         // question and therefore hits the same counter; a question that has been
         // answered closes its counter, see `clearAnsweredStep`.
         const stepKey = `map:${MAP_STEPS[session.current_step + 1]?.key ?? session.current_step}`;
+        discardStaleStepKey(session, stepKey);
         const token = reserveAiAttempt(invite, session, stepKey);
         try {
           const result = await interviewHint(call, {
@@ -1598,7 +1692,7 @@ export function register(ctx: PluginContext): void {
             showIdeas: false,
             log,
           });
-          finishAiAttempt(session, stepKey);
+          finishAiAttempt(session, stepKey, token);
           if (result.hint || result.examples.length > 0) {
             hint = { text: result.hint ?? '', examples: result.examples };
           }
@@ -1638,6 +1732,7 @@ export function register(ctx: PluginContext): void {
 
       let suggested: SuggestedCluster[];
       const stepKey = 'clusters';
+      discardStaleStepKey(session, stepKey);
       const token = reserveAiAttempt(invite, session, stepKey);
       try {
         suggested = await suggestClusters(call, {
@@ -1646,7 +1741,7 @@ export function register(ctx: PluginContext): void {
           answers: interviewHistory(answers),
           log,
         });
-        finishAiAttempt(session, stepKey);
+        finishAiAttempt(session, stepKey, token);
       } catch (error) {
         if (isProviderOutage(error)) recordOutage(session, stepKey, token, error);
         if (error instanceof AiUnavailable && error.reason === 'filtered') {
@@ -1744,6 +1839,7 @@ export function register(ctx: PluginContext): void {
       // arithmetic: two questions of the same cluster can never share a counter,
       // however many questions a cluster has.
       const stepKey = `deepen:${entry.step.key}`;
+      discardStaleStepKey(session, stepKey);
       const token = reserveAiAttempt(invite, session, stepKey);
       try {
         const result = await interviewHint(call, {
@@ -1756,7 +1852,7 @@ export function register(ctx: PluginContext): void {
           showIdeas: isLastQuestion,
           log,
         });
-        finishAiAttempt(session, stepKey);
+        finishAiAttempt(session, stepKey, token);
         if (isLastQuestion && result.ideas.length > 0) {
           const catalogue = result.ideas.map((title, index) => ({
             id: `i${index + 1}`,
@@ -1957,7 +2053,16 @@ export function register(ctx: PluginContext): void {
       const page = rows.slice(0, limit);
       const items = page.map((invite) => {
         const session = findSession(db, invite.id);
-        return toInviteDto(invite, session, Boolean(session && findReport(db, session.id)));
+        // The same key the detail page uses. `stepBlocked` is a property of the
+        // question on screen, and the list shows the same session, so leaving it
+        // to the default `null` would report `false` for a stuck link and hide
+        // exactly the case an operator is looking for.
+        return toInviteDto(
+          invite,
+          session,
+          Boolean(session && findReport(db, session.id)),
+          session ? requestedStepKey(invite, session, answerMap(answerRows(db, session.id))) : null,
+        );
       });
       const last = page.at(-1);
       return {
@@ -2085,7 +2190,7 @@ export function register(ctx: PluginContext): void {
           invite,
           session,
           Boolean(reportRow),
-          session ? activeStepKey(session, answerMap(answerRowsOfSession)) : null,
+          session ? requestedStepKey(invite, session, answerMap(answerRowsOfSession)) : null,
         ),
         answers,
         report: reportRow ? reportOf(reportRow) : null,
@@ -2174,7 +2279,8 @@ export function register(ctx: PluginContext): void {
         db.prepare(
           `update discovery_session
               set complete_attempts = 0, ai_attempts = 0,
-                  ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0
+                  ai_step_key = null, ai_step_attempts = 0, ai_step_refunds = 0,
+                  ai_step_at = null
             where id = ?`,
         ).run(session.id);
         session.complete_attempts = 0;
@@ -2182,6 +2288,7 @@ export function register(ctx: PluginContext): void {
         session.ai_step_key = null;
         session.ai_step_attempts = 0;
         session.ai_step_refunds = 0;
+        session.ai_step_at = null;
       }
       log.info({ inviteId: invite.id, at: stamp }, 'discovery invite link rotated');
       return {
@@ -2482,7 +2589,7 @@ export function register(ctx: PluginContext): void {
       });
       complete();
       // The model answered, so the outage burst is over here too.
-      finishAiAttempt(session, 'assessment');
+      finishAiAttempt(session, 'assessment', reservation);
       invite.status = 'completed';
       invite.completed_at = stamp;
       session.completed_at = stamp;

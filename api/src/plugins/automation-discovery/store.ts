@@ -53,6 +53,8 @@ export interface SessionRow {
    * `STEP_ATTEMPT_LIMIT` outages, then its outages count like any other failure.
    */
   ai_step_refunds: number;
+  /** When the step allowance above was granted, ISO; anchors the cooldown. */
+  ai_step_at: string | null;
 }
 
 export interface AnswerRow {
@@ -143,6 +145,18 @@ export function addDays(now: Date, days: number): string {
  */
 export const STEP_ATTEMPT_LIMIT = 4;
 
+/**
+ * How long one question stays blocked after it used up its allowance.
+ *
+ * The cap has to bite against a provider that keeps failing, but it must never
+ * turn a step into a dead end: the cluster suggestion cannot be answered by the
+ * customer, so a permanent block would end the interview for good. After this
+ * cooldown the question gets its allowance back. The link's total budget is not
+ * affected and stays the hard ceiling on model calls — one question can only
+ * drain it slowly, never in a loop.
+ */
+export const STEP_COOLDOWN_MS = 10 * 60_000;
+
 export function parseJson<T>(raw: string | null): T | null {
   if (!raw) return null;
   try {
@@ -193,7 +207,11 @@ export function toInviteDto(
           stepBlocked:
             activeStepKey !== null &&
             session.ai_step_key === activeStepKey &&
-            session.ai_step_attempts >= STEP_ATTEMPT_LIMIT,
+            session.ai_step_attempts >= STEP_ATTEMPT_LIMIT &&
+            // The block expires: after the cooldown the same request is served
+            // again, so reporting it would be wrong.
+            (session.ai_step_at === null ||
+              session.ai_step_at > new Date(Date.now() - STEP_COOLDOWN_MS).toISOString()),
         }
       : null,
     reportAvailable,

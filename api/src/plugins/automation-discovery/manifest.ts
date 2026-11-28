@@ -4,7 +4,7 @@ export const manifest: PluginManifest = {
   id: 'automation-discovery',
   label: 'Automatisierungs-Scout',
   description: 'Einmal-Link, KI-Interview und priorisierte Automatisierungsideen pro Kunde.',
-  version: '0.1.8',
+  version: '0.1.9',
   apiVersion: 1,
   scope: 'platform',
   nav: {

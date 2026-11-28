@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test, { beforeEach } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { createTestApp, type TestApp } from './helpers.ts';
 import {
   aiAttemptLimit,
@@ -9,6 +10,7 @@ import {
   publicRateLimiter,
   STEP_ATTEMPT_LIMIT,
 } from '../../src/plugins/automation-discovery/server.ts';
+import { STEP_COOLDOWN_MS } from '../../src/plugins/automation-discovery/store.ts';
 import {
   analyse,
   AiUnavailable,
@@ -33,7 +35,7 @@ interface LlmReply {
   body: string;
 }
 
-type LlmHandler = (payload: unknown) => LlmReply;
+type LlmHandler = (payload: unknown) => LlmReply | Promise<LlmReply>;
 
 const GOOD_REPORT = {
   summary:
@@ -121,7 +123,7 @@ function stubLlm(ctx: TestApp, handler: LlmHandler): () => void {
     if (typeof url === 'string' && url.startsWith('/api/v1/llm/internal/')) {
       const payload =
         typeof options === 'string' ? undefined : (options as { payload?: unknown }).payload;
-      const reply = handler(payload);
+      const reply = await handler(payload);
       return {
         statusCode: reply.status,
         body: reply.body,
@@ -1364,6 +1366,119 @@ test('a rotated link reports neither a blocked step nor an old budget', async (t
   assert.equal(session.aiAttempts, 0);
 });
 
+test('the cluster suggestion stops after four calls, and the same step still works later', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let clusterCalls = 0;
+  let clusterDown = true;
+  stubLlm(ctx, (payload) => {
+    const system = systemOf(payload);
+    if (system.includes('pick automation topics')) {
+      clusterCalls += 1;
+      if (clusterDown) return providerDown();
+      return llmReply(payload);
+    }
+    return llmReply(payload);
+  });
+
+  // Walk to the last map question, answering up to it but not past it: the next
+  // `advance` is the one that asks for the cluster suggestion. Its hints are
+  // normal questions, so the step cap is not what this test is about.
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+  for (let index = 0; index < 11; index += 1) {
+    const state = await getState(ctx, invite.token);
+    assert.ok(state.step);
+    await postAnswers(
+      ctx,
+      invite.token,
+      state.step.fields
+        .filter((field) => field.required)
+        .map((field) => ({ key: field.key, value: answerFor(field) })),
+    );
+    assert.equal((await advance(ctx, invite.token)).statusCode, 200);
+  }
+  const beforeSuggestion = await getState(ctx, invite.token);
+  assert.equal(beforeSuggestion.phase, 'map');
+  assert.ok(beforeSuggestion.step);
+  const beforeCalls = clusterCalls;
+  const spentBefore = (
+    ctx.db
+      .prepare('select ai_attempts from discovery_session where invite_id = ?')
+      .get(invite.id) as { ai_attempts: number }
+  ).ai_attempts;
+
+  const statuses: number[] = [];
+  for (let index = 0; index < 12; index += 1) {
+    statuses.push((await advance(ctx, invite.token)).statusCode);
+  }
+  // The step counter belongs to the request that is really served (`clusters`),
+  // not to the question on screen, so the cap bites here as well: four forgiven
+  // outages, then four counted ones, then the defined error — eight provider
+  // calls where the same step used to run until the link's whole budget was gone.
+  assert.deepEqual(statuses, [503, 503, 503, 503, 503, 503, 503, 503, 429, 429, 429, 429]);
+  assert.equal(clusterCalls - beforeCalls, STEP_ATTEMPT_LIMIT * 2);
+  const blocked = ctx.db
+    .prepare(
+      'select ai_step_key, ai_step_attempts, ai_step_refunds, ai_attempts from discovery_session where invite_id = ?',
+    )
+    .get(invite.id) as {
+    ai_step_key: string | null;
+    ai_step_attempts: number;
+    ai_step_refunds: number;
+    ai_attempts: number;
+  };
+  assert.equal(blocked.ai_step_key, 'clusters');
+  assert.equal(blocked.ai_step_attempts, STEP_ATTEMPT_LIMIT);
+  assert.equal(blocked.ai_step_refunds, STEP_ATTEMPT_LIMIT);
+  // Eight calls on this one step, half of them provider-billed: the link's total
+  // counter moved by exactly that, not by the dozens an uncapped step allowed.
+  assert.equal(blocked.ai_attempts - spentBefore, STEP_ATTEMPT_LIMIT * 2);
+
+  // The operator sees the block in the list and in the detail, with the same
+  // answer — the list used to report `false` for exactly this case.
+  const detail = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/discovery/invites/${invite.id}`,
+    headers: { cookie },
+  });
+  assert.equal(detail.statusCode, 200);
+  const detailSession = (
+    detail.json() as { invite: { session: { stepBlocked: boolean; aiStepAttempts: number } } }
+  ).invite.session;
+  assert.equal(detailSession.stepBlocked, true);
+  assert.equal(detailSession.aiStepAttempts, STEP_ATTEMPT_LIMIT);
+  const list = await ctx.app.inject({
+    method: 'GET',
+    url: '/api/v1/discovery/invites?limit=50',
+    headers: { cookie },
+  });
+  assert.equal(list.statusCode, 200);
+  const listed = (
+    list.json() as { items: Array<{ id: string; session: { stepBlocked: boolean } }> }
+  ).items.find((item) => item.id === invite.id);
+  assert.ok(listed?.session);
+  assert.equal(listed.session.stepBlocked, true);
+
+  // Still no call while the block runs, only the defined error.
+  assert.equal((await advance(ctx, invite.token)).statusCode, 429);
+  assert.equal(clusterCalls - beforeCalls, STEP_ATTEMPT_LIMIT * 2);
+
+  // The block expires: the same request is served, and the customer reaches the
+  // cluster suggestion instead of losing the whole interview.
+  clusterDown = false;
+  ctx.db
+    .prepare('update discovery_session set ai_step_at = ? where invite_id = ?')
+    .run(new Date(Date.now() - STEP_COOLDOWN_MS - 60_000).toISOString(), invite.id);
+  const recovered = await advance(ctx, invite.token);
+  assert.equal(recovered.statusCode, 200, JSON.stringify(recovered.body));
+  assert.equal(recovered.state.phase, 'clusters');
+  assert.equal(clusterCalls - beforeCalls, STEP_ATTEMPT_LIMIT * 2 + 1);
+});
+
 test('parallel outages give back exactly what was reserved, never more', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -1371,8 +1486,13 @@ test('parallel outages give back exactly what was reserved, never more', async (
   const invite = await createInvite(ctx, cookie);
 
   let reachable = false;
-  stubLlm(ctx, (payload) => {
+  let hintCalls = 0;
+  stubLlm(ctx, async (payload) => {
     if (!isHintRequest(payload)) return llmReply(payload);
+    hintCalls += 1;
+    // The real provider takes its time; without the delay the six requests run
+    // one after the other and the test would prove nothing about concurrency.
+    await sleep(25);
     if (reachable) return llmReply(payload);
     // Not configured: the model was never called, so nothing was spent.
     return { status: 409, body: JSON.stringify({ error: { code: 'llm_purpose_unmapped' } }) };
@@ -1383,8 +1503,14 @@ test('parallel outages give back exactly what was reserved, never more', async (
 
   const row = () =>
     ctx.db
-      .prepare('select ai_attempts, ai_step_attempts from discovery_session where invite_id = ?')
-      .get(invite.id) as { ai_attempts: number; ai_step_attempts: number };
+      .prepare(
+        'select ai_attempts, ai_step_attempts, ai_step_refunds from discovery_session where invite_id = ?',
+      )
+      .get(invite.id) as {
+      ai_attempts: number;
+      ai_step_attempts: number;
+      ai_step_refunds: number;
+    };
 
   const before = row().ai_attempts;
   const parallel = await Promise.all(
@@ -1394,16 +1520,36 @@ test('parallel outages give back exactly what was reserved, never more', async (
       () => undefined,
     ),
   );
-  for (const response of parallel) {
-    assert.equal(response.statusCode, 503);
+  // All six reserve before the first refund can land, so the question's own
+  // allowance of four decides: four calls go out and the last two are refused
+  // instead of stacking up behind the same question.
+  assert.deepEqual(
+    parallel.map((response) => response.statusCode),
+    [503, 503, 503, 503, 429, 429],
+  );
+  for (const response of parallel.slice(0, 4)) {
     assert.equal((response.body as { error: { reason?: string } }).error.reason, 'not_configured');
   }
-  // Six reservations, six refunds, and not one refund more: a refund is bound to
-  // its own reservation, so a parallel request cannot give back someone else's.
+  assert.equal(hintCalls, 4);
+  // Four reservations, four refunds, and not one refund more: a refund is bound
+  // to its own reservation, so a parallel request cannot give back someone else's.
+  // The API calls were never made, so the link's total budget is untouched.
   assert.equal(row().ai_attempts, before);
+  // Every refund gave back its own step attempt, so the counter is back to zero —
+  // four refunds, never five. The refund allowance is untouched, because a call
+  // that never reached the model is not a forgiven outage.
   assert.equal(row().ai_step_attempts, 0);
+  assert.equal(row().ai_step_refunds, 0);
 
+  // The four forgiven outages are exactly why the question is not a dead end.
   reachable = true;
+  await postAnswers(
+    ctx,
+    invite.token,
+    (await getState(ctx, invite.token)).step?.fields
+      .filter((field) => field.required)
+      .map((field) => ({ key: field.key, value: answerFor(field) })) ?? [],
+  );
   assert.equal((await advance(ctx, invite.token)).statusCode, 200);
 });
 
