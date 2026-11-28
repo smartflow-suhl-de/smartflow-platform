@@ -11,8 +11,9 @@ import {
   requireSite,
 } from './store.ts';
 import { DEFAULT_APPROVAL_DAYS, MAX_APPROVAL_DAYS, optionalText, type Runtime } from './runtime.ts';
+import type { Delivery } from './delivery.ts';
 
-export function registerApprovals(runtime: Runtime): void {
+export function registerApprovals(runtime: Runtime, delivery: Delivery): void {
   // Public links are open to the internet; the token is the only credential.
   // One key per sender and token keeps a leaked link from being hammered.
   const PUBLIC_LIMIT_PER_MINUTE = 120;
@@ -150,9 +151,14 @@ export function registerApprovals(runtime: Runtime): void {
              from web_approvals where id = ?`,
         )
         .get(id);
+      // Two links: the panel page that explains the change, and the built site
+      // itself, which is what the client actually has to judge. The site link
+      // carries the token once and the site listener turns it into a cookie.
+      const siteUrl = delivery.publicUrl(site);
       return {
         ...(stored as Record<string, unknown>),
         url: `${runtime.config.publicUrl.replace(/\/$/, '')}/freigabe/${tenantId}/${plaintext}`,
+        preview_url: siteUrl ? `${siteUrl}?t=${plaintext}` : null,
       };
     },
   );
@@ -199,7 +205,9 @@ export function registerApprovals(runtime: Runtime): void {
         throw invalidState('Only a successful build can be published.');
       }
       const current = runtime.settings(database);
-      if (current.require_approval === 1) {
+      // A website without a client belongs to the agency itself; there is no
+      // client who could approve it, so its own team publishes directly.
+      if (current.require_approval === 1 && site.client_id !== null) {
         const approval = database
           .prepare(
             `select id from web_approvals

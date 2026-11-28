@@ -115,6 +115,7 @@ und Grenzen stehen in [`docs/agent-plugin.md`](docs/agent-plugin.md).
 │   ├── index.html
 │   └── vite.config.ts
 ├── .github/workflows/ci.yml CI-Gate
+├── templates/astro-site/    Vorlage, aus der jede Website ohne eigenes Repo gebaut wird
 ├── docs/deployment.md       Betriebsanleitung für den Docker-Betrieb
 ├── .impeccable/             Designsystem-Artefakte (config.json, design.json)
 ├── DESIGN.md                Designsystem

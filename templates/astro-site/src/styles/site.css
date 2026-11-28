@@ -1,0 +1,227 @@
+:root {
+  --paper: #f2efe7;
+  --paper-raised: #faf8f2;
+  --surface: #ffffff;
+  --ink: #12161a;
+  --ink-soft: #454c52;
+  --ink-muted: #5f676d;
+  --line: #ddd7c8;
+  --line-strong: #b9b2a0;
+  --cobalt: #1e3bff;
+  --cobalt-deep: #1428b8;
+  --signal: #ff5a1f;
+  --radius: 3px;
+  --display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --body: 'Schibsted Grotesk', system-ui, sans-serif;
+  --mono: 'Martian Mono', ui-monospace, monospace;
+  --measure: 62ch;
+  --gutter: clamp(20px, 5vw, 56px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0d1013;
+    --paper-raised: #14181c;
+    --surface: #171c21;
+    --ink: #eef0ea;
+    --ink-soft: #b5bcc2;
+    --ink-muted: #98a1a8;
+    --line: #262c31;
+    --line-strong: #3b434a;
+    --cobalt: #6d84ff;
+    --cobalt-deep: #4b62ff;
+    --signal: #ff7a45;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+a {
+  color: var(--cobalt);
+  text-underline-offset: 0.2em;
+}
+
+a:hover {
+  color: var(--cobalt-deep);
+}
+
+.shell {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.masthead {
+  border-bottom: 1px solid var(--line);
+  padding: 22px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 16px 32px;
+}
+
+.brand {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nav a {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--ink-muted);
+  padding: 4px 0;
+  border-bottom: 1px solid transparent;
+}
+
+.nav a:hover,
+.nav a[aria-current='page'] {
+  color: var(--ink);
+  border-bottom-color: var(--cobalt);
+}
+
+main {
+  flex: 1;
+  padding: clamp(32px, 6vw, 72px) 0 clamp(48px, 8vw, 96px);
+}
+
+.kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin: 0 0 12px;
+}
+
+h1 {
+  font-family: var(--display);
+  font-size: clamp(30px, 5vw, 44px);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  margin: 0 0 20px;
+  max-width: var(--measure);
+}
+
+h2 {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 40px 0 12px;
+}
+
+h3 {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 28px 0 8px;
+}
+
+p,
+li {
+  max-width: var(--measure);
+  color: var(--ink-soft);
+}
+
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 40px 0;
+}
+
+.lede {
+  font-size: 18px;
+  color: var(--ink-soft);
+  max-width: var(--measure);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin-top: 32px;
+}
+
+.card {
+  background: var(--paper-raised);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card a {
+  font-family: var(--display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-decoration: none;
+}
+
+.card p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-muted);
+}
+
+.foot {
+  border-top: 1px solid var(--line);
+  padding: 20px 0 40px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}

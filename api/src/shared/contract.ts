@@ -5,6 +5,16 @@
 
 export const KERNEL_API_VERSION = 1;
 
+/**
+ * The operator's own workspace: websites the agency runs for itself. It is not
+ * a tenant row and never shows up in a tenant list; the kernel opens one
+ * database for it under the same isolation rules as a customer database. A
+ * tenant-scoped plugin opts in with `nav.ownWorkspace`.
+ */
+export const OWN_WORKSPACE_ID = 'ten_own_workspace';
+export const OWN_WORKSPACE_NAME = 'Eigene Webseiten';
+export const OWN_WORKSPACE_SLUG = 'eigen';
+
 export type Role = 'operator' | 'tenant_admin' | 'employee';
 
 export const ROLES: readonly Role[] = ['operator', 'tenant_admin', 'employee'];
@@ -18,6 +28,11 @@ export interface PluginNav {
   roles?: Role[];
   createLabel?: string;
   aliases?: string[];
+  /**
+   * Tenant-scoped plugin that also works without a chosen tenant: an operator
+   * then works in the own workspace instead of a customer database.
+   */
+  ownWorkspace?: boolean;
 }
 
 export interface PluginManifest {
