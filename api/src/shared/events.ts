@@ -6,6 +6,8 @@ export interface PlatformEvents {
   'tenant.created': { tenantId: string; name: string; slug: string };
   'tenant.suspended': { tenantId: string };
   'tenant.resumed': { tenantId: string };
+  /** Field names only: master-data values never go into the audit log. */
+  'tenant.updated': { tenantId: string; fields: string[] };
   'auth.setup_completed': { userId: string };
   'auth.signed_in': { userId: string; role: string };
   'auth.signed_out': { userId: string };

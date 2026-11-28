@@ -372,6 +372,58 @@ test('master data is captured on create and updated partially', async (t) => {
   assert.equal(profile.phone, '+49 431 7654321');
 });
 
+test('a master-data patch emits one event with field names only', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const tenant = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Nordlicht GmbH', city: 'Kiel' },
+    })
+  ).json() as Tenant;
+
+  const patched = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: 'Lübeck', vat_id: 'DE999999999' },
+  });
+  assert.equal(patched.statusCode, 200);
+
+  const events = ctx.db
+    .prepare(
+      "select name, payload from events where name = 'tenant.updated' order by created_at, rowid",
+    )
+    .all() as { name: string; payload: string }[];
+  assert.equal(events.length, 1);
+  const payload = JSON.parse(events[0]?.payload ?? '{}') as {
+    tenantId?: string;
+    fields?: string[];
+  };
+  assert.equal(payload.tenantId, tenant.id);
+  assert.deepEqual(payload.fields?.sort(), ['city', 'vat_id']);
+  // Field names only: the new values must not reach the audit log.
+  assert.ok(!events[0]?.payload.includes('Lübeck'));
+  assert.ok(!events[0]?.payload.includes('DE999999999'));
+
+  // A patch that changes nothing is not an update.
+  const noop = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: 'Lübeck' },
+  });
+  assert.equal(noop.statusCode, 200);
+  const after = ctx.db
+    .prepare("select count(*) as count from events where name = 'tenant.updated'")
+    .get() as { count: number };
+  assert.equal(after.count, 1);
+});
+
 test('tenant name and slug are editable; the slug stays unique', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());

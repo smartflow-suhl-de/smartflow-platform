@@ -685,10 +685,14 @@ export function register(ctx: PluginContext): void {
 
       const assignments: string[] = ['name = ?', 'slug = ?', 'updated_at = ?'];
       const values: unknown[] = [name, slug, now().toISOString()];
+      const changedFields: string[] = [];
+      if (name !== row.name) changedFields.push('name');
+      if (slug !== row.slug) changedFields.push('slug');
       for (const field of DETAIL_FIELDS) {
         if (!(field in details)) continue;
         assignments.push(`${field} = ?`);
         values.push(details[field] ?? null);
+        if ((details[field] ?? null) !== row[field]) changedFields.push(field);
       }
       values.push(row.id);
 
@@ -701,6 +705,10 @@ export function register(ctx: PluginContext): void {
 
       const updated: TenantRow = { ...row, name, slug, ...details };
       syncProfile(updated);
+      // Field names only: the audit log records that master data changed, never
+      // the values. A patch that changes nothing emits nothing.
+      if (changedFields.length > 0)
+        ctx.emit('tenant.updated', { tenantId: row.id, fields: changedFields });
       return toTenant(updated);
     },
   );
