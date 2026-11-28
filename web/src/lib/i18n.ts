@@ -478,6 +478,10 @@ export interface Messages {
     colCustomer: string;
     colStatus: string;
     colProgress: string;
+    colAiBudget: string;
+    colAiStepBudget: string;
+    aiBudgetSummary: (used: number, assessments: number) => string;
+    aiStepBudget: (used: number, blocked: boolean) => string;
     colExpires: string;
     colActions: string;
     statusOpen: string;
@@ -562,6 +566,9 @@ export interface Messages {
     errorBody: string;
     retry: string;
     aiUnavailable: string;
+    aiTruncated: string;
+    aiLimitReached: string;
+    aiFiltered: string;
     skipShort: string;
     skipShortHint: string;
     saveLater: string;
@@ -1182,6 +1189,13 @@ const DE: Messages = {
     colCustomer: 'Kunde',
     colStatus: 'Status',
     colProgress: 'Fortschritt',
+    colAiBudget: 'KI-Aufrufe',
+    colAiStepBudget: 'KI-Aufrufe aktuelle Frage',
+    aiBudgetSummary: (used, assessments) => `${used} gesamt, ${assessments} für die Auswertung`,
+    aiStepBudget: (used, blocked) =>
+      blocked
+        ? `${used} für die aktuelle Frage — Limit erreicht, der Kunde sieht 429`
+        : `${used} für die aktuelle Frage`,
     colExpires: 'Gültig bis',
     colActions: 'Aktionen',
     statusOpen: 'Offen',
@@ -1274,6 +1288,12 @@ const DE: Messages = {
     retry: 'Erneut versuchen',
     aiUnavailable:
       'Der KI-Dienst antwortet gerade nicht. Ihre Antworten sind gespeichert; bitte versuchen Sie es gleich noch einmal.',
+    aiTruncated:
+      'Die Auswertung war beim Erstellen zu lang und wurde abgeschnitten. Ihre Antworten sind gespeichert; bitte versuchen Sie es noch einmal.',
+    aiLimitReached:
+      'Für diesen Link wurde die Auswertung zu oft angefordert. Ihre Antworten sind gespeichert; bitte wenden Sie sich an Ihren Ansprechpartner.',
+    aiFiltered:
+      'Der KI-Dienst hat die Auswertung dieses Inhalts abgelehnt. Ihre Antworten sind gespeichert; bitte wenden Sie sich an Ihren Ansprechpartner.',
     skipShort: 'Abkürzen: ohne Vertiefung fortfahren',
     skipShortHint: 'Sie können nach der Landkarte direkt zur Auswertung.',
     saveLater: 'Speichern und später weiter',
@@ -1914,6 +1934,13 @@ const EN: Messages = {
     colCustomer: 'Customer',
     colStatus: 'Status',
     colProgress: 'Progress',
+    colAiBudget: 'AI calls',
+    colAiStepBudget: 'AI calls (current question)',
+    aiBudgetSummary: (used, assessments) => `${used} in total, ${assessments} for the assessment`,
+    aiStepBudget: (used, blocked) =>
+      blocked
+        ? `${used} for the current question — limit reached, the customer sees 429`
+        : `${used} for the current question`,
     colExpires: 'Valid until',
     colActions: 'Actions',
     statusOpen: 'Open',
@@ -2004,6 +2031,12 @@ const EN: Messages = {
     retry: 'Try again',
     aiUnavailable:
       'The AI service is not answering right now. Your answers are saved; please try again shortly.',
+    aiTruncated:
+      'The assessment was too long to be written in one go and was cut off. Your answers are saved; please try again.',
+    aiLimitReached:
+      'The assessment was requested too often for this link. Your answers are saved; please contact the person who invited you.',
+    aiFiltered:
+      'The AI service declined to assess this content. Your answers are saved; please contact the person who invited you.',
     skipShort: 'Shortcut: continue without the deep dive',
     skipShortHint: 'After the map you can go straight to the assessment.',
     saveLater: 'Save and continue later',

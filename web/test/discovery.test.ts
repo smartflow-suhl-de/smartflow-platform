@@ -2,10 +2,18 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import type { DiscoveryStep } from '../src/lib/types.ts';
 
-const { answersForStep, missingRequired, initialValues, reorderRank, rankMoveLabel } =
-  await import('../src/pages/DiscoveryPublic.tsx');
+const {
+  answersForStep,
+  missingRequired,
+  initialValues,
+  reorderRank,
+  rankMoveLabel,
+  aiNoticeFor,
+  aiNoticeText,
+} = await import('../src/pages/DiscoveryPublic.tsx');
 const { getMessages } = await import('../src/lib/i18n.ts');
-const { discoveryPublic, ApiError } = await import('../src/lib/api.ts');
+const { discoveryPublic, ApiError, DISCOVERY_TIMEOUT_MS, REQUEST_TIMEOUT_MS } =
+  await import('../src/lib/api.ts');
 
 const step: DiscoveryStep = {
   key: 'map.q4',
@@ -106,6 +114,27 @@ describe('public discovery client', () => {
     assert.match(calls[0]?.url ?? '', /\/api\/v1\/discovery\/public\/abc$/);
   });
 
+  it('gives the model-backed steps a budget beyond the default request timeout', async () => {
+    const timeouts: number[] = [];
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = ((ms: number) => {
+      timeouts.push(ms);
+      return originalTimeout.call(AbortSignal, ms);
+    }) as typeof AbortSignal.timeout;
+    try {
+      await discoveryPublic.state('abc');
+      await discoveryPublic.advance('abc');
+      await discoveryPublic.complete('abc');
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+
+    assert.ok(DISCOVERY_TIMEOUT_MS > REQUEST_TIMEOUT_MS);
+    assert.equal(timeouts.length, 3);
+    assert.equal(timeouts[0], REQUEST_TIMEOUT_MS, 'a plain state read keeps 15 s');
+    assert.deepEqual(timeouts.slice(1), [DISCOVERY_TIMEOUT_MS, DISCOVERY_TIMEOUT_MS]);
+  });
+
   it('throws a typed error for a broken public route', async () => {
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ error: { code: 'rate_limited', message: 'slow down' } }), {
@@ -187,5 +216,57 @@ describe('discoveryInviteId', () => {
     assert.equal(discoveryInviteId('/discovery/inv_123'), 'inv_123');
     assert.equal(discoveryInviteId('/discovery/%E0%A4%A'), null);
     assert.equal(discoveryInviteId('/discovery/a/b'), null);
+  });
+});
+
+describe('aiNoticeFor', () => {
+  const error = (code: string, status = 502) =>
+    new ApiError(status, code, 'The AI answer was cut off by the token budget.');
+
+  it('maps the cut-off answer to its own notice, not to the server text', () => {
+    assert.equal(aiNoticeFor(error('discovery_ai_truncated')), 'truncated');
+  });
+
+  it('maps an outage and unusable JSON to the retryable notice', () => {
+    assert.equal(aiNoticeFor(error('discovery_ai_unavailable', 503)), 'unavailable');
+    assert.equal(aiNoticeFor(error('discovery_analysis_invalid')), 'unavailable');
+  });
+
+  it('reports the attempt limit without a retry, because a retry cannot help', () => {
+    assert.equal(aiNoticeFor(error('discovery_complete_limit_reached', 429)), 'limit');
+  });
+
+  it('maps a filtered answer to its own notice, not to the budget one', () => {
+    assert.equal(aiNoticeFor(error('discovery_ai_filtered', 422)), 'filtered');
+    assert.notEqual(aiNoticeFor(error('discovery_ai_filtered', 422)), 'truncated');
+  });
+
+  it('leaves unrelated errors to the caller', () => {
+    assert.equal(aiNoticeFor(new ApiError(409, 'discovery_token_used', 'x')), null);
+    assert.equal(aiNoticeFor(new Error('boom')), null);
+  });
+
+  it('has a German and an English text for every notice', () => {
+    for (const locale of ['de', 'en'] as const) {
+      const messages = getMessages(locale);
+      assert.ok(messages.discovery.aiTruncated.length > 20);
+      assert.notEqual(messages.discovery.aiTruncated, messages.discovery.aiUnavailable);
+      assert.ok(messages.discovery.aiLimitReached.length > 20);
+      assert.ok(messages.discovery.aiFiltered.length > 20);
+      assert.notEqual(messages.discovery.aiLimitReached, messages.discovery.aiTruncated);
+    }
+    const de = getMessages('de').discovery.aiTruncated;
+    const en = getMessages('en').discovery.aiTruncated;
+    assert.notEqual(de, en);
+    // The customer must not read the English server message in the German UI.
+    assert.ok(!de.includes('token budget'));
+  });
+
+  it('renders each notice from the catalogue, never from the server text', () => {
+    const messages = getMessages('de');
+    assert.equal(aiNoticeText('truncated', messages), messages.discovery.aiTruncated);
+    assert.equal(aiNoticeText('unavailable', messages), messages.discovery.aiUnavailable);
+    assert.equal(aiNoticeText('limit', messages), messages.discovery.aiLimitReached);
+    assert.equal(aiNoticeText('filtered', messages), messages.discovery.aiFiltered);
   });
 });

@@ -365,6 +365,17 @@ export const MAP_STEPS: StepDef[] = [
   },
 ];
 
+/**
+ * How many questions the map phase asks.
+ *
+ * `MAP_STEPS` also carries the consent step, so the count is one less than its
+ * length. Anything that walks the map — the progress bar, the step count, the
+ * budget key of the question on screen, and the branch that decides whether the
+ * next question or the cluster suggestion is served — uses this instead of a
+ * literal, because a drift there would quietly disable the per-question cap.
+ */
+export const MAP_QUESTIONS = MAP_STEPS.length - 1;
+
 export interface ClusterDef {
   id: string;
   label: Localized;
@@ -523,6 +534,17 @@ const DEEP_PROMPTS: Array<{ label: Localized; key: string }> = [
     },
   },
 ];
+
+/**
+ * How many questions one cluster asks, and how many steps that phase costs.
+ *
+ * The step count is the questions plus the idea card that closes the cluster.
+ * Both numbers are derived from the catalogue, not written down at the place
+ * that walks the phase: a further question must not silently fold two cluster
+ * steps onto one slot.
+ */
+export const DEEP_QUESTIONS_PER_CLUSTER = DEEP_PROMPTS.length;
+export const DEEPEN_STEPS_PER_CLUSTER = DEEP_QUESTIONS_PER_CLUSTER + 1;
 
 /** The seven standard questions of one cluster. */
 export function clusterSteps(clusterId: string): StepDef[] {
