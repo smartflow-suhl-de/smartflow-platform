@@ -830,6 +830,50 @@ test('a filter refusal on the retry is filtered, not a schema error', async () =
   assert.ok(warnings.some((line) => /retry was refused by the content filter/.test(line)));
 });
 
+test('a filtered hint keeps the step usable instead of blocking the interview', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let filtered = true;
+  stubLlm(ctx, (payload) => {
+    const request = payload as { messages?: Array<{ content?: string }> } | undefined;
+    const system = request?.messages?.[0]?.content ?? '';
+    if (system.includes('structured automation assessment')) return llmReply(payload);
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    if (!filtered) return llmReply(payload);
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: '' },
+        model: { modelKey: 'test-model' },
+        finishReason: 'content_filter',
+      }),
+    };
+  });
+
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  const opened = await advance(ctx, invite.token);
+  assert.equal(opened.statusCode, 200);
+
+  // The hint is filtered. That is a comfort feature, so the step still moves
+  // on: no 422, no blocked question, nothing stored that locks the link.
+  const withoutHint = await advance(ctx, invite.token);
+  assert.equal(withoutHint.statusCode, 200);
+  assert.equal((withoutHint.body as { hint?: unknown }).hint, null);
+  const state = await getState(ctx, invite.token);
+  assert.equal(state.phase, 'map');
+  assert.notEqual(state.step?.key, 'consent');
+
+  // The very same step works again as soon as the model answers normally.
+  filtered = false;
+  const withHint = await advance(ctx, invite.token);
+  assert.equal(withHint.statusCode, 200);
+  const hint = (withHint.body as { hint?: { text: string } | null }).hint;
+  assert.ok(hint && hint.text.length > 0);
+});
+
 test('isFiltered recognises the filter and isTruncated no longer claims it', () => {
   assert.equal(isFiltered('content_filter'), true);
   assert.equal(isFiltered('CONTENT_FILTER'), true);
@@ -923,6 +967,54 @@ test('a failed configuration attempt costs nothing, and a new link resets the bu
   assert.equal(attempts(), 0);
 });
 
+test('repeating the same interview step stops at the step budget, not at 25 calls', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let hintCalls = 0;
+  stubLlm(ctx, (payload) => {
+    const request = payload as { messages?: Array<{ content?: string }> } | undefined;
+    const system = request?.messages?.[0]?.content ?? '';
+    if (system.includes('structured automation assessment')) return llmReply(payload);
+    if (system.includes('pick automation topics')) return llmReply(payload);
+    hintCalls += 1;
+    // The hint fails, so the step is not advanced and every call serves the
+    // same question: exactly the cheap loop the security review measured.
+    return { status: 503, body: JSON.stringify({ error: { code: 'llm_provider_error' } }) };
+  });
+
+  // Into the map phase: consent, then the first question is answered.
+  await postAnswers(ctx, invite.token, [{ key: 'consent', value: true }]);
+  const opened = await advance(ctx, invite.token);
+  assert.equal(opened.statusCode, 200);
+
+  const statuses: number[] = [];
+  for (let index = 0; index < 25; index += 1) {
+    statuses.push((await advance(ctx, invite.token)).statusCode);
+  }
+  // A provider outage is refunded, so the step counter is the limit that
+  // bites: four counted calls, then 429 for the rest.
+  assert.equal(hintCalls, 4);
+  assert.deepEqual(
+    statuses.slice(0, 4).every((status) => status === 503),
+    true,
+  );
+  assert.equal(
+    statuses.slice(4).every((status) => status === 429),
+    true,
+  );
+  const last = await advance(ctx, invite.token);
+  assert.equal(last.statusCode, 429);
+  assert.equal(
+    (last.body as { error: { code: string } }).error.code,
+    'discovery_complete_limit_reached',
+  );
+  // 25 calls, four provider calls: the loop no longer scales with requests.
+  assert.equal(hintCalls, 4);
+});
+
 test('repeated complete calls stop at the attempt limit, and a report still wins', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());
@@ -994,6 +1086,133 @@ test('repeated complete calls stop at the attempt limit, and a report still wins
   const again = await complete();
   assert.equal(again.statusCode, 200);
   assert.equal(analysisCalls, callsBefore);
+});
+
+test('a provider outage costs no budget, so the link still works afterwards', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let providerDown = true;
+  stubLlm(ctx, (payload) => {
+    if (!JSON.stringify(payload).includes('structured automation assessment')) {
+      return llmReply(payload);
+    }
+    if (providerDown) {
+      return { status: 503, body: JSON.stringify({ error: { code: 'llm_provider_error' } }) };
+    }
+    return llmReply(payload);
+  });
+
+  await runInterview(ctx, invite.token);
+  const complete = () =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/discovery/public/${invite.token}/complete`,
+    });
+  const counters = () =>
+    ctx.db
+      .prepare('select complete_attempts, ai_attempts from discovery_session where invite_id = ?')
+      .get(invite.id) as { complete_attempts: number; ai_attempts: number };
+
+  // The provider is down for six requests. None of them produced an answer, so
+  // none of them may cost the link its budget.
+  for (let index = 0; index < 6; index += 1) {
+    const failed = await complete();
+    assert.equal(failed.statusCode, 503);
+    assert.equal((failed.json() as { error: { reason?: string } }).error.reason, 'unavailable');
+  }
+  assert.equal(counters().complete_attempts, 0);
+
+  providerDown = false;
+  const recovered = await complete();
+  assert.equal(recovered.statusCode, 200);
+  assert.equal(counters().complete_attempts, 1);
+});
+
+test('five real assessments still use up the assessment budget', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  let analysisCalls = 0;
+  stubLlm(ctx, (payload) => {
+    if (!JSON.stringify(payload).includes('structured automation assessment')) {
+      return llmReply(payload);
+    }
+    analysisCalls += 1;
+    // Answers, but with unusable JSON: each call is paid for and leaves no
+    // report, which is exactly what the budget has to limit.
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: JSON.stringify({ summary: 'Zu kurz' }) },
+        model: { modelKey: 'test-model' },
+      }),
+    };
+  });
+
+  await runInterview(ctx, invite.token);
+  const complete = () =>
+    ctx.app.inject({
+      method: 'POST',
+      url: `/api/v1/discovery/public/${invite.token}/complete`,
+    });
+
+  const statuses: number[] = [];
+  for (let index = 0; index < 6; index += 1) {
+    statuses.push((await complete()).statusCode);
+  }
+  assert.deepEqual(statuses, [502, 502, 502, 502, 502, 429]);
+  // Five paid model calls, then not one more.
+  assert.equal(analysisCalls, 5);
+});
+
+test('the operator sees the AI budget of a link, so a 429 is diagnosable', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+  const invite = await createInvite(ctx, cookie);
+
+  // Hints and the assessment use the same model; the assessment answers with
+  // unusable JSON so one paid call is counted.
+  let analysis = false;
+  stubLlm(ctx, (payload) => {
+    if (!JSON.stringify(payload).includes('structured automation assessment') && !analysis) {
+      return llmReply(payload);
+    }
+    analysis = true;
+    return {
+      status: 200,
+      body: JSON.stringify({
+        message: { content: JSON.stringify({ summary: 'Zu kurz' }) },
+        model: { modelKey: 'test-model' },
+      }),
+    };
+  });
+  await runInterview(ctx, invite.token);
+  await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/discovery/public/${invite.token}/complete`,
+  });
+
+  const detail = await ctx.app.inject({
+    method: 'GET',
+    url: `/api/v1/discovery/invites/${invite.id}`,
+    headers: { cookie },
+  });
+  assert.equal(detail.statusCode, 200);
+  const session = (
+    detail.json() as {
+      invite: { session: { aiAttempts: number; assessmentAttempts: number } | null };
+    }
+  ).invite.session;
+  assert.ok(session);
+  assert.equal(session.assessmentAttempts, 1);
+  // The interview hints are part of the same budget, so the total is higher.
+  assert.ok(session.aiAttempts > session.assessmentAttempts);
 });
 
 test('the short check skips the deep phase unless the operator forces full', async (t) => {

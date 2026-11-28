@@ -717,6 +717,17 @@ function DiscoveryDetail({
               <dd>{invite.session ? `${invite.session.progress}%` : '—'}</dd>
             </div>
             <div className="sf-kv-row">
+              <dt>{m.discovery.colAiBudget}</dt>
+              <dd>
+                {invite.session
+                  ? m.discovery.aiBudgetSummary(
+                      invite.session.aiAttempts,
+                      invite.session.assessmentAttempts,
+                    )
+                  : '—'}
+              </dd>
+            </div>
+            <div className="sf-kv-row">
               <dt>{m.discovery.colExpires}</dt>
               <dd>{formatDateTime(invite.expiresAt, locale)}</dd>
             </div>

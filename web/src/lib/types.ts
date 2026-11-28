@@ -184,6 +184,10 @@ export interface DiscoveryInvite {
     id: string;
     phase: DiscoveryPhase;
     progress: number;
+    /** Model calls this link has spent, hints and assessment together. */
+    aiAttempts: number;
+    /** Model calls of the assessment, capped by the plugin. */
+    assessmentAttempts: number;
     startedAt: string;
     lastSeenAt: string;
     completedAt: string | null;

@@ -475,6 +475,8 @@ export interface Messages {
     colCustomer: string;
     colStatus: string;
     colProgress: string;
+    colAiBudget: string;
+    aiBudgetSummary: (used: number, assessments: number) => string;
     colExpires: string;
     colActions: string;
     statusOpen: string;
@@ -1179,6 +1181,8 @@ const DE: Messages = {
     colCustomer: 'Kunde',
     colStatus: 'Status',
     colProgress: 'Fortschritt',
+    colAiBudget: 'KI-Aufrufe',
+    aiBudgetSummary: (used, assessments) => `${used} gesamt, ${assessments} für die Auswertung`,
     colExpires: 'Gültig bis',
     colActions: 'Aktionen',
     statusOpen: 'Offen',
@@ -1914,6 +1918,8 @@ const EN: Messages = {
     colCustomer: 'Customer',
     colStatus: 'Status',
     colProgress: 'Progress',
+    colAiBudget: 'AI calls',
+    aiBudgetSummary: (used, assessments) => `${used} in total, ${assessments} for the assessment`,
     colExpires: 'Valid until',
     colActions: 'Actions',
     statusOpen: 'Open',

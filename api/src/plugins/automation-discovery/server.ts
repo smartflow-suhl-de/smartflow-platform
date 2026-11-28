@@ -71,6 +71,34 @@ const RATE_WINDOW_MS = 60_000;
  * spend without bound.
  */
 export const COMPLETE_ATTEMPT_LIMIT = 5;
+/** Slack on top of the calculated need, for retries after counted failures. */
+const AI_BUDGET_SLACK = 6;
+/**
+ * How often the same step may ask the model.
+ *
+ * The total budget alone would still let one link spend its whole allowance on
+ * a single step: thirty `advance` calls on the same question were thirty model
+ * calls. A step needs one hint, so a small number is enough, and it leaves room
+ * for a retry after a counted failure.
+ */
+export const STEP_ATTEMPT_LIMIT = 4;
+
+/**
+ * How many model calls one invitation may make in total, hints included.
+ *
+ * The assessment counter alone was not enough: `advance` asks for a hint on
+ * every step and spends the same model, so a link could run hundreds of hint
+ * calls without ever touching the assessment budget. This is the one budget
+ * every AI path of the plugin shares. It is sized by what an honest interview
+ * of that mode needs — eleven map hints, one cluster suggestion, seven deepen
+ * hints per cluster, plus the assessment budget and some slack — so a real
+ * customer never meets it and an abusive link stops early.
+ */
+export function aiAttemptLimit(mode: Mode): number {
+  const clusters = mode === 'full' ? 5 : mode === 'standard' ? 3 : 0;
+  const hints = 11 + (clusters > 0 ? 1 + clusters * 7 : 0);
+  return hints + COMPLETE_ATTEMPT_LIMIT + AI_BUDGET_SLACK;
+}
 const RATE_MAX_KEYS = 5_000;
 const RATE_PRUNE_INTERVAL_MS = 30_000;
 /** The one answer key that is not part of a question definition. */
@@ -676,6 +704,19 @@ export function register(ctx: PluginContext): void {
         );
       },
     },
+    {
+      version: 4,
+      up(database) {
+        // One budget for every model call of a link, hints included, plus a
+        // per-step counter so one question cannot drain it on its own. The
+        // assessment counter alone left the much cheaper hint route unmetered.
+        database.exec(`
+          alter table discovery_session add column ai_attempts integer not null default 0;
+          alter table discovery_session add column ai_step_key text;
+          alter table discovery_session add column ai_step_attempts integer not null default 0;
+        `);
+      },
+    },
   ]);
 
   const call: CallInternal = (caller, request) => ctx.callInternal(caller, request);
@@ -1021,6 +1062,7 @@ export function register(ctx: PluginContext): void {
       pending_json: null,
       suggestions_json: null,
       complete_attempts: 0,
+      ai_attempts: 0,
     };
     db.prepare(
       `insert into discovery_session
@@ -1132,6 +1174,112 @@ export function register(ctx: PluginContext): void {
     }
   }
 
+  /** The error every metered route throws once the link's AI budget is used up. */
+  function aiLimitReached(invite: InviteRow, session: SessionRow, used: number): AppError {
+    log.warn(
+      { inviteId: invite.id, sessionId: session.id, used, limit: aiAttemptLimit(invite.mode) },
+      'discovery ai budget refused: attempt limit reached',
+    );
+    session.ai_attempts = used;
+    return new AppError(
+      'discovery_complete_limit_reached',
+      'This link has used up the AI budget for this interview.',
+      429,
+    );
+  }
+
+  /**
+   * Counts one model call against the link's budget before it happens.
+   *
+   * Both checks and both counters move inside one synchronous transaction, so
+   * no second request can pass the check in between and the limits hold. A
+   * refusal changes nothing: the caller gets 429 and no model is called.
+   *
+   * `stepKey` identifies the question being served. Calls for the same step add
+   * up in `ai_step_attempts`, a different step starts that counter over. The
+   * assessment passes `perStep: false` and relies on its own counter, because
+   * asking for the report again after a counted failure is legitimate.
+   */
+  function reserveAiAttempt(
+    invite: InviteRow,
+    session: SessionRow,
+    stepKey: string,
+    perStep = true,
+  ): void {
+    const budget = aiAttemptLimit(invite.mode);
+    const claim = db.transaction((): 'ok' | 'budget' | 'step' => {
+      const row = db
+        .prepare(
+          'select ai_attempts, ai_step_key, ai_step_attempts from discovery_session where id = ?',
+        )
+        .get(session.id) as
+        { ai_attempts: number; ai_step_key: string | null; ai_step_attempts: number } | undefined;
+      if (!row) return 'budget';
+      if (row.ai_attempts >= budget) return 'budget';
+      const sameStep = row.ai_step_key === stepKey;
+      if (perStep && sameStep && row.ai_step_attempts >= STEP_ATTEMPT_LIMIT) return 'step';
+      db.prepare(
+        `update discovery_session
+            set ai_attempts = ai_attempts + 1,
+                ai_step_key = ?,
+                ai_step_attempts = ?
+          where id = ?`,
+      ).run(stepKey, sameStep ? row.ai_step_attempts + 1 : 1, session.id);
+      return 'ok';
+    });
+    const verdict = claim();
+    if (verdict === 'budget') throw aiLimitReached(invite, session, budget);
+    if (verdict === 'step') {
+      log.warn(
+        {
+          inviteId: invite.id,
+          sessionId: session.id,
+          step: stepKey,
+          limit: STEP_ATTEMPT_LIMIT,
+        },
+        'discovery ai budget refused: this step asked the model too often',
+      );
+      throw new AppError(
+        'discovery_complete_limit_reached',
+        'This step asked the AI too often. Please contact the person who invited you.',
+        429,
+      );
+    }
+    session.ai_attempts += 1;
+  }
+
+  /** Gives a reserved attempt back, for failures that never reached the model. */
+  function releaseAiAttempt(session: SessionRow): void {
+    db.prepare(
+      'update discovery_session set ai_attempts = ai_attempts - 1 where id = ? and ai_attempts > 0',
+    ).run(session.id);
+    session.ai_attempts = Math.max(0, session.ai_attempts - 1);
+  }
+
+  /**
+   * Did the provider fail, rather than the conversation?
+   *
+   * These are outages on our side: the customer's answers are fine, the model
+   * was down, rate limited or too slow. They must not cost the link its token
+   * budget, otherwise five provider hiccups lock a paying customer out for
+   * good. `truncated`, `invalid_output` and `filtered` did reach the model and
+   * cost tokens, so they stay counted.
+   *
+   * Only the token budgets are refunded. The per-step counter keeps counting
+   * requests for the same question, because refunding that one too would let a
+   * broken step be re-requested without bound — the very loop this budget
+   * exists to stop. A link can always be rotated by the operator.
+   */
+  function isProviderOutage(error: unknown): boolean {
+    return (
+      error instanceof AiUnavailable &&
+      (error.reason === 'not_configured' ||
+        error.reason === 'caller_not_allowed' ||
+        error.reason === 'unavailable' ||
+        error.reason === 'timeout')
+    );
+  }
+
   async function advance(
     invite: InviteRow,
     session: SessionRow,
@@ -1158,6 +1306,7 @@ export function register(ctx: PluginContext): void {
       const next = session.current_step + 1;
       if (next < 12) {
         let hint: { text: string; examples: string[] } | null = null;
+        reserveAiAttempt(invite, session, `map:${next}`);
         try {
           const result = await interviewHint(call, {
             locale: invite.locale,
@@ -1176,7 +1325,18 @@ export function register(ctx: PluginContext): void {
             hint = { text: result.hint ?? '', examples: result.examples };
           }
         } catch (error) {
-          throw aiError(error);
+          if (isProviderOutage(error)) releaseAiAttempt(session);
+          if (error instanceof AiUnavailable && error.reason === 'filtered') {
+            // The hint is a comfort feature; a filtered hint must not stop the
+            // interview. Move on without one.
+            log.warn(
+              { inviteId: invite.id, sessionId: session.id, step: next },
+              'discovery hint was refused by the content filter; continuing without one',
+            );
+            hint = null;
+          } else {
+            throw aiError(error);
+          }
         }
         db.prepare(
           'update discovery_session set current_step = ?, last_seen_at = ? where id = ?',
@@ -1199,6 +1359,7 @@ export function register(ctx: PluginContext): void {
       }
 
       let suggested: SuggestedCluster[];
+      reserveAiAttempt(invite, session, 'clusters');
       try {
         suggested = await suggestClusters(call, {
           locale: invite.locale,
@@ -1207,7 +1368,18 @@ export function register(ctx: PluginContext): void {
           log,
         });
       } catch (error) {
-        throw aiError(error);
+        if (isProviderOutage(error)) releaseAiAttempt(session);
+        if (error instanceof AiUnavailable && error.reason === 'filtered') {
+          // The customer still has to pick topics, so the interview continues:
+          // the catalogue is always selectable without a suggestion.
+          log.warn(
+            { inviteId: invite.id, sessionId: session.id },
+            'discovery cluster suggestion was refused by the content filter; offering the catalogue',
+          );
+          suggested = [];
+        } else {
+          throw aiError(error);
+        }
       }
       if (invite.mode !== 'full' && suggested.length > 3) suggested = suggested.slice(0, 3);
       db.prepare(
@@ -1285,6 +1457,7 @@ export function register(ctx: PluginContext): void {
       const nextEntry = steps[session.current_step + 1];
       const nextQuestion = nextEntry?.step.fields[0]?.label ?? { de: '', en: '' };
       let hint: { text: string; examples: string[] } | null = null;
+      reserveAiAttempt(invite, session, `deepen:${session.current_step}`);
       try {
         const result = await interviewHint(call, {
           locale: invite.locale,
@@ -1326,7 +1499,18 @@ export function register(ctx: PluginContext): void {
           return { state: buildPublicState(invite, session, answers, null), hint };
         }
       } catch (error) {
-        throw aiError(error);
+        if (isProviderOutage(error)) releaseAiAttempt(session);
+        if (error instanceof AiUnavailable && error.reason === 'filtered') {
+          // A filtered hint must not block the step: the customer can answer
+          // without one, so the interview moves on.
+          log.warn(
+            { inviteId: invite.id, sessionId: session.id, step: session.current_step },
+            'discovery hint was refused by the content filter; continuing without one',
+          );
+          hint = null;
+        } else {
+          throw aiError(error);
+        }
       }
 
       const target = resultNextIndex(steps, session.current_step, answers, cluster);
@@ -1689,10 +1873,15 @@ export function register(ctx: PluginContext): void {
       if (session) {
         // The customer gets a fresh link, so the attempt budget starts over:
         // the old link's failures must not block the new one.
-        db.prepare('update discovery_session set complete_attempts = 0 where id = ?').run(
-          session.id,
-        );
+        // A new link gets a fresh budget: the old link's failures, its step
+        // counter and its used-up token budget must not carry over.
+        db.prepare(
+          `update discovery_session
+              set complete_attempts = 0, ai_attempts = 0, ai_step_key = null, ai_step_attempts = 0
+            where id = ?`,
+        ).run(session.id);
         session.complete_attempts = 0;
+        session.ai_attempts = 0;
       }
       log.info({ inviteId: invite.id, at: stamp }, 'discovery invite link rotated');
       return {
@@ -1915,14 +2104,10 @@ export function register(ctx: PluginContext): void {
         );
       }
 
-      // Count before the model runs: a failed attempt also costs tokens, and
-      // the condition in the update makes the limit race-free.
-      const attempt = db
-        .prepare(
-          'update discovery_session set complete_attempts = complete_attempts + 1 where id = ? and complete_attempts < ?',
-        )
-        .run(session.id, COMPLETE_ATTEMPT_LIMIT);
-      if (attempt.changes === 0) {
+      // Two counters, both counted before the model runs, because a failed
+      // attempt also costs tokens and the condition in each update makes the
+      // limit race-free: the assessment budget and the link's total AI budget.
+      if (session.complete_attempts >= COMPLETE_ATTEMPT_LIMIT) {
         log.warn(
           { inviteId: invite.id, sessionId: session.id, limit: COMPLETE_ATTEMPT_LIMIT },
           'discovery assessment refused: attempt limit reached',
@@ -1933,6 +2118,25 @@ export function register(ctx: PluginContext): void {
           429,
         );
       }
+      reserveAiAttempt(invite, session, 'assessment', false);
+      const attempt = db
+        .prepare(
+          'update discovery_session set complete_attempts = complete_attempts + 1 where id = ? and complete_attempts < ?',
+        )
+        .run(session.id, COMPLETE_ATTEMPT_LIMIT);
+      if (attempt.changes === 0) {
+        releaseAiAttempt(session);
+        log.warn(
+          { inviteId: invite.id, sessionId: session.id, limit: COMPLETE_ATTEMPT_LIMIT },
+          'discovery assessment refused: attempt limit reached',
+        );
+        throw new AppError(
+          'discovery_complete_limit_reached',
+          'The assessment was requested too often for this link.',
+          429,
+        );
+      }
+      session.complete_attempts += 1;
 
       const answers = answerMap(answerRows(db, session.id));
       const selected = selectedClusterIds(answers);
@@ -1946,16 +2150,15 @@ export function register(ctx: PluginContext): void {
           log,
         });
       } catch (error) {
-        // A missing model assignment or a refused caller never reached the
-        // provider, so it cost nothing: give the attempt back instead of
-        // locking the link out after five configuration errors.
-        if (
-          error instanceof AiUnavailable &&
-          (error.reason === 'not_configured' || error.reason === 'caller_not_allowed')
-        ) {
+        // A provider outage or a missing model assignment is not the
+        // customer's fault and produced nothing usable, so it costs no budget
+        // at all; otherwise five provider hiccups would lock the link out.
+        if (isProviderOutage(error)) {
           db.prepare(
             'update discovery_session set complete_attempts = complete_attempts - 1 where id = ? and complete_attempts > 0',
           ).run(session.id);
+          session.complete_attempts = Math.max(0, session.complete_attempts - 1);
+          releaseAiAttempt(session);
         }
         throw aiError(error);
       }

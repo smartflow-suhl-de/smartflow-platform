@@ -36,6 +36,12 @@ export interface SessionRow {
   suggestions_json: string | null;
   /** How often the customer asked for the assessment; the model is costly. */
   complete_attempts: number;
+  /**
+   * Every model call of this invitation, hints and assessments alike. One
+   * budget per link keeps a single link from spending without bound, whatever
+   * route it uses.
+   */
+  ai_attempts: number;
 }
 
 export interface AnswerRow {
@@ -89,6 +95,9 @@ export interface InviteDto {
     startedAt: string;
     lastSeenAt: string;
     completedAt: string | null;
+    /** Model calls this link made, and how often it asked for the assessment. */
+    aiAttempts: number;
+    assessmentAttempts: number;
   } | null;
   reportAvailable: boolean;
 }
@@ -145,6 +154,8 @@ export function toInviteDto(
           startedAt: session.started_at,
           lastSeenAt: session.last_seen_at,
           completedAt: session.completed_at,
+          aiAttempts: session.ai_attempts,
+          assessmentAttempts: session.complete_attempts,
         }
       : null,
     reportAvailable,
