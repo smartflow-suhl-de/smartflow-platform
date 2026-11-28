@@ -299,6 +299,273 @@ test('every tenant gets its own database file', async (t) => {
   assert.equal(row?.display_name, 'Alpha');
 });
 
+test('master data is captured on create and updated partially', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const created = await ctx.app.inject({
+    method: 'POST',
+    url: '/api/v1/tenants',
+    headers: { cookie },
+    payload: {
+      name: 'Nordwind Logistik GmbH',
+      legal_name: 'Nordwind Logistik Gesellschaft mit beschränkter Haftung',
+      legal_form: 'GmbH',
+      street: 'Hafenstraße 12',
+      postal_code: '24103',
+      city: 'Kiel',
+      country: 'Deutschland',
+      contact_name: 'Meike Sörensen',
+      contact_role: 'Geschäftsführung',
+      contact_email: 'm.soerensen@nordwind.example',
+      contact_phone: '+49 431 1234567',
+      vat_id: 'DE123456789',
+    },
+  });
+  assert.equal(created.statusCode, 201);
+  const tenant = created.json() as Tenant;
+  assert.equal(tenant.details.street, 'Hafenstraße 12');
+  assert.equal(tenant.details.city, 'Kiel');
+  assert.equal(tenant.details.contact_name, 'Meike Sörensen');
+  assert.equal(tenant.details.notes, null);
+
+  // A partial update keeps every field it does not mention.
+  const patched = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { phone: '+49 431 7654321', notes: '  Jahresgespräch im März  ' },
+  });
+  assert.equal(patched.statusCode, 200);
+  const updated = patched.json() as Tenant;
+  assert.equal(updated.details.phone, '+49 431 7654321');
+  assert.equal(updated.details.notes, 'Jahresgespräch im März');
+  assert.equal(updated.details.street, 'Hafenstraße 12');
+  assert.equal(updated.details.city, 'Kiel');
+
+  // An empty string clears a field instead of storing whitespace.
+  const cleared = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: '   ' },
+  });
+  assert.equal((cleared.json() as Tenant).details.city, null);
+
+  // The tenant database mirrors the master data for tenant-scoped plugins.
+  const { openDatabase } = await import('../../src/kernel/db.ts');
+  const file = join(ctx.dataDir, 'tenants', `${tenant.id}.sqlite`);
+  const database = openDatabase(file);
+  t.after(() => database.close());
+  const profile = database
+    .prepare('select street, postal_code, city, phone from tenant_profile where id = ?')
+    .get(tenant.id) as {
+    street: string | null;
+    postal_code: string | null;
+    city: string | null;
+    phone: string | null;
+  };
+  assert.equal(profile.street, 'Hafenstraße 12');
+  assert.equal(profile.postal_code, '24103');
+  assert.equal(profile.city, null);
+  assert.equal(profile.phone, '+49 431 7654321');
+});
+
+test('a master-data patch emits one event with field names only', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const tenant = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Nordlicht GmbH', city: 'Kiel' },
+    })
+  ).json() as Tenant;
+
+  const patched = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: 'Lübeck', vat_id: 'DE999999999' },
+  });
+  assert.equal(patched.statusCode, 200);
+
+  const events = ctx.db
+    .prepare(
+      "select name, payload from events where name = 'tenant.updated' order by created_at, rowid",
+    )
+    .all() as { name: string; payload: string }[];
+  assert.equal(events.length, 1);
+  const payload = JSON.parse(events[0]?.payload ?? '{}') as {
+    tenantId?: string;
+    fields?: string[];
+  };
+  assert.equal(payload.tenantId, tenant.id);
+  assert.deepEqual(payload.fields?.sort(), ['city', 'vat_id']);
+  // Field names only: the new values must not reach the audit log.
+  assert.ok(!events[0]?.payload.includes('Lübeck'));
+  assert.ok(!events[0]?.payload.includes('DE999999999'));
+
+  // A patch that changes nothing is not an update.
+  const noop = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: 'Lübeck' },
+  });
+  assert.equal(noop.statusCode, 200);
+  const after = ctx.db
+    .prepare("select count(*) as count from events where name = 'tenant.updated'")
+    .get() as { count: number };
+  assert.equal(after.count, 1);
+});
+
+test('tenant name and slug are editable; the slug stays unique', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const first = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Alphabuild GmbH', slug: 'alphabuild' },
+    })
+  ).json() as Tenant;
+  const second = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Beta GmbH', slug: 'beta' },
+    })
+  ).json() as Tenant;
+
+  const patched = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${first.id}`,
+    headers: { cookie },
+    payload: { name: 'Alphabuild Nord GmbH', slug: 'alphabuild-nord' },
+  });
+  assert.equal(patched.statusCode, 200);
+  const updated = patched.json() as Tenant;
+  assert.equal(updated.name, 'Alphabuild Nord GmbH');
+  assert.equal(updated.slug, 'alphabuild-nord');
+
+  const duplicate = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${second.id}`,
+    headers: { cookie },
+    payload: { slug: 'alphabuild-nord' },
+  });
+  assert.equal(duplicate.statusCode, 409);
+  const conflict = duplicate.json() as {
+    error: { code: string; fields: Record<string, string> };
+  };
+  assert.equal(conflict.error.code, 'slug_taken');
+  assert.ok(conflict.error.fields.slug);
+
+  const invalid = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${first.id}`,
+    headers: { cookie },
+    payload: { slug: 'Alpha Nord' },
+  });
+  assert.equal(invalid.statusCode, 422);
+  assert.ok((invalid.json() as { error: { fields: Record<string, string> } }).error.fields.slug);
+});
+
+test('master data validation rejects bad email and overlong fields', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const tenant = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Alpha' },
+    })
+  ).json() as Tenant;
+
+  const bad = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { contact_email: 'not-an-email' },
+  });
+  assert.equal(bad.statusCode, 422);
+  const body = bad.json() as { error: { code: string; fields: Record<string, string> } };
+  assert.equal(body.error.code, 'validation_failed');
+  assert.ok(body.error.fields.contact_email);
+
+  const tooLong = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { legal_form: 'x'.repeat(61) },
+  });
+  assert.equal(tooLong.statusCode, 422);
+  assert.ok(
+    (tooLong.json() as { error: { fields: Record<string, string> } }).error.fields.legal_form,
+  );
+});
+
+test('a suspended tenant keeps its profile in sync after the resume', async (t) => {
+  const ctx = await createTestApp();
+  t.after(() => ctx.close());
+  const cookie = await ctx.signIn();
+
+  const tenant = (
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/tenants',
+      headers: { cookie },
+      payload: { name: 'Südpark Handel', city: 'Altstadt' },
+    })
+  ).json() as Tenant;
+
+  const suspended = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/tenants/${tenant.id}/suspend`,
+    headers: { cookie },
+  });
+  assert.equal(suspended.statusCode, 200);
+
+  // The platform row is editable while suspended; the tenant database is not
+  // reachable through tenantDb, so the copy can only be written on resume.
+  const patched = await ctx.app.inject({
+    method: 'PATCH',
+    url: `/api/v1/tenants/${tenant.id}`,
+    headers: { cookie },
+    payload: { city: 'Neustadt' },
+  });
+  assert.equal(patched.statusCode, 200);
+  assert.equal((patched.json() as Tenant).details.city, 'Neustadt');
+
+  const resumed = await ctx.app.inject({
+    method: 'POST',
+    url: `/api/v1/tenants/${tenant.id}/resume`,
+    headers: { cookie },
+  });
+  assert.equal(resumed.statusCode, 200);
+
+  const { openDatabase } = await import('../../src/kernel/db.ts');
+  const database = openDatabase(join(ctx.dataDir, 'tenants', `${tenant.id}.sqlite`));
+  t.after(() => database.close());
+  const profile = database
+    .prepare('select display_name, city from tenant_profile where id = ?')
+    .get(tenant.id) as { display_name: string | null; city: string | null };
+  assert.equal(profile.display_name, 'Südpark Handel');
+  assert.equal(profile.city, 'Neustadt');
+});
+
 test('transitions reject unknown tenants with 404', async (t) => {
   const ctx = await createTestApp();
   t.after(() => ctx.close());

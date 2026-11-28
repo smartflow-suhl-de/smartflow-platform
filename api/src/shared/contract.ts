@@ -205,12 +205,42 @@ export interface HealthResponse {
 
 export type TenantStatus = 'active' | 'suspended';
 
+/**
+ * Master data of a tenant. Every field is optional in the mask and therefore
+ * `null` until someone fills it in; the API never invents defaults.
+ */
+export interface TenantDetails {
+  legal_name: string | null;
+  legal_form: string | null;
+  customer_number: string | null;
+  industry: string | null;
+  street: string | null;
+  address_extra: string | null;
+  postal_code: string | null;
+  city: string | null;
+  country: string | null;
+  contact_name: string | null;
+  contact_role: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  contact_mobile: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  vat_id: string | null;
+  tax_number: string | null;
+  register_court: string | null;
+  register_number: string | null;
+  notes: string | null;
+}
+
 export interface Tenant {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
   created_at: string;
+  details: TenantDetails;
 }
 
 export interface TenantUser {
